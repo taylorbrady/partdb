@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package io.partdb.raft.rpc;
+
+option java_package = "io.partdb.raft.rpc.proto";
+option java_outer_classname = "RaftProto";
+option java_multiple_files = false;
+
+service RaftService {
+  rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+  rpc InstallSnapshot(stream SnapshotChunk) returns (InstallSnapshotResponse);
+}
+
+message RequestVoteRequest {
+  int64 term = 1;
+  string candidate_id = 2;
+  int64 last_log_index = 3;
+  int64 last_log_term = 4;
+}
+
+message RequestVoteResponse {
+  int64 term = 1;
+  bool vote_granted = 2;
+}
+
+message AppendEntriesRequest {
+  int64 term = 1;
+  string leader_id = 2;
+  int64 prev_log_index = 3;
+  int64 prev_log_term = 4;
+  repeated LogEntry entries = 5;
+  int64 leader_commit = 6;
+}
+
+message AppendEntriesResponse {
+  int64 term = 1;
+  bool success = 2;
+  int64 match_index = 3;
+}
+
+message LogEntry {
+  int64 term = 1;
+  Operation operation = 2;
+}
+
+message Operation {
+  oneof op {
+    Put put = 1;
+    Delete delete = 2;
+  }
+}
+
+message Put {
+  bytes key = 1;
+  bytes value = 2;
+  int64 expires_at_millis = 3;
+}
+
+message Delete {
+  bytes key = 1;
+}
+
+message InstallSnapshotResponse {
+  int64 term = 1;
+}
+
+message SnapshotChunk {
+  string snapshot_id = 1;
+  int64 term = 2;
+  string leader_id = 3;
+  int64 last_included_index = 4;
+  int64 last_included_term = 5;
+  int64 offset = 6;
+  bytes data = 7;
+  bool done = 8;
+}
