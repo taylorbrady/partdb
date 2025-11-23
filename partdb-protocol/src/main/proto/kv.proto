@@ -1,0 +1,138 @@
+syntax = "proto3";
+
+package io.partdb.protocol.kv;
+
+option java_package = "io.partdb.protocol.kv.proto";
+option java_outer_classname = "KVProto";
+option java_multiple_files = false;
+
+service KVService {
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Scan(ScanRequest) returns (stream ScanResponse);
+  rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
+  rpc BatchWrite(BatchWriteRequest) returns (BatchWriteResponse);
+}
+
+message RequestHeader {
+  string request_id = 1;
+  int64 timeout_ms = 2;
+}
+
+enum ReadConsistency {
+  LINEARIZABLE = 0;
+  STALE = 1;
+}
+
+enum ErrorCode {
+  OK = 0;
+  NOT_FOUND = 1;
+  NOT_LEADER = 2;
+  CONFLICT = 3;
+  INTERNAL_ERROR = 4;
+}
+
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+  string leader_hint = 3;
+}
+
+message GetRequest {
+  RequestHeader header = 1;
+  bytes key = 2;
+  ReadConsistency consistency = 3;
+}
+
+message GetResponse {
+  Error error = 1;
+  bytes value = 2;
+  int64 revision = 3;
+}
+
+message PutRequest {
+  RequestHeader header = 1;
+  bytes key = 2;
+  bytes value = 3;
+  int64 expires_at_millis = 4;
+  bytes prev_value = 5;
+}
+
+message PutResponse {
+  Error error = 1;
+  int64 revision = 2;
+  bytes prev_value = 3;
+}
+
+message DeleteRequest {
+  RequestHeader header = 1;
+  bytes key = 2;
+  bytes prev_value = 3;
+}
+
+message DeleteResponse {
+  Error error = 1;
+  int64 revision = 2;
+  bytes prev_value = 3;
+}
+
+message ScanRequest {
+  RequestHeader header = 1;
+  bytes start_key = 2;
+  bytes end_key = 3;
+  int32 limit = 4;
+  ReadConsistency consistency = 5;
+}
+
+message ScanResponse {
+  Error error = 1;
+  bytes key = 2;
+  bytes value = 3;
+  int64 revision = 4;
+}
+
+message BatchGetRequest {
+  RequestHeader header = 1;
+  repeated bytes keys = 2;
+  ReadConsistency consistency = 3;
+}
+
+message KeyValue {
+  bytes key = 1;
+  bytes value = 2;
+  int64 revision = 3;
+  bool found = 4;
+}
+
+message BatchGetResponse {
+  Error error = 1;
+  repeated KeyValue values = 2;
+}
+
+message WriteOp {
+  oneof op {
+    PutOp put = 1;
+    DeleteOp delete = 2;
+  }
+}
+
+message PutOp {
+  bytes key = 1;
+  bytes value = 2;
+  int64 expires_at_millis = 3;
+}
+
+message DeleteOp {
+  bytes key = 1;
+}
+
+message BatchWriteRequest {
+  RequestHeader header = 1;
+  repeated WriteOp ops = 2;
+}
+
+message BatchWriteResponse {
+  Error error = 1;
+  int64 revision = 2;
+}
