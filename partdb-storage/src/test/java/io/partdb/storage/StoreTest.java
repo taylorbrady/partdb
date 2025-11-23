@@ -16,16 +16,16 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.*;
 
-class LSMEngineTest {
+class StoreTest {
 
     @TempDir
     Path tempDir;
 
     @Test
     void putAndGet() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
             ByteArray value = ByteArray.of((byte) 10);
 
@@ -40,9 +40,9 @@ class LSMEngineTest {
 
     @Test
     void getNonExistentKey() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             Optional<ByteArray> result = engine.get(ByteArray.of((byte) 99));
             assertThat(result).isEmpty();
         }
@@ -50,9 +50,9 @@ class LSMEngineTest {
 
     @Test
     void deleteKey() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
             ByteArray value = ByteArray.of((byte) 10);
 
@@ -66,9 +66,9 @@ class LSMEngineTest {
 
     @Test
     void deleteNonExistentKey() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
 
             engine.apply(1, new Delete(key));
@@ -80,9 +80,9 @@ class LSMEngineTest {
 
     @Test
     void putOverwritesPreviousValue() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
 
             engine.apply(1, new Put(key, ByteArray.of((byte) 10), 0));
@@ -97,9 +97,9 @@ class LSMEngineTest {
 
     @Test
     void expiredEntryReturnsEmpty() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
             ByteArray value = ByteArray.of((byte) 10);
             long expiresAtMillis = System.currentTimeMillis() - 10000;
@@ -113,9 +113,9 @@ class LSMEngineTest {
 
     @Test
     void manualFlush() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             engine.apply(1, new Put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 0));
             engine.apply(2, new Put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 0));
 
@@ -132,15 +132,15 @@ class LSMEngineTest {
     @Test
     void automaticFlushOnMemtableSize() {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
-            LSMEngineConfig.create(tempDir).sstableConfig()
+            StoreConfig.create(tempDir).sstableConfig()
         );
 
         byte[] largeValue = new byte[200];
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             for (int i = 0; i < 10; i++) {
                 ByteArray key = ByteArray.of((byte) i);
                 ByteArray value = ByteArray.wrap(largeValue);
@@ -156,9 +156,9 @@ class LSMEngineTest {
 
     @Test
     void scanEntireRange() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             engine.apply(1, new Put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 0));
             engine.apply(2, new Put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 0));
             engine.apply(3, new Put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 0));
@@ -175,9 +175,9 @@ class LSMEngineTest {
 
     @Test
     void scanWithRange() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             engine.apply(1, new Put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 0));
             engine.apply(2, new Put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 0));
             engine.apply(3, new Put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 0));
@@ -194,9 +194,9 @@ class LSMEngineTest {
 
     @Test
     void scanFiltersTombstones() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             engine.apply(1, new Put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 0));
             engine.apply(2, new Put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 0));
             engine.apply(3, new Delete(ByteArray.of((byte) 2)));
@@ -214,15 +214,15 @@ class LSMEngineTest {
     @Test
     void scanMergesFromMultipleSources() {
         MemtableConfig memtableConfig = new MemtableConfig(512);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
-            LSMEngineConfig.create(tempDir).sstableConfig()
+            StoreConfig.create(tempDir).sstableConfig()
         );
 
         byte[] largeValue = new byte[100];
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             for (int i = 0; i < 20; i++) {
                 ByteArray key = ByteArray.of((byte) i);
                 ByteArray value = ByteArray.wrap(largeValue);
@@ -242,15 +242,15 @@ class LSMEngineTest {
     @Test
     void scanUsesLatestValueForDuplicateKeys() {
         MemtableConfig memtableConfig = new MemtableConfig(256);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
-            LSMEngineConfig.create(tempDir).sstableConfig()
+            StoreConfig.create(tempDir).sstableConfig()
         );
 
         byte[] largeValue = new byte[100];
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
 
             engine.apply(1, new Put(key, ByteArray.of((byte) 10), 0));
@@ -274,14 +274,14 @@ class LSMEngineTest {
 
     @Test
     void recoveryFromWAL() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             engine.apply(1, new Put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 0));
             engine.apply(2, new Put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 0));
         }
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             Optional<ByteArray> result1 = engine.get(ByteArray.of((byte) 1));
             Optional<ByteArray> result2 = engine.get(ByteArray.of((byte) 2));
 
@@ -295,15 +295,15 @@ class LSMEngineTest {
 
     @Test
     void recoveryFromSSTables() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             engine.apply(1, new Put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 0));
             engine.apply(2, new Put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 0));
             engine.flush();
         }
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             Optional<ByteArray> result1 = engine.get(ByteArray.of((byte) 1));
             Optional<ByteArray> result2 = engine.get(ByteArray.of((byte) 2));
 
@@ -317,9 +317,9 @@ class LSMEngineTest {
 
     @Test
     void readPathPriority() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
 
             engine.apply(1, new Put(key, ByteArray.of((byte) 10), 0));
@@ -337,15 +337,15 @@ class LSMEngineTest {
     @Test
     void multipleSSTables() {
         MemtableConfig memtableConfig = new MemtableConfig(512);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
-            LSMEngineConfig.create(tempDir).sstableConfig()
+            StoreConfig.create(tempDir).sstableConfig()
         );
 
         byte[] largeValue = new byte[100];
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             for (int i = 0; i < 30; i++) {
                 ByteArray key = ByteArray.of((byte) i);
                 ByteArray value = ByteArray.wrap(largeValue);

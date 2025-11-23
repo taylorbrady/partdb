@@ -2,7 +2,7 @@ package io.partdb.storage.compaction;
 
 import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
-import io.partdb.storage.LSMEngine;
+import io.partdb.storage.Store;
 import io.partdb.storage.MergingIterator;
 import io.partdb.storage.sstable.SSTableReader;
 import io.partdb.storage.sstable.SSTableWriter;
@@ -26,13 +26,13 @@ public final class CompactionExecutor implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(CompactionExecutor.class);
     private static final long TARGET_SSTABLE_SIZE = 2 * 1024 * 1024;
 
-    private final LSMEngine engine;
+    private final Store engine;
     private final CompactionStrategy strategy;
     private final ExecutorService executor;
     private final AtomicBoolean compacting;
     private volatile boolean closed;
 
-    public CompactionExecutor(LSMEngine engine, CompactionStrategy strategy) {
+    public CompactionExecutor(Store engine, CompactionStrategy strategy) {
         this.engine = engine;
         this.strategy = strategy;
         this.executor = Executors.newVirtualThreadPerTaskExecutor();

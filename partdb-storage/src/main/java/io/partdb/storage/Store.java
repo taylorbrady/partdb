@@ -26,14 +26,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
-import java.util.zip.CRC32;
 
-public final class LSMEngine implements StateMachine, AutoCloseable {
+public final class Store implements StateMachine, AutoCloseable {
 
     private static final Pattern SSTABLE_PATTERN = Pattern.compile("(\\d{6})\\.sst");
 
     private final Path dataDirectory;
-    private final LSMEngineConfig config;
+    private final StoreConfig config;
     private final Object memtableLock = new Object();
     private final Object manifestLock = new Object();
     private final AtomicLong sstableIdCounter;
@@ -45,9 +44,9 @@ public final class LSMEngine implements StateMachine, AutoCloseable {
     private volatile ManifestData manifest;
     private CompactionExecutor compactionExecutor;
 
-    private LSMEngine(
+    private Store(
         Path dataDirectory,
-        LSMEngineConfig config,
+        StoreConfig config,
         Memtable activeMemtable,
         List<SSTableReader> sstables,
         ManifestData manifest,
@@ -64,7 +63,7 @@ public final class LSMEngine implements StateMachine, AutoCloseable {
         this.lastApplied = new AtomicLong(lastAppliedIndex);
     }
 
-    public static LSMEngine open(Path dataDirectory, LSMEngineConfig config) {
+    public static Store open(Path dataDirectory, StoreConfig config) {
         try {
             Files.createDirectories(dataDirectory);
 
@@ -84,7 +83,7 @@ public final class LSMEngine implements StateMachine, AutoCloseable {
 
             Memtable memtable = new SkipListMemtable(config.memtableConfig());
 
-            LSMEngine engine = new LSMEngine(
+            Store engine = new Store(
                 dataDirectory,
                 config,
                 memtable,
@@ -101,7 +100,7 @@ public final class LSMEngine implements StateMachine, AutoCloseable {
 
             return engine;
         } catch (IOException e) {
-            throw new LSMEngineException.RecoveryException("Failed to open LSM engine", e);
+            throw new StoreException.RecoveryException("Failed to open store", e);
         }
     }
 
@@ -175,7 +174,7 @@ public final class LSMEngine implements StateMachine, AutoCloseable {
             byte[] data = baos.toByteArray();
             return StateSnapshot.create(lastApplied.get(), data);
         } catch (IOException e) {
-            throw new LSMEngineException.SnapshotException("Failed to create snapshot", e);
+            throw new StoreException.SnapshotException("Failed to create snapshot", e);
         }
     }
 
@@ -216,7 +215,7 @@ public final class LSMEngine implements StateMachine, AutoCloseable {
             );
             compactionExecutor = new CompactionExecutor(this, strategy);
         } catch (Exception e) {
-            throw new LSMEngineException.SnapshotException("Failed to restore from snapshot", e);
+            throw new StoreException.SnapshotException("Failed to restore from snapshot", e);
         }
     }
 
@@ -319,7 +318,7 @@ public final class LSMEngine implements StateMachine, AutoCloseable {
 
             compactionExecutor.maybeScheduleCompaction();
         } catch (Exception e) {
-            throw new LSMEngineException.FlushException("Failed to flush memtable to SSTable", e);
+            throw new StoreException.FlushException("Failed to flush memtable to SSTable", e);
         }
     }
 
@@ -333,7 +332,7 @@ public final class LSMEngine implements StateMachine, AutoCloseable {
         try (Stream<Path> paths = Files.list(dataDirectory)) {
             List<Path> sstablePaths = paths
                 .filter(path -> SSTABLE_PATTERN.matcher(path.getFileName().toString()).matches())
-                .sorted(Comparator.comparingLong(LSMEngine::extractIdFromPath).reversed())
+                .sorted(Comparator.comparingLong(Store::extractIdFromPath).reversed())
                 .toList();
 
             for (Path path : sstablePaths) {

@@ -4,8 +4,8 @@ import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
 import io.partdb.common.statemachine.Delete;
 import io.partdb.common.statemachine.Put;
-import io.partdb.storage.LSMEngine;
-import io.partdb.storage.LSMEngineConfig;
+import io.partdb.storage.Store;
+import io.partdb.storage.StoreConfig;
 import io.partdb.storage.memtable.MemtableConfig;
 import io.partdb.storage.sstable.SSTableConfig;
 import org.junit.jupiter.api.Test;
@@ -26,13 +26,13 @@ class CompactionTest {
     @Test
     void testL0CompactionTriggersWhenThresholdReached() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
             SSTableConfig.create()
         );
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
@@ -55,13 +55,13 @@ class CompactionTest {
     @Test
     void testCompactionMergesOverlappingKeys() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
             SSTableConfig.create()
         );
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             long index = 0;
             for (int version = 0; version < 5; version++) {
                 for (int i = 0; i < 20; i++) {
@@ -86,13 +86,13 @@ class CompactionTest {
     @Test
     void testTombstonesDroppedAtBottomLevel() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
             SSTableConfig.create()
         );
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             long index = 0;
             for (int i = 0; i < 50; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
@@ -120,13 +120,13 @@ class CompactionTest {
     @Test
     void testLevelSizeRespected() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(2048);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
             SSTableConfig.create()
         );
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             byte[] largeValue = new byte[100];
             long index = 0;
             for (int batch = 0; batch < 20; batch++) {
@@ -155,13 +155,13 @@ class CompactionTest {
     @Test
     void testCompactionPreservesNewestVersions() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
             SSTableConfig.create()
         );
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             List<String> expectedValues = new ArrayList<>();
 
             for (int i = 0; i < 30; i++) {
@@ -189,13 +189,13 @@ class CompactionTest {
     @Test
     void testManifestConsistencyAfterCompaction() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
             SSTableConfig.create()
         );
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             for (int i = 0; i < 80; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
@@ -224,7 +224,7 @@ class CompactionTest {
     @Test
     void testReopenAfterCompaction() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
             SSTableConfig.create()
@@ -233,7 +233,7 @@ class CompactionTest {
         List<ByteArray> keys = new ArrayList<>();
         List<ByteArray> values = new ArrayList<>();
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             for (int i = 0; i < 60; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
@@ -245,7 +245,7 @@ class CompactionTest {
             Thread.sleep(500);
         }
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             for (int i = 0; i < keys.size(); i++) {
                 Optional<ByteArray> result = engine.get(keys.get(i));
                 assertThat(result).isPresent();
@@ -257,13 +257,13 @@ class CompactionTest {
     @Test
     void testScanAfterCompaction() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
-        LSMEngineConfig config = new LSMEngineConfig(
+        StoreConfig config = new StoreConfig(
             tempDir,
             memtableConfig,
             SSTableConfig.create()
         );
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
@@ -291,9 +291,9 @@ class CompactionTest {
 
     @Test
     void testEmptyManifestLoad() {
-        LSMEngineConfig config = LSMEngineConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create(tempDir);
 
-        try (LSMEngine engine = LSMEngine.open(tempDir, config)) {
+        try (Store engine = Store.open(tempDir, config)) {
             ManifestData manifest = engine.getManifest();
             assertThat(manifest).isNotNull();
             assertThat(manifest.sstables()).isEmpty();
