@@ -48,17 +48,34 @@ message Operation {
   oneof op {
     Put put = 1;
     Delete delete = 2;
+    GrantLease grant_lease = 3;
+    RevokeLease revoke_lease = 4;
+    KeepAliveLease keep_alive_lease = 5;
   }
 }
 
 message Put {
   bytes key = 1;
   bytes value = 2;
-  int64 expires_at_millis = 3;
+  int64 lease_id = 3;
 }
 
 message Delete {
   bytes key = 1;
+}
+
+message GrantLease {
+  int64 lease_id = 1;
+  int64 ttl_millis = 2;
+  int64 granted_at_millis = 3;
+}
+
+message RevokeLease {
+  int64 lease_id = 1;
+}
+
+message KeepAliveLease {
+  int64 lease_id = 1;
 }
 
 message InstallSnapshotResponse {

@@ -7,7 +7,7 @@ public record Entry(
     ByteArray value,
     long timestamp,
     boolean tombstone,
-    long expiresAtMillis
+    long leaseId
 ) {
 
     public Entry {
@@ -15,26 +15,21 @@ public record Entry(
         if (!tombstone && value == null) {
             throw new IllegalArgumentException("value cannot be null for non-tombstone");
         }
+        if (leaseId < 0) {
+            throw new IllegalArgumentException("leaseId must be non-negative");
+        }
     }
 
     public static Entry put(ByteArray key, ByteArray value, long timestamp) {
         return new Entry(key, value, timestamp, false, 0);
     }
 
-    public static Entry putWithTTL(ByteArray key, ByteArray value, long timestamp, long ttlMillis) {
-        return new Entry(key, value, timestamp, false, timestamp + ttlMillis);
-    }
-
-    public static Entry putWithExpiry(ByteArray key, ByteArray value, long timestamp, long expiresAtMillis) {
-        return new Entry(key, value, timestamp, false, expiresAtMillis);
+    public static Entry putWithLease(ByteArray key, ByteArray value, long timestamp, long leaseId) {
+        return new Entry(key, value, timestamp, false, leaseId);
     }
 
     public static Entry delete(ByteArray key, long timestamp) {
         return new Entry(key, null, timestamp, true, 0);
-    }
-
-    public boolean isExpired(long currentTimeMillis) {
-        return expiresAtMillis > 0 && currentTimeMillis >= expiresAtMillis;
     }
 
     public KVPair toKVPair() {

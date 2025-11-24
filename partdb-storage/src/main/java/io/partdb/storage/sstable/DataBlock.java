@@ -89,7 +89,7 @@ final class DataBlock {
         }
         buffer.put(flags);
 
-        buffer.putLong(entry.expiresAtMillis());
+        buffer.putLong(entry.leaseId());
 
         byte[] keyBytes = entry.key().toByteArray();
         buffer.putInt(keyBytes.length);
@@ -108,7 +108,7 @@ final class DataBlock {
         long timestamp = buffer.getLong();
         byte flags = buffer.get();
         boolean tombstone = (flags & 0x01) != 0;
-        long expiresAtMillis = buffer.getLong();
+        long leaseId = buffer.getLong();
 
         int keyLength = buffer.getInt();
         byte[] keyBytes = new byte[keyLength];
@@ -117,12 +117,12 @@ final class DataBlock {
 
         int valueLength = buffer.getInt();
         if (tombstone) {
-            return new Entry(key, null, timestamp, true, expiresAtMillis);
+            return new Entry(key, null, timestamp, true, leaseId);
         } else {
             byte[] valueBytes = new byte[valueLength];
             buffer.get(valueBytes);
             ByteArray value = ByteArray.wrap(valueBytes);
-            return new Entry(key, value, timestamp, false, expiresAtMillis);
+            return new Entry(key, value, timestamp, false, leaseId);
         }
     }
 }

@@ -96,22 +96,6 @@ class StoreTest {
     }
 
     @Test
-    void expiredEntryReturnsEmpty() {
-        StoreConfig config = StoreConfig.create(tempDir);
-
-        try (Store engine = Store.open(tempDir, config)) {
-            ByteArray key = ByteArray.of((byte) 1);
-            ByteArray value = ByteArray.of((byte) 10);
-            long expiresAtMillis = System.currentTimeMillis() - 10000;
-
-            engine.apply(1, new Put(key, value, expiresAtMillis));
-
-            Optional<ByteArray> result = engine.get(key);
-            assertThat(result).isEmpty();
-        }
-    }
-
-    @Test
     void manualFlush() {
         StoreConfig config = StoreConfig.create(tempDir);
 

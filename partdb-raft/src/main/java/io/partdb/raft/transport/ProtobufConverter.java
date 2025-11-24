@@ -3,8 +3,11 @@ package io.partdb.raft.transport;
 import com.google.protobuf.ByteString;
 import io.partdb.common.ByteArray;
 import io.partdb.common.statemachine.Delete;
+import io.partdb.common.statemachine.GrantLease;
+import io.partdb.common.statemachine.KeepAliveLease;
 import io.partdb.common.statemachine.Operation;
 import io.partdb.common.statemachine.Put;
+import io.partdb.common.statemachine.RevokeLease;
 import io.partdb.raft.LogEntry;
 import io.partdb.raft.rpc.AppendEntriesRequest;
 import io.partdb.raft.rpc.AppendEntriesResponse;
@@ -135,12 +138,29 @@ final class ProtobufConverter {
                 .setPut(RaftProto.Put.newBuilder()
                     .setKey(toByteString(put.key()))
                     .setValue(toByteString(put.value()))
-                    .setExpiresAtMillis(put.expiresAtMillis())
+                    .setLeaseId(put.leaseId())
                     .build())
                 .build();
             case Delete delete -> RaftProto.Operation.newBuilder()
                 .setDelete(RaftProto.Delete.newBuilder()
                     .setKey(toByteString(delete.key()))
+                    .build())
+                .build();
+            case GrantLease grantLease -> RaftProto.Operation.newBuilder()
+                .setGrantLease(RaftProto.GrantLease.newBuilder()
+                    .setLeaseId(grantLease.leaseId())
+                    .setTtlMillis(grantLease.ttlMillis())
+                    .setGrantedAtMillis(grantLease.grantedAtMillis())
+                    .build())
+                .build();
+            case RevokeLease revokeLease -> RaftProto.Operation.newBuilder()
+                .setRevokeLease(RaftProto.RevokeLease.newBuilder()
+                    .setLeaseId(revokeLease.leaseId())
+                    .build())
+                .build();
+            case KeepAliveLease keepAliveLease -> RaftProto.Operation.newBuilder()
+                .setKeepAliveLease(RaftProto.KeepAliveLease.newBuilder()
+                    .setLeaseId(keepAliveLease.leaseId())
                     .build())
                 .build();
         };
@@ -153,12 +173,28 @@ final class ProtobufConverter {
                 yield new Put(
                     fromByteString(put.getKey()),
                     fromByteString(put.getValue()),
-                    put.getExpiresAtMillis()
+                    put.getLeaseId()
                 );
             }
             case DELETE -> {
                 RaftProto.Delete delete = proto.getDelete();
                 yield new Delete(fromByteString(delete.getKey()));
+            }
+            case GRANT_LEASE -> {
+                RaftProto.GrantLease grantLease = proto.getGrantLease();
+                yield new GrantLease(
+                    grantLease.getLeaseId(),
+                    grantLease.getTtlMillis(),
+                    grantLease.getGrantedAtMillis()
+                );
+            }
+            case REVOKE_LEASE -> {
+                RaftProto.RevokeLease revokeLease = proto.getRevokeLease();
+                yield new RevokeLease(revokeLease.getLeaseId());
+            }
+            case KEEP_ALIVE_LEASE -> {
+                RaftProto.KeepAliveLease keepAliveLease = proto.getKeepAliveLease();
+                yield new KeepAliveLease(keepAliveLease.getLeaseId());
             }
             case OP_NOT_SET -> throw new IllegalArgumentException("Operation not set");
         };

@@ -108,13 +108,13 @@ class SSTableTest {
     }
 
     @Test
-    void writeAndReadEntryWithTTL() {
+    void writeAndReadEntryWithLease() {
         Path sstablePath = tempDir.resolve("test.sst");
         SSTableConfig config = SSTableConfig.create();
 
         ByteArray key = ByteArray.of((byte) 1);
         ByteArray value = ByteArray.of((byte) 2);
-        Entry entry = Entry.putWithTTL(key, value, 1000L, 5000L);
+        Entry entry = Entry.putWithLease(key, value, 1000L, 42L);
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
             writer.append(entry);
@@ -124,7 +124,7 @@ class SSTableTest {
             Optional<Entry> result = reader.get(key);
 
             assertThat(result).isPresent();
-            assertThat(result.get().expiresAtMillis()).isEqualTo(6000L);
+            assertThat(result.get().leaseId()).isEqualTo(42L);
         }
     }
 

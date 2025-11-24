@@ -2,8 +2,11 @@ package io.partdb.raft;
 
 import io.partdb.common.ByteArray;
 import io.partdb.common.statemachine.Delete;
+import io.partdb.common.statemachine.GrantLease;
+import io.partdb.common.statemachine.KeepAliveLease;
 import io.partdb.common.statemachine.Operation;
 import io.partdb.common.statemachine.Put;
+import io.partdb.common.statemachine.RevokeLease;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
@@ -353,7 +356,7 @@ final class RaftLogSegment implements AutoCloseable {
                 offset += 4;
                 MemorySegment.copy(put.value().toByteArray(), 0, seg, ValueLayout.JAVA_BYTE, offset, put.value().size());
                 offset += put.value().size();
-                seg.set(ValueLayout.JAVA_LONG, offset, put.expiresAtMillis());
+                seg.set(ValueLayout.JAVA_LONG, offset, put.leaseId());
 
                 yield seg;
             }
@@ -369,6 +372,49 @@ final class RaftLogSegment implements AutoCloseable {
                 seg.set(ValueLayout.JAVA_INT, offset, delete.key().size());
                 offset += 4;
                 MemorySegment.copy(delete.key().toByteArray(), 0, seg, ValueLayout.JAVA_BYTE, offset, delete.key().size());
+
+                yield seg;
+            }
+            case GrantLease grantLease -> {
+                long size = 8 + 1 + 8 + 8 + 8;
+                MemorySegment seg = arena.allocate(size);
+                long offset = 0;
+
+                seg.set(ValueLayout.JAVA_LONG, offset, entry.term());
+                offset += 8;
+                seg.set(ValueLayout.JAVA_BYTE, offset, (byte) 3);
+                offset += 1;
+                seg.set(ValueLayout.JAVA_LONG, offset, grantLease.leaseId());
+                offset += 8;
+                seg.set(ValueLayout.JAVA_LONG, offset, grantLease.ttlMillis());
+                offset += 8;
+                seg.set(ValueLayout.JAVA_LONG, offset, grantLease.grantedAtMillis());
+
+                yield seg;
+            }
+            case RevokeLease revokeLease -> {
+                long size = 8 + 1 + 8;
+                MemorySegment seg = arena.allocate(size);
+                long offset = 0;
+
+                seg.set(ValueLayout.JAVA_LONG, offset, entry.term());
+                offset += 8;
+                seg.set(ValueLayout.JAVA_BYTE, offset, (byte) 4);
+                offset += 1;
+                seg.set(ValueLayout.JAVA_LONG, offset, revokeLease.leaseId());
+
+                yield seg;
+            }
+            case KeepAliveLease keepAliveLease -> {
+                long size = 8 + 1 + 8;
+                MemorySegment seg = arena.allocate(size);
+                long offset = 0;
+
+                seg.set(ValueLayout.JAVA_LONG, offset, entry.term());
+                offset += 8;
+                seg.set(ValueLayout.JAVA_BYTE, offset, (byte) 5);
+                offset += 1;
+                seg.set(ValueLayout.JAVA_LONG, offset, keepAliveLease.leaseId());
 
                 yield seg;
             }
@@ -393,9 +439,9 @@ final class RaftLogSegment implements AutoCloseable {
                 buffer.get(valueBytes);
                 ByteArray value = ByteArray.wrap(valueBytes);
 
-                long expiresAt = buffer.getLong();
+                long leaseId = buffer.getLong();
 
-                yield new Put(key, value, expiresAt);
+                yield new Put(key, value, leaseId);
             }
             case 2 -> {
                 int keySize = buffer.getInt();
@@ -404,6 +450,23 @@ final class RaftLogSegment implements AutoCloseable {
                 ByteArray key = ByteArray.wrap(keyBytes);
 
                 yield new Delete(key);
+            }
+            case 3 -> {
+                long leaseId = buffer.getLong();
+                long ttlMillis = buffer.getLong();
+                long grantedAtMillis = buffer.getLong();
+
+                yield new GrantLease(leaseId, ttlMillis, grantedAtMillis);
+            }
+            case 4 -> {
+                long leaseId = buffer.getLong();
+
+                yield new RevokeLease(leaseId);
+            }
+            case 5 -> {
+                long leaseId = buffer.getLong();
+
+                yield new KeepAliveLease(leaseId);
             }
             default -> throw new RaftException.LogException("Unknown operation type: " + opType);
         };

@@ -47,11 +47,6 @@ public final class MergingIterator implements Iterator<Entry> {
                 continue;
             }
 
-            if (current.entry.isExpired(System.currentTimeMillis())) {
-                lastKey = current.entry.key();
-                continue;
-            }
-
             lastKey = current.entry.key();
             nextEntry = current.entry;
             return;

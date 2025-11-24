@@ -2,6 +2,7 @@ package io.partdb.storage;
 
 import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
+import io.partdb.common.Lease;
 import io.partdb.common.statemachine.*;
 import io.partdb.storage.compaction.CompactionExecutor;
 import io.partdb.storage.compaction.LeveledCompactionConfig;
@@ -21,6 +22,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
@@ -35,6 +37,7 @@ public final class Store implements StateMachine, AutoCloseable {
     private final StoreConfig config;
     private final Object memtableLock = new Object();
     private final Object manifestLock = new Object();
+    private final Object leaseLock = new Object();
     private final AtomicLong sstableIdCounter;
     private final AtomicLong lastApplied;
 
@@ -43,6 +46,11 @@ public final class Store implements StateMachine, AutoCloseable {
     private final CopyOnWriteArrayList<SSTableReader> sstables;
     private volatile ManifestData manifest;
     private CompactionExecutor compactionExecutor;
+
+    private final Map<Long, Lease> activeLeases;
+    private final Map<Long, Set<ByteArray>> leaseToKeys;
+    private final Map<ByteArray, Long> keyToLease;
+    private final Set<Long> revokedLeases;
 
     private Store(
         Path dataDirectory,
@@ -61,6 +69,10 @@ public final class Store implements StateMachine, AutoCloseable {
         this.manifest = manifest;
         this.sstableIdCounter = sstableIdCounter;
         this.lastApplied = new AtomicLong(lastAppliedIndex);
+        this.activeLeases = new ConcurrentHashMap<>();
+        this.leaseToKeys = new ConcurrentHashMap<>();
+        this.keyToLease = new ConcurrentHashMap<>();
+        this.revokedLeases = ConcurrentHashMap.newKeySet();
     }
 
     public static Store open(Path dataDirectory, StoreConfig config) {
@@ -108,20 +120,73 @@ public final class Store implements StateMachine, AutoCloseable {
     public void apply(long index, Operation operation) {
         lastApplied.set(index);
 
-        Entry entry = switch (operation) {
-            case Put put -> Entry.putWithExpiry(put.key(), put.value(), index, put.expiresAtMillis());
-            case Delete delete -> Entry.delete(delete.key(), index);
-        };
+        switch (operation) {
+            case Put put -> {
+                Entry entry = Entry.putWithLease(put.key(), put.value(), index, put.leaseId());
 
-        synchronized (memtableLock) {
-            activeMemtable.put(entry);
+                synchronized (memtableLock) {
+                    activeMemtable.put(entry);
 
-            if (activeMemtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes()) {
-                rotateMemtable();
+                    if (activeMemtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes()) {
+                        rotateMemtable();
+                    }
+                }
+
+                if (put.leaseId() != 0) {
+                    synchronized (leaseLock) {
+                        leaseToKeys.computeIfAbsent(put.leaseId(), k -> ConcurrentHashMap.newKeySet()).add(put.key());
+                        keyToLease.put(put.key(), put.leaseId());
+                    }
+                }
+
+                flushImmutableMemtables();
+            }
+            case Delete delete -> {
+                Entry entry = Entry.delete(delete.key(), index);
+
+                synchronized (memtableLock) {
+                    activeMemtable.put(entry);
+
+                    if (activeMemtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes()) {
+                        rotateMemtable();
+                    }
+                }
+
+                synchronized (leaseLock) {
+                    Long leaseId = keyToLease.remove(delete.key());
+                    if (leaseId != null) {
+                        Set<ByteArray> keys = leaseToKeys.get(leaseId);
+                        if (keys != null) {
+                            keys.remove(delete.key());
+                        }
+                    }
+                }
+
+                flushImmutableMemtables();
+            }
+            case GrantLease grantLease -> {
+                Lease lease = new Lease(grantLease.leaseId(), grantLease.ttlMillis(), grantLease.grantedAtMillis());
+                synchronized (leaseLock) {
+                    activeLeases.put(grantLease.leaseId(), lease);
+                    revokedLeases.remove(grantLease.leaseId());
+                }
+            }
+            case RevokeLease revokeLease -> {
+                synchronized (leaseLock) {
+                    activeLeases.remove(revokeLease.leaseId());
+                    revokedLeases.add(revokeLease.leaseId());
+                }
+            }
+            case KeepAliveLease keepAliveLease -> {
+                synchronized (leaseLock) {
+                    Lease existing = activeLeases.get(keepAliveLease.leaseId());
+                    if (existing != null) {
+                        Lease renewed = existing.renew(System.currentTimeMillis());
+                        activeLeases.put(keepAliveLease.leaseId(), renewed);
+                    }
+                }
             }
         }
-
-        flushImmutableMemtables();
     }
 
     @Override
@@ -171,6 +236,34 @@ public final class Store implements StateMachine, AutoCloseable {
                 }
             }
 
+            synchronized (leaseLock) {
+                buffer.clear();
+                buffer.putInt(activeLeases.size());
+                baos.write(buffer.array(), 0, 4);
+
+                for (Lease lease : activeLeases.values()) {
+                    buffer.clear();
+                    buffer.putLong(lease.id());
+                    baos.write(buffer.array());
+                    buffer.clear();
+                    buffer.putLong(lease.ttlMillis());
+                    baos.write(buffer.array());
+                    buffer.clear();
+                    buffer.putLong(lease.grantedAtMillis());
+                    baos.write(buffer.array());
+                }
+
+                buffer.clear();
+                buffer.putInt(revokedLeases.size());
+                baos.write(buffer.array(), 0, 4);
+
+                for (Long revokedLeaseId : revokedLeases) {
+                    buffer.clear();
+                    buffer.putLong(revokedLeaseId);
+                    baos.write(buffer.array());
+                }
+            }
+
             byte[] data = baos.toByteArray();
             return StateSnapshot.create(lastApplied.get(), data);
         } catch (IOException e) {
@@ -193,6 +286,21 @@ public final class Store implements StateMachine, AutoCloseable {
                 metadataList.add(deserializeMetadata(buffer));
             }
 
+            int activeLeaseCount = buffer.getInt();
+            Map<Long, Lease> restoredLeases = new HashMap<>(activeLeaseCount);
+            for (int i = 0; i < activeLeaseCount; i++) {
+                long leaseId = buffer.getLong();
+                long ttlMillis = buffer.getLong();
+                long grantedAtMillis = buffer.getLong();
+                restoredLeases.put(leaseId, new Lease(leaseId, ttlMillis, grantedAtMillis));
+            }
+
+            int revokedLeaseCount = buffer.getInt();
+            Set<Long> restoredRevokedLeases = new HashSet<>(revokedLeaseCount);
+            for (int i = 0; i < revokedLeaseCount; i++) {
+                restoredRevokedLeases.add(buffer.getLong());
+            }
+
             ManifestData newManifest = new ManifestData(nextSSTableId, snapshot.lastAppliedIndex(), metadataList);
 
             synchronized (manifestLock) {
@@ -206,6 +314,15 @@ public final class Store implements StateMachine, AutoCloseable {
 
             activeMemtable = new SkipListMemtable(config.memtableConfig());
             immutableMemtables.clear();
+
+            synchronized (leaseLock) {
+                activeLeases.clear();
+                activeLeases.putAll(restoredLeases);
+                leaseToKeys.clear();
+                keyToLease.clear();
+                revokedLeases.clear();
+                revokedLeases.addAll(restoredRevokedLeases);
+            }
 
             lastApplied.set(snapshot.lastAppliedIndex());
             sstableIdCounter.set(nextSSTableId);
@@ -232,6 +349,18 @@ public final class Store implements StateMachine, AutoCloseable {
         }
 
         flushImmutableMemtables();
+    }
+
+    public List<Long> getExpiredLeases(long currentTimeMillis) {
+        List<Long> expired = new ArrayList<>();
+        synchronized (leaseLock) {
+            for (Map.Entry<Long, Lease> entry : activeLeases.entrySet()) {
+                if (entry.getValue().isExpired(currentTimeMillis)) {
+                    expired.add(entry.getKey());
+                }
+            }
+        }
+        return expired;
     }
 
     @Override
@@ -352,7 +481,10 @@ public final class Store implements StateMachine, AutoCloseable {
     }
 
     private Optional<Entry> handleEntry(Entry entry) {
-        if (entry.tombstone() || entry.isExpired(System.currentTimeMillis())) {
+        if (entry.tombstone()) {
+            return Optional.empty();
+        }
+        if (entry.leaseId() != 0 && revokedLeases.contains(entry.leaseId())) {
             return Optional.empty();
         }
         return Optional.of(entry);

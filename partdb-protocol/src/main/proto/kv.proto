@@ -13,6 +13,9 @@ service KVService {
   rpc Scan(ScanRequest) returns (stream ScanResponse);
   rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
   rpc BatchWrite(BatchWriteRequest) returns (BatchWriteResponse);
+  rpc GrantLease(GrantLeaseRequest) returns (GrantLeaseResponse);
+  rpc RevokeLease(RevokeLeaseRequest) returns (RevokeLeaseResponse);
+  rpc KeepAliveLease(KeepAliveLeaseRequest) returns (KeepAliveLeaseResponse);
 }
 
 message RequestHeader {
@@ -55,7 +58,7 @@ message PutRequest {
   RequestHeader header = 1;
   bytes key = 2;
   bytes value = 3;
-  int64 expires_at_millis = 4;
+  int64 lease_id = 4;
   bytes prev_value = 5;
 }
 
@@ -120,7 +123,7 @@ message WriteOp {
 message PutOp {
   bytes key = 1;
   bytes value = 2;
-  int64 expires_at_millis = 3;
+  int64 lease_id = 3;
 }
 
 message DeleteOp {
@@ -135,4 +138,34 @@ message BatchWriteRequest {
 message BatchWriteResponse {
   Error error = 1;
   int64 revision = 2;
+}
+
+message GrantLeaseRequest {
+  RequestHeader header = 1;
+  int64 ttl_millis = 2;
+}
+
+message GrantLeaseResponse {
+  Error error = 1;
+  int64 lease_id = 2;
+  int64 ttl_millis = 3;
+}
+
+message RevokeLeaseRequest {
+  RequestHeader header = 1;
+  int64 lease_id = 2;
+}
+
+message RevokeLeaseResponse {
+  Error error = 1;
+}
+
+message KeepAliveLeaseRequest {
+  RequestHeader header = 1;
+  int64 lease_id = 2;
+}
+
+message KeepAliveLeaseResponse {
+  Error error = 1;
+  int64 ttl_millis = 2;
 }

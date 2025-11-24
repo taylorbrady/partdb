@@ -42,10 +42,6 @@ public final class SkipListMemtable implements Memtable {
             return Optional.empty();
         }
 
-        if (isExpired(entry)) {
-            return Optional.empty();
-        }
-
         return Optional.of(entry);
     }
 
@@ -85,12 +81,5 @@ public final class SkipListMemtable implements Memtable {
             size += entry.value().size();
         }
         return size;
-    }
-
-    private boolean isExpired(Entry entry) {
-        if (entry.expiresAtMillis() == 0) {
-            return false;
-        }
-        return System.currentTimeMillis() > entry.expiresAtMillis();
     }
 }

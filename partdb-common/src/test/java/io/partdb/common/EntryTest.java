@@ -18,19 +18,19 @@ class EntryTest {
         assertThat(entry.value()).isEqualTo(value);
         assertThat(entry.timestamp()).isEqualTo(timestamp);
         assertThat(entry.tombstone()).isFalse();
-        assertThat(entry.expiresAtMillis()).isZero();
+        assertThat(entry.leaseId()).isZero();
     }
 
     @Test
-    void putWithTTLSetsExpirationTime() {
+    void putWithLeaseAttachesLease() {
         ByteArray key = ByteArray.of((byte) 1);
         ByteArray value = ByteArray.of((byte) 2);
         long timestamp = 1000L;
-        long ttl = 5000L;
+        long leaseId = 42L;
 
-        Entry entry = Entry.putWithTTL(key, value, timestamp, ttl);
+        Entry entry = Entry.putWithLease(key, value, timestamp, leaseId);
 
-        assertThat(entry.expiresAtMillis()).isEqualTo(1000L + 5000L);
+        assertThat(entry.leaseId()).isEqualTo(leaseId);
         assertThat(entry.tombstone()).isFalse();
     }
 
@@ -45,7 +45,7 @@ class EntryTest {
         assertThat(entry.value()).isNull();
         assertThat(entry.timestamp()).isEqualTo(timestamp);
         assertThat(entry.tombstone()).isTrue();
-        assertThat(entry.expiresAtMillis()).isZero();
+        assertThat(entry.leaseId()).isZero();
     }
 
     @Test
@@ -74,53 +74,6 @@ class EntryTest {
 
         assertThat(entry.tombstone()).isTrue();
         assertThat(entry.value()).isNull();
-    }
-
-    @Test
-    void isExpiredReturnsFalseWhenNoTTL() {
-        Entry entry = Entry.put(
-            ByteArray.of((byte) 1),
-            ByteArray.of((byte) 2),
-            1000L
-        );
-
-        assertThat(entry.isExpired(10000L)).isFalse();
-    }
-
-    @Test
-    void isExpiredReturnsFalseBeforeExpiration() {
-        Entry entry = Entry.putWithTTL(
-            ByteArray.of((byte) 1),
-            ByteArray.of((byte) 2),
-            1000L,
-            5000L
-        );
-
-        assertThat(entry.isExpired(5999L)).isFalse();
-    }
-
-    @Test
-    void isExpiredReturnsTrueAtExactExpirationTime() {
-        Entry entry = Entry.putWithTTL(
-            ByteArray.of((byte) 1),
-            ByteArray.of((byte) 2),
-            1000L,
-            5000L
-        );
-
-        assertThat(entry.isExpired(6000L)).isTrue();
-    }
-
-    @Test
-    void isExpiredReturnsTrueAfterExpiration() {
-        Entry entry = Entry.putWithTTL(
-            ByteArray.of((byte) 1),
-            ByteArray.of((byte) 2),
-            1000L,
-            5000L
-        );
-
-        assertThat(entry.isExpired(10000L)).isTrue();
     }
 
     @Test
@@ -179,12 +132,12 @@ class EntryTest {
     }
 
     @Test
-    void notEqualWhenExpirationDiffers() {
+    void notEqualWhenLeaseIdDiffers() {
         ByteArray key = ByteArray.of((byte) 1);
         ByteArray value = ByteArray.of((byte) 2);
 
         Entry entry1 = Entry.put(key, value, 1000L);
-        Entry entry2 = Entry.putWithTTL(key, value, 1000L, 5000L);
+        Entry entry2 = Entry.putWithLease(key, value, 1000L, 42L);
 
         assertThat(entry1).isNotEqualTo(entry2);
     }

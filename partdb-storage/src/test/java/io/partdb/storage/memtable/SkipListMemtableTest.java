@@ -92,33 +92,6 @@ class SkipListMemtableTest {
     }
 
     @Test
-    void getExpiredEntryReturnsEmpty() throws InterruptedException {
-        ByteArray key = ByteArray.of((byte) 1);
-        ByteArray value = ByteArray.of((byte) 2);
-        Entry entry = Entry.putWithTTL(key, value, System.currentTimeMillis(), 50L);
-
-        memtable.put(entry);
-
-        Thread.sleep(100);
-
-        Optional<Entry> result = memtable.get(key);
-        assertThat(result).isEmpty();
-    }
-
-    @Test
-    void getNonExpiredEntryReturnsValue() {
-        ByteArray key = ByteArray.of((byte) 1);
-        ByteArray value = ByteArray.of((byte) 2);
-        Entry entry = Entry.putWithTTL(key, value, System.currentTimeMillis(), 10000L);
-
-        memtable.put(entry);
-
-        Optional<Entry> result = memtable.get(key);
-        assertThat(result).isPresent();
-        assertThat(result.get().value()).isEqualTo(value);
-    }
-
-    @Test
     void sizeInBytesInitiallyZero() {
         assertThat(memtable.sizeInBytes()).isEqualTo(0);
     }

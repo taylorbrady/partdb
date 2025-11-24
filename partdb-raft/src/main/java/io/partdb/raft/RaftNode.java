@@ -161,6 +161,10 @@ public final class RaftNode implements AutoCloseable {
         return future;
     }
 
+    public boolean isLeader() {
+        return state.get().isLeader();
+    }
+
     public CompletableFuture<Optional<ByteArray>> get(ByteArray key) {
         RaftNodeState currentState = state.get();
         if (!currentState.isLeader()) {
