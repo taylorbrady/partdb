@@ -5,6 +5,7 @@ import io.partdb.common.Entry;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -58,7 +59,7 @@ public final class SSTableWriter implements AutoCloseable {
 
     private void writeHeader() {
         try {
-            ByteBuffer buffer = ByteBuffer.allocate(SSTableHeader.HEADER_SIZE);
+            ByteBuffer buffer = ByteBuffer.allocate(SSTableHeader.HEADER_SIZE).order(ByteOrder.nativeOrder());
             buffer.putInt(SSTableHeader.MAGIC_NUMBER);
             buffer.putInt(SSTableHeader.CURRENT_VERSION);
             buffer.putInt(0);

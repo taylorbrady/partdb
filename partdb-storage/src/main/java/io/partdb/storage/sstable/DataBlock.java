@@ -3,7 +3,10 @@ package io.partdb.storage.sstable;
 import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
 
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.CRC32;
@@ -18,7 +21,7 @@ final class DataBlock {
             dataSize += estimateEntrySize(entry);
         }
 
-        ByteBuffer buffer = ByteBuffer.allocate(dataSize + TRAILER_SIZE);
+        ByteBuffer buffer = ByteBuffer.allocate(dataSize + TRAILER_SIZE).order(ByteOrder.nativeOrder());
 
         for (Entry entry : entries) {
             serializeEntry(buffer, entry);
@@ -33,7 +36,7 @@ final class DataBlock {
         crc.update(data);
         int checksum = (int) crc.getValue();
 
-        buffer = ByteBuffer.allocate(data.length + TRAILER_SIZE);
+        buffer = ByteBuffer.allocate(data.length + TRAILER_SIZE).order(ByteOrder.nativeOrder());
         buffer.put(data);
         buffer.putInt(entryCount);
         buffer.putInt(checksum);
@@ -41,19 +44,18 @@ final class DataBlock {
         return buffer.array();
     }
 
-    static List<Entry> deserialize(ByteBuffer buffer) {
-        int totalSize = buffer.remaining();
+    static List<Entry> deserialize(MemorySegment segment) {
+        long totalSize = segment.byteSize();
         if (totalSize < TRAILER_SIZE) {
             throw new SSTableException("Block too small");
         }
 
-        int dataSize = totalSize - TRAILER_SIZE;
-        byte[] data = new byte[dataSize];
-        buffer.get(data);
+        long dataSize = totalSize - TRAILER_SIZE;
 
-        int entryCount = buffer.getInt();
-        int storedChecksum = buffer.getInt();
+        int entryCount = segment.get(ValueLayout.JAVA_INT_UNALIGNED, dataSize);
+        int storedChecksum = segment.get(ValueLayout.JAVA_INT_UNALIGNED, dataSize + 4);
 
+        byte[] data = segment.asSlice(0, dataSize).toArray(ValueLayout.JAVA_BYTE);
         CRC32 crc = new CRC32();
         crc.update(data);
         int computedChecksum = (int) crc.getValue();
@@ -62,11 +64,29 @@ final class DataBlock {
             throw new SSTableException("Block checksum mismatch");
         }
 
-        ByteBuffer dataBuffer = ByteBuffer.wrap(data);
+        MemorySegment dataSegment = MemorySegment.ofArray(data);
         List<Entry> entries = new ArrayList<>(entryCount);
+        long offset = 0;
 
         for (int i = 0; i < entryCount; i++) {
-            entries.add(deserializeEntry(dataBuffer));
+            long timestamp = dataSegment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
+            byte flags = dataSegment.get(ValueLayout.JAVA_BYTE, offset + 8);
+            boolean tombstone = (flags & 0x01) != 0;
+            long leaseId = dataSegment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 9);
+            int keyLength = dataSegment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 17);
+            byte[] keyBytes = dataSegment.asSlice(offset + 21, keyLength).toArray(ValueLayout.JAVA_BYTE);
+            int valueLength = dataSegment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 21 + keyLength);
+
+            ByteArray key = ByteArray.wrap(keyBytes);
+            offset += 21 + keyLength + 4;
+
+            if (tombstone) {
+                entries.add(new Entry(key, null, timestamp, true, leaseId));
+            } else {
+                byte[] valueBytes = dataSegment.asSlice(offset, valueLength).toArray(ValueLayout.JAVA_BYTE);
+                offset += valueLength;
+                entries.add(new Entry(key, ByteArray.wrap(valueBytes), timestamp, false, leaseId));
+            }
         }
 
         return entries;
@@ -101,28 +121,6 @@ final class DataBlock {
             byte[] valueBytes = entry.value().toByteArray();
             buffer.putInt(valueBytes.length);
             buffer.put(valueBytes);
-        }
-    }
-
-    private static Entry deserializeEntry(ByteBuffer buffer) {
-        long timestamp = buffer.getLong();
-        byte flags = buffer.get();
-        boolean tombstone = (flags & 0x01) != 0;
-        long leaseId = buffer.getLong();
-
-        int keyLength = buffer.getInt();
-        byte[] keyBytes = new byte[keyLength];
-        buffer.get(keyBytes);
-        ByteArray key = ByteArray.wrap(keyBytes);
-
-        int valueLength = buffer.getInt();
-        if (tombstone) {
-            return new Entry(key, null, timestamp, true, leaseId);
-        } else {
-            byte[] valueBytes = new byte[valueLength];
-            buffer.get(valueBytes);
-            ByteArray value = ByteArray.wrap(valueBytes);
-            return new Entry(key, value, timestamp, false, leaseId);
         }
     }
 }

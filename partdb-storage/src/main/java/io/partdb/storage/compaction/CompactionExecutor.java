@@ -2,6 +2,7 @@ package io.partdb.storage.compaction;
 
 import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
+import io.partdb.common.LeaseProvider;
 import io.partdb.storage.Store;
 import io.partdb.storage.MergingIterator;
 import io.partdb.storage.sstable.SSTableReader;
@@ -28,13 +29,15 @@ public final class CompactionExecutor implements AutoCloseable {
 
     private final Store engine;
     private final CompactionStrategy strategy;
+    private final LeaseProvider leaseProvider;
     private final ExecutorService executor;
     private final AtomicBoolean compacting;
     private volatile boolean closed;
 
-    public CompactionExecutor(Store engine, CompactionStrategy strategy) {
+    public CompactionExecutor(Store engine, CompactionStrategy strategy, LeaseProvider leaseProvider) {
         this.engine = engine;
         this.strategy = strategy;
+        this.leaseProvider = leaseProvider;
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         this.compacting = new AtomicBoolean(false);
         this.closed = false;
@@ -124,6 +127,10 @@ public final class CompactionExecutor implements AutoCloseable {
 
                 while (entries.hasNext() && bytesWritten < TARGET_SSTABLE_SIZE) {
                     Entry entry = entries.next();
+
+                    if (entry.leaseId() != 0 && !leaseProvider.isLeaseActive(entry.leaseId())) {
+                        continue;
+                    }
 
                     if (entry.tombstone() && targetLevel == 6) {
                         continue;

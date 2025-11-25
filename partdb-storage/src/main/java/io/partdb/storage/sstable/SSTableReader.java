@@ -4,8 +4,9 @@ import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -17,80 +18,75 @@ import java.util.Optional;
 public final class SSTableReader implements AutoCloseable {
 
     private final Path path;
-    private final FileChannel channel;
-    private final MappedByteBuffer mappedFile;
+    private final Arena arena;
+    private final MemorySegment segment;
     private final BloomFilter bloomFilter;
     private final BlockIndex index;
     private final SSTableFooter footer;
 
-    private SSTableReader(Path path, FileChannel channel, MappedByteBuffer mappedFile, BloomFilter bloomFilter, BlockIndex index, SSTableFooter footer) {
+    private SSTableReader(
+        Path path,
+        Arena arena,
+        MemorySegment segment,
+        BloomFilter bloomFilter,
+        BlockIndex index,
+        SSTableFooter footer
+    ) {
         this.path = path;
-        this.channel = channel;
-        this.mappedFile = mappedFile;
+        this.arena = arena;
+        this.segment = segment;
         this.bloomFilter = bloomFilter;
         this.index = index;
         this.footer = footer;
     }
 
     public static SSTableReader open(Path path) {
+        Arena arena = Arena.ofShared();
         try {
-            FileChannel channel = FileChannel.open(path, StandardOpenOption.READ);
-            long fileSize = channel.size();
+            long fileSize;
+            MemorySegment segment;
 
-            MappedByteBuffer mappedFile = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize);
+            try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
+                fileSize = channel.size();
+                segment = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize, arena);
+            }
 
-            validateHeader(mappedFile);
+            validateHeader(segment);
+            SSTableFooter footer = readFooter(segment, fileSize);
+            BloomFilter bloomFilter = readBloomFilter(segment, footer);
+            BlockIndex index = readIndex(segment, footer, fileSize);
 
-            SSTableFooter footer = readFooter(mappedFile, fileSize);
-            footer.validate();
-
-            BloomFilter bloomFilter = readBloomFilter(mappedFile, footer);
-            BlockIndex index = readIndex(mappedFile, footer, fileSize);
-
-            return new SSTableReader(path, channel, mappedFile, bloomFilter, index, footer);
+            return new SSTableReader(path, arena, segment, bloomFilter, index, footer);
         } catch (IOException e) {
+            arena.close();
             throw new SSTableException("Failed to open SSTable: " + path, e);
         }
     }
 
-    private static void validateHeader(MappedByteBuffer buffer) {
-        buffer.position(0);
-        int magic = buffer.getInt();
-        int version = buffer.getInt();
+    private static void validateHeader(MemorySegment segment) {
+        int magic = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 0);
+        int version = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 4);
         new SSTableHeader(magic, version);
     }
 
-    private static SSTableFooter readFooter(MappedByteBuffer buffer, long fileSize) {
-        int footerSizePosition = (int) (fileSize - 8);
-        buffer.position(footerSizePosition);
-        int footerSize = buffer.getInt();
-
-        int footerOffset = (int) (fileSize - footerSize);
-        buffer.position(footerOffset);
-
-        ByteBuffer footerBuffer = buffer.slice(footerOffset, footerSize);
-        return SSTableFooter.deserialize(footerBuffer);
+    private static SSTableFooter readFooter(MemorySegment segment, long fileSize) {
+        int footerSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, fileSize - 8);
+        long footerOffset = fileSize - footerSize;
+        MemorySegment footerSegment = segment.asSlice(footerOffset, footerSize);
+        return SSTableFooter.deserialize(footerSegment);
     }
 
-    private static BloomFilter readBloomFilter(MappedByteBuffer buffer, SSTableFooter footer) {
-        int bloomFilterOffset = (int) footer.bloomFilterOffset();
-        int bloomFilterSize = footer.bloomFilterSize();
-
-        buffer.position(bloomFilterOffset);
-        ByteBuffer bloomFilterBuffer = buffer.slice(bloomFilterOffset, bloomFilterSize);
-
-        return BloomFilter.deserialize(bloomFilterBuffer);
+    private static BloomFilter readBloomFilter(MemorySegment segment, SSTableFooter footer) {
+        MemorySegment bloomSegment = segment.asSlice(footer.bloomFilterOffset(), footer.bloomFilterSize());
+        return BloomFilter.deserialize(bloomSegment);
     }
 
-    private static BlockIndex readIndex(MappedByteBuffer buffer, SSTableFooter footer, long fileSize) {
-        int indexOffset = (int) footer.indexOffset();
+    private static BlockIndex readIndex(MemorySegment segment, SSTableFooter footer, long fileSize) {
+        long indexOffset = footer.indexOffset();
         int footerSize = SSTableFooter.calculateFooterSize(footer.largestKey());
-        int indexSize = (int) (fileSize - footerSize - indexOffset);
-
-        buffer.position(indexOffset);
-        ByteBuffer indexBuffer = buffer.slice(indexOffset, indexSize);
-
-        return BlockIndex.deserialize(indexBuffer, footer.blockCount());
+        long indexSize = fileSize - footerSize - indexOffset;
+        MemorySegment indexSegment = segment.asSlice(indexOffset, indexSize);
+        return BlockIndex.deserialize(indexSegment, footer.blockCount());
     }
 
     public Optional<Entry> get(ByteArray key) {
@@ -118,11 +114,8 @@ public final class SSTableReader implements AutoCloseable {
     }
 
     private List<Entry> readBlock(BlockIndex.IndexEntry blockEntry) {
-        int offset = (int) blockEntry.offset();
-        int size = blockEntry.size();
-
-        ByteBuffer blockBuffer = mappedFile.slice(offset, size);
-        return DataBlock.deserialize(blockBuffer);
+        MemorySegment blockSegment = segment.asSlice(blockEntry.offset(), blockEntry.size());
+        return DataBlock.deserialize(blockSegment);
     }
 
     public Path path() {
@@ -143,11 +136,7 @@ public final class SSTableReader implements AutoCloseable {
 
     @Override
     public void close() {
-        try {
-            channel.close();
-        } catch (IOException e) {
-            throw new SSTableException("Failed to close SSTable reader", e);
-        }
+        arena.close();
     }
 
     private class ScanIterator implements Iterator<Entry> {

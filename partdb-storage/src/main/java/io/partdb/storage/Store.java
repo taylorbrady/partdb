@@ -2,8 +2,8 @@ package io.partdb.storage;
 
 import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
-import io.partdb.common.Lease;
-import io.partdb.common.statemachine.*;
+import io.partdb.common.KVStorage;
+import io.partdb.common.LeaseProvider;
 import io.partdb.storage.compaction.CompactionExecutor;
 import io.partdb.storage.compaction.LeveledCompactionConfig;
 import io.partdb.storage.compaction.LeveledCompactionStrategy;
@@ -22,24 +22,32 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-public final class Store implements StateMachine, AutoCloseable {
+public final class Store implements KVStorage {
 
     private static final Pattern SSTABLE_PATTERN = Pattern.compile("(\\d{6})\\.sst");
+    private static final int MAX_IMMUTABLE_MEMTABLES = 4;
 
     private final Path dataDirectory;
     private final StoreConfig config;
+    private final LeaseProvider leaseProvider;
     private final Object memtableLock = new Object();
     private final Object manifestLock = new Object();
-    private final Object leaseLock = new Object();
+    private final Semaphore flushPermits = new Semaphore(MAX_IMMUTABLE_MEMTABLES);
     private final AtomicLong sstableIdCounter;
     private final AtomicLong lastApplied;
+    private final ExecutorService flushExecutor = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
 
     private volatile Memtable activeMemtable;
     private final Deque<Memtable> immutableMemtables;
@@ -47,14 +55,10 @@ public final class Store implements StateMachine, AutoCloseable {
     private volatile ManifestData manifest;
     private CompactionExecutor compactionExecutor;
 
-    private final Map<Long, Lease> activeLeases;
-    private final Map<Long, Set<ByteArray>> leaseToKeys;
-    private final Map<ByteArray, Long> keyToLease;
-    private final Set<Long> revokedLeases;
-
     private Store(
         Path dataDirectory,
         StoreConfig config,
+        LeaseProvider leaseProvider,
         Memtable activeMemtable,
         List<SSTableReader> sstables,
         ManifestData manifest,
@@ -63,19 +67,16 @@ public final class Store implements StateMachine, AutoCloseable {
     ) {
         this.dataDirectory = dataDirectory;
         this.config = config;
+        this.leaseProvider = leaseProvider;
         this.activeMemtable = activeMemtable;
         this.immutableMemtables = new ArrayDeque<>();
         this.sstables = new CopyOnWriteArrayList<>(sstables);
         this.manifest = manifest;
         this.sstableIdCounter = sstableIdCounter;
         this.lastApplied = new AtomicLong(lastAppliedIndex);
-        this.activeLeases = new ConcurrentHashMap<>();
-        this.leaseToKeys = new ConcurrentHashMap<>();
-        this.keyToLease = new ConcurrentHashMap<>();
-        this.revokedLeases = ConcurrentHashMap.newKeySet();
     }
 
-    public static Store open(Path dataDirectory, StoreConfig config) {
+    public static Store open(Path dataDirectory, StoreConfig config, LeaseProvider leaseProvider) {
         try {
             Files.createDirectories(dataDirectory);
 
@@ -95,9 +96,10 @@ public final class Store implements StateMachine, AutoCloseable {
 
             Memtable memtable = new SkipListMemtable(config.memtableConfig());
 
-            Store engine = new Store(
+            Store store = new Store(
                 dataDirectory,
                 config,
+                leaseProvider,
                 memtable,
                 sstables,
                 manifest,
@@ -108,91 +110,39 @@ public final class Store implements StateMachine, AutoCloseable {
             LeveledCompactionStrategy strategy = new LeveledCompactionStrategy(
                 LeveledCompactionConfig.create()
             );
-            engine.compactionExecutor = new CompactionExecutor(engine, strategy);
+            store.compactionExecutor = new CompactionExecutor(store, strategy, leaseProvider);
 
-            return engine;
+            return store;
         } catch (IOException e) {
             throw new StoreException.RecoveryException("Failed to open store", e);
         }
     }
 
     @Override
-    public void apply(long index, Operation operation) {
-        lastApplied.set(index);
+    public void put(Entry entry) {
+        boolean needsRotation;
+        synchronized (memtableLock) {
+            activeMemtable.put(entry);
+            needsRotation = activeMemtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes();
+        }
 
-        switch (operation) {
-            case Put put -> {
-                Entry entry = Entry.putWithLease(put.key(), put.value(), index, put.leaseId());
-
-                synchronized (memtableLock) {
-                    activeMemtable.put(entry);
-
-                    if (activeMemtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes()) {
-                        rotateMemtable();
-                    }
-                }
-
-                if (put.leaseId() != 0) {
-                    synchronized (leaseLock) {
-                        leaseToKeys.computeIfAbsent(put.leaseId(), k -> ConcurrentHashMap.newKeySet()).add(put.key());
-                        keyToLease.put(put.key(), put.leaseId());
-                    }
-                }
-
-                flushImmutableMemtables();
+        if (needsRotation) {
+            try {
+                flushPermits.acquire();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new StoreException.FlushException("Interrupted waiting for flush permit", e);
             }
-            case Delete delete -> {
-                Entry entry = Entry.delete(delete.key(), index);
 
-                synchronized (memtableLock) {
-                    activeMemtable.put(entry);
-
-                    if (activeMemtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes()) {
-                        rotateMemtable();
-                    }
-                }
-
-                synchronized (leaseLock) {
-                    Long leaseId = keyToLease.remove(delete.key());
-                    if (leaseId != null) {
-                        Set<ByteArray> keys = leaseToKeys.get(leaseId);
-                        if (keys != null) {
-                            keys.remove(delete.key());
-                        }
-                    }
-                }
-
-                flushImmutableMemtables();
-            }
-            case GrantLease grantLease -> {
-                Lease lease = new Lease(grantLease.leaseId(), grantLease.ttlMillis(), grantLease.grantedAtMillis());
-                synchronized (leaseLock) {
-                    activeLeases.put(grantLease.leaseId(), lease);
-                    revokedLeases.remove(grantLease.leaseId());
-                }
-            }
-            case RevokeLease revokeLease -> {
-                synchronized (leaseLock) {
-                    activeLeases.remove(revokeLease.leaseId());
-                    revokedLeases.add(revokeLease.leaseId());
-                }
-            }
-            case KeepAliveLease keepAliveLease -> {
-                synchronized (leaseLock) {
-                    Lease existing = activeLeases.get(keepAliveLease.leaseId());
-                    if (existing != null) {
-                        Lease renewed = existing.renew(System.currentTimeMillis());
-                        activeLeases.put(keepAliveLease.leaseId(), renewed);
-                    }
+            synchronized (memtableLock) {
+                if (activeMemtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes()) {
+                    rotateMemtable();
+                    flushExecutor.submit(this::flushPendingMemtables);
+                } else {
+                    flushPermits.release();
                 }
             }
         }
-    }
-
-    @Override
-    public Optional<ByteArray> get(ByteArray key) {
-        Optional<Entry> result = getEntry(key);
-        return result.map(Entry::value);
     }
 
     @Override
@@ -215,7 +165,7 @@ public final class Store implements StateMachine, AutoCloseable {
     }
 
     @Override
-    public StateSnapshot snapshot() {
+    public byte[] toSnapshot() {
         flush();
 
         try {
@@ -236,47 +186,21 @@ public final class Store implements StateMachine, AutoCloseable {
                 }
             }
 
-            synchronized (leaseLock) {
-                buffer.clear();
-                buffer.putInt(activeLeases.size());
-                baos.write(buffer.array(), 0, 4);
-
-                for (Lease lease : activeLeases.values()) {
-                    buffer.clear();
-                    buffer.putLong(lease.id());
-                    baos.write(buffer.array());
-                    buffer.clear();
-                    buffer.putLong(lease.ttlMillis());
-                    baos.write(buffer.array());
-                    buffer.clear();
-                    buffer.putLong(lease.grantedAtMillis());
-                    baos.write(buffer.array());
-                }
-
-                buffer.clear();
-                buffer.putInt(revokedLeases.size());
-                baos.write(buffer.array(), 0, 4);
-
-                for (Long revokedLeaseId : revokedLeases) {
-                    buffer.clear();
-                    buffer.putLong(revokedLeaseId);
-                    baos.write(buffer.array());
-                }
-            }
-
-            byte[] data = baos.toByteArray();
-            return StateSnapshot.create(lastApplied.get(), data);
+            return baos.toByteArray();
         } catch (IOException e) {
             throw new StoreException.SnapshotException("Failed to create snapshot", e);
         }
     }
 
     @Override
-    public void restore(StateSnapshot snapshot) {
+    public void restoreSnapshot(byte[] data) {
         try {
-            close();
+            for (SSTableReader sstable : sstables) {
+                sstable.close();
+            }
+            sstables.clear();
 
-            ByteBuffer buffer = ByteBuffer.wrap(snapshot.data());
+            ByteBuffer buffer = ByteBuffer.wrap(data);
 
             long nextSSTableId = buffer.getLong();
             int sstableCount = buffer.getInt();
@@ -286,22 +210,7 @@ public final class Store implements StateMachine, AutoCloseable {
                 metadataList.add(deserializeMetadata(buffer));
             }
 
-            int activeLeaseCount = buffer.getInt();
-            Map<Long, Lease> restoredLeases = new HashMap<>(activeLeaseCount);
-            for (int i = 0; i < activeLeaseCount; i++) {
-                long leaseId = buffer.getLong();
-                long ttlMillis = buffer.getLong();
-                long grantedAtMillis = buffer.getLong();
-                restoredLeases.put(leaseId, new Lease(leaseId, ttlMillis, grantedAtMillis));
-            }
-
-            int revokedLeaseCount = buffer.getInt();
-            Set<Long> restoredRevokedLeases = new HashSet<>(revokedLeaseCount);
-            for (int i = 0; i < revokedLeaseCount; i++) {
-                restoredRevokedLeases.add(buffer.getLong());
-            }
-
-            ManifestData newManifest = new ManifestData(nextSSTableId, snapshot.lastAppliedIndex(), metadataList);
+            ManifestData newManifest = new ManifestData(nextSSTableId, lastApplied.get(), metadataList);
 
             synchronized (manifestLock) {
                 manifest = newManifest;
@@ -309,28 +218,14 @@ public final class Store implements StateMachine, AutoCloseable {
             }
 
             List<SSTableReader> newSSTables = loadSSTablesFromManifest(dataDirectory, newManifest);
-            sstables.clear();
             sstables.addAll(newSSTables);
 
             activeMemtable = new SkipListMemtable(config.memtableConfig());
-            immutableMemtables.clear();
-
-            synchronized (leaseLock) {
-                activeLeases.clear();
-                activeLeases.putAll(restoredLeases);
-                leaseToKeys.clear();
-                keyToLease.clear();
-                revokedLeases.clear();
-                revokedLeases.addAll(restoredRevokedLeases);
+            synchronized (memtableLock) {
+                immutableMemtables.clear();
             }
 
-            lastApplied.set(snapshot.lastAppliedIndex());
             sstableIdCounter.set(nextSSTableId);
-
-            LeveledCompactionStrategy strategy = new LeveledCompactionStrategy(
-                LeveledCompactionConfig.create()
-            );
-            compactionExecutor = new CompactionExecutor(this, strategy);
         } catch (Exception e) {
             throw new StoreException.SnapshotException("Failed to restore from snapshot", e);
         }
@@ -341,31 +236,62 @@ public final class Store implements StateMachine, AutoCloseable {
         return lastApplied.get();
     }
 
-    public void flush() {
-        synchronized (memtableLock) {
-            if (activeMemtable.entryCount() > 0) {
-                rotateMemtable();
-            }
-        }
-
-        flushImmutableMemtables();
+    @Override
+    public void setLastAppliedIndex(long index) {
+        lastApplied.set(index);
     }
 
-    public List<Long> getExpiredLeases(long currentTimeMillis) {
-        List<Long> expired = new ArrayList<>();
-        synchronized (leaseLock) {
-            for (Map.Entry<Long, Lease> entry : activeLeases.entrySet()) {
-                if (entry.getValue().isExpired(currentTimeMillis)) {
-                    expired.add(entry.getKey());
+    @Override
+    public void flush() {
+        boolean needsRotation;
+        synchronized (memtableLock) {
+            needsRotation = activeMemtable.entryCount() > 0;
+        }
+
+        if (needsRotation) {
+            try {
+                flushPermits.acquire();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new StoreException.FlushException("Interrupted waiting for flush permit", e);
+            }
+
+            synchronized (memtableLock) {
+                if (activeMemtable.entryCount() > 0) {
+                    rotateMemtable();
+                    flushExecutor.submit(this::flushPendingMemtables);
+                } else {
+                    flushPermits.release();
                 }
             }
         }
-        return expired;
+
+        awaitPendingFlushes();
+    }
+
+    private void awaitPendingFlushes() {
+        CompletableFuture<Void> sentinel = new CompletableFuture<>();
+        flushExecutor.submit(() -> sentinel.complete(null));
+        try {
+            sentinel.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new StoreException.FlushException("Interrupted waiting for flush", e);
+        } catch (ExecutionException e) {
+            throw new StoreException.FlushException("Flush failed", e.getCause());
+        }
     }
 
     @Override
     public void close() {
         flush();
+
+        flushExecutor.shutdown();
+        try {
+            flushExecutor.awaitTermination(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
 
         if (compactionExecutor != null) {
             compactionExecutor.close();
@@ -376,17 +302,18 @@ public final class Store implements StateMachine, AutoCloseable {
         }
     }
 
-    private Optional<Entry> getEntry(ByteArray key) {
+    @Override
+    public Optional<Entry> getEntry(ByteArray key) {
         Optional<Entry> result = activeMemtable.get(key);
         if (result.isPresent()) {
-            return handleEntry(result.get());
+            return result;
         }
 
         synchronized (memtableLock) {
             for (Memtable immutable : immutableMemtables) {
                 result = immutable.get(key);
                 if (result.isPresent()) {
-                    return handleEntry(result.get());
+                    return result;
                 }
             }
         }
@@ -394,7 +321,7 @@ public final class Store implements StateMachine, AutoCloseable {
         for (SSTableReader sstable : sstables) {
             result = sstable.get(key);
             if (result.isPresent()) {
-                return handleEntry(result.get());
+                return result;
             }
         }
 
@@ -406,17 +333,24 @@ public final class Store implements StateMachine, AutoCloseable {
         activeMemtable = new SkipListMemtable(config.memtableConfig());
     }
 
-    private void flushImmutableMemtables() {
+    private void flushPendingMemtables() {
         while (true) {
             Memtable toFlush;
             synchronized (memtableLock) {
-                toFlush = immutableMemtables.pollFirst();
+                toFlush = immutableMemtables.peekFirst();
                 if (toFlush == null) {
                     return;
                 }
             }
 
-            flushMemtableToSSTable(toFlush);
+            try {
+                flushMemtableToSSTable(toFlush);
+            } finally {
+                synchronized (memtableLock) {
+                    immutableMemtables.pollFirst();
+                }
+                flushPermits.release();
+            }
         }
     }
 
@@ -478,16 +412,6 @@ public final class Store implements StateMachine, AutoCloseable {
             return Long.parseLong(matcher.group(1));
         }
         throw new IllegalArgumentException("Invalid SSTable filename: " + path);
-    }
-
-    private Optional<Entry> handleEntry(Entry entry) {
-        if (entry.tombstone()) {
-            return Optional.empty();
-        }
-        if (entry.leaseId() != 0 && revokedLeases.contains(entry.leaseId())) {
-            return Optional.empty();
-        }
-        return Optional.of(entry);
     }
 
     private static ManifestData buildManifestFromSSTables(List<SSTableReader> sstables) throws IOException {

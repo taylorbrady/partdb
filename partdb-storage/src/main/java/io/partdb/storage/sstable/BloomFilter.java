@@ -2,7 +2,10 @@ package io.partdb.storage.sstable;
 
 import io.partdb.common.ByteArray;
 
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 
 final class BloomFilter {
 
@@ -70,18 +73,17 @@ final class BloomFilter {
     }
 
     byte[] serialize() {
-        ByteBuffer buffer = ByteBuffer.allocate(4 + 4 + bits.length);
+        ByteBuffer buffer = ByteBuffer.allocate(4 + 4 + bits.length).order(ByteOrder.nativeOrder());
         buffer.putInt(numHashFunctions);
         buffer.putInt(bits.length);
         buffer.put(bits);
         return buffer.array();
     }
 
-    static BloomFilter deserialize(ByteBuffer buffer) {
-        int numHashFunctions = buffer.getInt();
-        int bitsLength = buffer.getInt();
-        byte[] bits = new byte[bitsLength];
-        buffer.get(bits);
+    static BloomFilter deserialize(MemorySegment segment) {
+        int numHashFunctions = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 0);
+        int bitsLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 4);
+        byte[] bits = segment.asSlice(8, bitsLength).toArray(ValueLayout.JAVA_BYTE);
         return new BloomFilter(bits, numHashFunctions);
     }
 

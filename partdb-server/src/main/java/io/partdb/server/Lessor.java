@@ -1,10 +1,10 @@
 package io.partdb.server;
 
+import io.partdb.common.Leases;
 import io.partdb.common.statemachine.GrantLease;
 import io.partdb.common.statemachine.KeepAliveLease;
 import io.partdb.common.statemachine.RevokeLease;
 import io.partdb.raft.RaftNode;
-import io.partdb.storage.Store;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,14 +21,14 @@ public final class Lessor implements AutoCloseable {
     private static final long CHECK_INTERVAL_MILLIS = 100;
 
     private final RaftNode raftNode;
-    private final Store store;
+    private final Leases leases;
     private final AtomicLong nextLeaseId;
     private final ScheduledExecutorService scheduler;
     private volatile ScheduledFuture<?> expirationTask;
 
-    public Lessor(RaftNode raftNode, Store store) {
+    public Lessor(RaftNode raftNode, Leases leases) {
         this.raftNode = raftNode;
-        this.store = store;
+        this.leases = leases;
         this.nextLeaseId = new AtomicLong(1);
         this.scheduler = Executors.newScheduledThreadPool(1, Thread.ofVirtual().factory());
     }
@@ -93,7 +93,7 @@ public final class Lessor implements AutoCloseable {
 
         try {
             long now = System.currentTimeMillis();
-            List<Long> expiredLeases = store.getExpiredLeases(now);
+            List<Long> expiredLeases = leases.getExpired(now);
 
             for (long leaseId : expiredLeases) {
                 revoke(leaseId).exceptionally(ex -> {

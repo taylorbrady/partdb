@@ -2,8 +2,7 @@ package io.partdb.storage.compaction;
 
 import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
-import io.partdb.common.statemachine.Delete;
-import io.partdb.common.statemachine.Put;
+import io.partdb.common.LeaseProvider;
 import io.partdb.storage.Store;
 import io.partdb.storage.StoreConfig;
 import io.partdb.storage.memtable.MemtableConfig;
@@ -32,18 +31,18 @@ class CompactionTest {
             SSTableConfig.create()
         );
 
-        try (Store engine = Store.open(tempDir, config)) {
+        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
             for (int i = 0; i < 100; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
-                engine.apply(i, new Put(key, value, 0));
+                store.put(Entry.putWithLease(key, value, i, 0));
             }
 
-            engine.flush();
+            store.flush();
 
             Thread.sleep(500);
 
-            ManifestData manifest = engine.getManifest();
+            ManifestData manifest = store.getManifest();
             List<SSTableMetadata> l0Files = manifest.level(0);
             List<SSTableMetadata> l1Files = manifest.level(1);
 
@@ -61,24 +60,24 @@ class CompactionTest {
             SSTableConfig.create()
         );
 
-        try (Store engine = Store.open(tempDir, config)) {
+        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
             long index = 0;
             for (int version = 0; version < 5; version++) {
                 for (int i = 0; i < 20; i++) {
                     ByteArray key = ByteArray.wrap(String.format("key-%02d", i).getBytes());
                     ByteArray value = ByteArray.wrap(("v" + version + "-" + i).getBytes());
-                    engine.apply(index++, new Put(key, value, 0));
+                    store.put(Entry.putWithLease(key, value, index++, 0));
                 }
-                engine.flush();
+                store.flush();
             }
 
             Thread.sleep(1000);
 
             for (int i = 0; i < 20; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%02d", i).getBytes());
-                Optional<ByteArray> result = engine.get(key);
+                Optional<Entry> result = store.getEntry(key);
                 assertThat(result).isPresent();
-                assertThat(new String(result.get().toByteArray())).startsWith("v4");
+                assertThat(new String(result.get().value().toByteArray())).startsWith("v4");
             }
         }
     }
@@ -92,27 +91,28 @@ class CompactionTest {
             SSTableConfig.create()
         );
 
-        try (Store engine = Store.open(tempDir, config)) {
+        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
             long index = 0;
             for (int i = 0; i < 50; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
-                engine.apply(index++, new Put(key, value, 0));
+                store.put(Entry.putWithLease(key, value, index++, 0));
             }
-            engine.flush();
+            store.flush();
 
             for (int i = 0; i < 50; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
-                engine.apply(index++, new Delete(key));
+                store.put(Entry.delete(key, index++));
             }
-            engine.flush();
+            store.flush();
 
             Thread.sleep(500);
 
             for (int i = 0; i < 50; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
-                Optional<ByteArray> result = engine.get(key);
-                assertThat(result).isEmpty();
+                Optional<Entry> result = store.getEntry(key);
+                assertThat(result).isPresent();
+                assertThat(result.get().tombstone()).isTrue();
             }
         }
     }
@@ -126,21 +126,21 @@ class CompactionTest {
             SSTableConfig.create()
         );
 
-        try (Store engine = Store.open(tempDir, config)) {
+        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
             byte[] largeValue = new byte[100];
             long index = 0;
             for (int batch = 0; batch < 20; batch++) {
                 for (int i = 0; i < 100; i++) {
                     ByteArray key = ByteArray.wrap(String.format("key-%05d", batch * 100 + i).getBytes());
                     ByteArray value = ByteArray.wrap(largeValue);
-                    engine.apply(index++, new Put(key, value, 0));
+                    store.put(Entry.putWithLease(key, value, index++, 0));
                 }
-                engine.flush();
+                store.flush();
             }
 
             Thread.sleep(2000);
 
-            ManifestData manifest = engine.getManifest();
+            ManifestData manifest = store.getManifest();
             LeveledCompactionConfig compactionConfig = LeveledCompactionConfig.create();
 
             for (int level = 1; level < manifest.maxLevel(); level++) {
@@ -161,17 +161,17 @@ class CompactionTest {
             SSTableConfig.create()
         );
 
-        try (Store engine = Store.open(tempDir, config)) {
+        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
             List<String> expectedValues = new ArrayList<>();
 
             for (int i = 0; i < 30; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%02d", i).getBytes());
                 String value = "version-" + i;
                 expectedValues.add(value);
-                engine.apply(i + 1, new Put(key, ByteArray.wrap(value.getBytes()), 0));
+                store.put(Entry.putWithLease(key, ByteArray.wrap(value.getBytes()), i + 1, 0));
 
                 if (i % 10 == 9) {
-                    engine.flush();
+                    store.flush();
                 }
             }
 
@@ -179,9 +179,9 @@ class CompactionTest {
 
             for (int i = 0; i < 30; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%02d", i).getBytes());
-                Optional<ByteArray> result = engine.get(key);
+                Optional<Entry> result = store.getEntry(key);
                 assertThat(result).isPresent();
-                assertThat(new String(result.get().toByteArray())).isEqualTo(expectedValues.get(i));
+                assertThat(new String(result.get().value().toByteArray())).isEqualTo(expectedValues.get(i));
             }
         }
     }
@@ -195,17 +195,17 @@ class CompactionTest {
             SSTableConfig.create()
         );
 
-        try (Store engine = Store.open(tempDir, config)) {
+        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
             for (int i = 0; i < 80; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
-                engine.apply(i + 1, new Put(key, value, 0));
+                store.put(Entry.putWithLease(key, value, i + 1, 0));
             }
-            engine.flush();
+            store.flush();
 
             Thread.sleep(500);
 
-            ManifestData manifest = engine.getManifest();
+            ManifestData manifest = store.getManifest();
 
             long totalEntries = 0;
             for (SSTableMetadata meta : manifest.sstables()) {
@@ -233,23 +233,23 @@ class CompactionTest {
         List<ByteArray> keys = new ArrayList<>();
         List<ByteArray> values = new ArrayList<>();
 
-        try (Store engine = Store.open(tempDir, config)) {
+        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
             for (int i = 0; i < 60; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
                 keys.add(key);
                 values.add(value);
-                engine.apply(i + 1, new Put(key, value, 0));
+                store.put(Entry.putWithLease(key, value, i + 1, 0));
             }
-            engine.flush();
+            store.flush();
             Thread.sleep(500);
         }
 
-        try (Store engine = Store.open(tempDir, config)) {
+        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
             for (int i = 0; i < keys.size(); i++) {
-                Optional<ByteArray> result = engine.get(keys.get(i));
+                Optional<Entry> result = store.getEntry(keys.get(i));
                 assertThat(result).isPresent();
-                assertThat(result.get()).isEqualTo(values.get(i));
+                assertThat(result.get().value()).isEqualTo(values.get(i));
             }
         }
     }
@@ -263,20 +263,20 @@ class CompactionTest {
             SSTableConfig.create()
         );
 
-        try (Store engine = Store.open(tempDir, config)) {
+        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
             for (int i = 0; i < 100; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
-                engine.apply(i + 1, new Put(key, value, 0));
+                store.put(Entry.putWithLease(key, value, i + 1, 0));
             }
-            engine.flush();
+            store.flush();
 
             Thread.sleep(500);
 
             ByteArray startKey = ByteArray.wrap("key-020".getBytes());
             ByteArray endKey = ByteArray.wrap("key-030".getBytes());
 
-            var iterator = engine.scan(startKey, endKey);
+            var iterator = store.scan(startKey, endKey);
             int count = 0;
             while (iterator.hasNext()) {
                 Entry entry = iterator.next();
@@ -293,8 +293,8 @@ class CompactionTest {
     void testEmptyManifestLoad() {
         StoreConfig config = StoreConfig.create(tempDir);
 
-        try (Store engine = Store.open(tempDir, config)) {
-            ManifestData manifest = engine.getManifest();
+        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+            ManifestData manifest = store.getManifest();
             assertThat(manifest).isNotNull();
             assertThat(manifest.sstables()).isEmpty();
         }

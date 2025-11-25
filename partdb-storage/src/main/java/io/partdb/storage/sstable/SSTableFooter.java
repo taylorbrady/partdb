@@ -2,7 +2,10 @@ package io.partdb.storage.sstable;
 
 import io.partdb.common.ByteArray;
 
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Objects;
 import java.util.zip.CRC32;
 
@@ -24,7 +27,7 @@ public record SSTableFooter(
 
     public byte[] serialize() {
         int footerSize = calculateFooterSize(largestKey);
-        ByteBuffer buffer = ByteBuffer.allocate(footerSize);
+        ByteBuffer buffer = ByteBuffer.allocate(footerSize).order(ByteOrder.nativeOrder());
 
         buffer.putLong(bloomFilterOffset);
         buffer.putInt(bloomFilterSize);
@@ -45,37 +48,35 @@ public record SSTableFooter(
         return buffer.array();
     }
 
-    public static SSTableFooter deserialize(ByteBuffer buffer) {
-        int startPosition = buffer.position();
+    public static SSTableFooter deserialize(MemorySegment segment) {
+        long offset = 0;
 
-        long bloomFilterOffset = buffer.getLong();
-        int bloomFilterSize = buffer.getInt();
-        long indexOffset = buffer.getLong();
-        int blockCount = buffer.getInt();
+        long bloomFilterOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
+        offset += 8;
+        int bloomFilterSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+        offset += 4;
+        long indexOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
+        offset += 8;
+        int blockCount = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+        offset += 4;
 
-        int largestKeySize = buffer.getInt();
-        byte[] largestKeyBytes = new byte[largestKeySize];
-        buffer.get(largestKeyBytes);
+        int largestKeySize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+        offset += 4;
+        byte[] largestKeyBytes = segment.asSlice(offset, largestKeySize).toArray(ValueLayout.JAVA_BYTE);
+        offset += largestKeySize;
         ByteArray largestKey = ByteArray.wrap(largestKeyBytes);
 
-        long entryCount = buffer.getLong();
+        long entryCount = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
+        offset += 8;
 
-        int footerSize = buffer.getInt();
+        int footerSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+        offset += 4;
 
-        int expectedChecksum = buffer.getInt();
+        int expectedChecksum = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
 
-        ByteBuffer checksumBuffer = ByteBuffer.allocate(footerSize - 4);
-        checksumBuffer.putLong(bloomFilterOffset);
-        checksumBuffer.putInt(bloomFilterSize);
-        checksumBuffer.putLong(indexOffset);
-        checksumBuffer.putInt(blockCount);
-        checksumBuffer.putInt(largestKeySize);
-        checksumBuffer.put(largestKeyBytes);
-        checksumBuffer.putLong(entryCount);
-        checksumBuffer.putInt(footerSize);
-
+        byte[] checksumData = segment.asSlice(0, footerSize - 4).toArray(ValueLayout.JAVA_BYTE);
         CRC32 crc = new CRC32();
-        crc.update(checksumBuffer.array());
+        crc.update(checksumData);
         int actualChecksum = (int) crc.getValue();
 
         if (actualChecksum != expectedChecksum) {
@@ -87,25 +88,5 @@ public record SSTableFooter(
 
     public static int calculateFooterSize(ByteArray largestKey) {
         return 8 + 4 + 8 + 4 + 4 + largestKey.size() + 8 + 4 + 4;
-    }
-
-    public void validate() {
-        ByteBuffer buffer = ByteBuffer.allocate(calculateFooterSize(largestKey) - 4);
-        buffer.putLong(bloomFilterOffset);
-        buffer.putInt(bloomFilterSize);
-        buffer.putLong(indexOffset);
-        buffer.putInt(blockCount);
-        buffer.putInt(largestKey.size());
-        buffer.put(largestKey.toByteArray());
-        buffer.putLong(entryCount);
-        buffer.putInt(calculateFooterSize(largestKey));
-
-        CRC32 crc = new CRC32();
-        crc.update(buffer.array());
-        int expected = (int) crc.getValue();
-
-        if (checksum != expected) {
-            throw new SSTableException("Footer checksum mismatch");
-        }
     }
 }

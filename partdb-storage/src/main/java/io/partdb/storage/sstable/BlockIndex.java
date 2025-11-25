@@ -2,7 +2,10 @@ package io.partdb.storage.sstable;
 
 import io.partdb.common.ByteArray;
 
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -81,7 +84,7 @@ public final class BlockIndex {
             totalSize += 4 + entry.firstKey().size() + 8 + 4;
         }
 
-        ByteBuffer buffer = ByteBuffer.allocate(totalSize);
+        ByteBuffer buffer = ByteBuffer.allocate(totalSize).order(ByteOrder.nativeOrder());
         for (IndexEntry entry : entries) {
             byte[] keyBytes = entry.firstKey().toByteArray();
             buffer.putInt(keyBytes.length);
@@ -93,19 +96,20 @@ public final class BlockIndex {
         return buffer.array();
     }
 
-    public static BlockIndex deserialize(ByteBuffer buffer, int blockCount) {
+    public static BlockIndex deserialize(MemorySegment segment, int blockCount) {
         List<IndexEntry> entries = new ArrayList<>(blockCount);
+        long offset = 0;
 
         for (int i = 0; i < blockCount; i++) {
-            int keyLength = buffer.getInt();
-            byte[] keyBytes = new byte[keyLength];
-            buffer.get(keyBytes);
+            int keyLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+            byte[] keyBytes = segment.asSlice(offset + 4, keyLength).toArray(ValueLayout.JAVA_BYTE);
             ByteArray key = ByteArray.wrap(keyBytes);
 
-            long offset = buffer.getLong();
-            int size = buffer.getInt();
+            long blockOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 4 + keyLength);
+            int size = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 4 + keyLength + 8);
 
-            entries.add(new IndexEntry(key, offset, size));
+            entries.add(new IndexEntry(key, blockOffset, size));
+            offset += 4 + keyLength + 8 + 4;
         }
 
         return new BlockIndex(entries);
