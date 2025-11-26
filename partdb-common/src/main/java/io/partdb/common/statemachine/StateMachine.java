@@ -1,9 +1,9 @@
 package io.partdb.common.statemachine;
 
 import io.partdb.common.ByteArray;
+import io.partdb.common.CloseableIterator;
 import io.partdb.common.Entry;
 
-import java.util.Iterator;
 import java.util.Optional;
 
 public interface StateMachine {
@@ -11,7 +11,7 @@ public interface StateMachine {
 
     Optional<ByteArray> get(ByteArray key);
 
-    Iterator<Entry> scan(ByteArray startKey, ByteArray endKey);
+    CloseableIterator<Entry> scan(ByteArray startKey, ByteArray endKey);
 
     StateSnapshot snapshot();
 

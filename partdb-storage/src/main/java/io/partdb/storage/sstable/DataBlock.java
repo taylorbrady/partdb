@@ -1,7 +1,7 @@
 package io.partdb.storage.sstable;
 
 import io.partdb.common.ByteArray;
-import io.partdb.common.Entry;
+import io.partdb.storage.StoreEntry;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -15,15 +15,15 @@ final class DataBlock {
 
     private static final int TRAILER_SIZE = 8;
 
-    static byte[] serialize(List<Entry> entries) {
+    static byte[] serialize(List<StoreEntry> entries) {
         int dataSize = 0;
-        for (Entry entry : entries) {
+        for (StoreEntry entry : entries) {
             dataSize += estimateEntrySize(entry);
         }
 
         ByteBuffer buffer = ByteBuffer.allocate(dataSize + TRAILER_SIZE).order(ByteOrder.nativeOrder());
 
-        for (Entry entry : entries) {
+        for (StoreEntry entry : entries) {
             serializeEntry(buffer, entry);
         }
 
@@ -44,7 +44,7 @@ final class DataBlock {
         return buffer.array();
     }
 
-    static List<Entry> deserialize(MemorySegment segment) {
+    static List<StoreEntry> deserialize(MemorySegment segment) {
         long totalSize = segment.byteSize();
         if (totalSize < TRAILER_SIZE) {
             throw new SSTableException("Block too small");
@@ -65,51 +65,45 @@ final class DataBlock {
         }
 
         MemorySegment dataSegment = MemorySegment.ofArray(data);
-        List<Entry> entries = new ArrayList<>(entryCount);
+        List<StoreEntry> entries = new ArrayList<>(entryCount);
         long offset = 0;
 
         for (int i = 0; i < entryCount; i++) {
-            long version = dataSegment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
-            byte flags = dataSegment.get(ValueLayout.JAVA_BYTE, offset + 8);
+            byte flags = dataSegment.get(ValueLayout.JAVA_BYTE, offset);
             boolean tombstone = (flags & 0x01) != 0;
-            long leaseId = dataSegment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 9);
-            int keyLength = dataSegment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 17);
-            byte[] keyBytes = dataSegment.asSlice(offset + 21, keyLength).toArray(ValueLayout.JAVA_BYTE);
-            int valueLength = dataSegment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 21 + keyLength);
+            int keyLength = dataSegment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 1);
+            byte[] keyBytes = dataSegment.asSlice(offset + 5, keyLength).toArray(ValueLayout.JAVA_BYTE);
+            int valueLength = dataSegment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 5 + keyLength);
 
             ByteArray key = ByteArray.wrap(keyBytes);
-            offset += 21 + keyLength + 4;
+            offset += 5 + keyLength + 4;
 
             if (tombstone) {
-                entries.add(new Entry(key, null, version, true, leaseId));
+                entries.add(StoreEntry.tombstone(key));
             } else {
                 byte[] valueBytes = dataSegment.asSlice(offset, valueLength).toArray(ValueLayout.JAVA_BYTE);
                 offset += valueLength;
-                entries.add(new Entry(key, ByteArray.wrap(valueBytes), version, false, leaseId));
+                entries.add(StoreEntry.of(key, ByteArray.wrap(valueBytes)));
             }
         }
 
         return entries;
     }
 
-    private static int estimateEntrySize(Entry entry) {
-        int size = 8 + 1 + 8 + 4 + entry.key().size() + 4;
+    private static int estimateEntrySize(StoreEntry entry) {
+        int size = 1 + 4 + entry.key().size() + 4;
         if (entry.value() != null) {
             size += entry.value().size();
         }
         return size;
     }
 
-    private static void serializeEntry(ByteBuffer buffer, Entry entry) {
-        buffer.putLong(entry.version());
-
+    private static void serializeEntry(ByteBuffer buffer, StoreEntry entry) {
         byte flags = 0;
         if (entry.tombstone()) {
             flags |= 0x01;
         }
         buffer.put(flags);
-
-        buffer.putLong(entry.leaseId());
 
         byte[] keyBytes = entry.key().toByteArray();
         buffer.putInt(keyBytes.length);

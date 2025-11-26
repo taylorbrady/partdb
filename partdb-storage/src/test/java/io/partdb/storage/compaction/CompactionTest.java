@@ -1,8 +1,8 @@
 package io.partdb.storage.compaction;
 
 import io.partdb.common.ByteArray;
-import io.partdb.common.Entry;
-import io.partdb.storage.CompactionFilter;
+import io.partdb.common.CloseableIterator;
+import io.partdb.common.KeyValue;
 import io.partdb.storage.Store;
 import io.partdb.storage.StoreConfig;
 import io.partdb.storage.memtable.MemtableConfig;
@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -28,14 +29,14 @@ class CompactionTest {
         StoreConfig config = new StoreConfig(
             memtableConfig,
             SSTableConfig.create(),
-            CompactionFilter.retainAll()
+            Duration.ofHours(24)
         );
 
         try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
-                store.put(Entry.putWithLease(key, value, i, 0));
+                store.put(key, value);
             }
 
             store.flush();
@@ -57,16 +58,15 @@ class CompactionTest {
         StoreConfig config = new StoreConfig(
             memtableConfig,
             SSTableConfig.create(),
-            CompactionFilter.retainAll()
+            Duration.ofHours(24)
         );
 
         try (Store store = Store.open(tempDir, config)) {
-            long index = 0;
             for (int version = 0; version < 5; version++) {
                 for (int i = 0; i < 20; i++) {
                     ByteArray key = ByteArray.wrap(String.format("key-%02d", i).getBytes());
                     ByteArray value = ByteArray.wrap(("v" + version + "-" + i).getBytes());
-                    store.put(Entry.putWithLease(key, value, index++, 0));
+                    store.put(key, value);
                 }
                 store.flush();
             }
@@ -75,34 +75,33 @@ class CompactionTest {
 
             for (int i = 0; i < 20; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%02d", i).getBytes());
-                Optional<Entry> result = store.get(key);
+                Optional<ByteArray> result = store.get(key);
                 assertThat(result).isPresent();
-                assertThat(new String(result.get().value().toByteArray())).startsWith("v4");
+                assertThat(new String(result.get().toByteArray())).startsWith("v4");
             }
         }
     }
 
     @Test
-    void testTombstonesDroppedAtBottomLevel() throws Exception {
+    void testTombstonesResultInEmptyGet() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
             memtableConfig,
             SSTableConfig.create(),
-            CompactionFilter.retainAll()
+            Duration.ofHours(24)
         );
 
         try (Store store = Store.open(tempDir, config)) {
-            long index = 0;
             for (int i = 0; i < 50; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
-                store.put(Entry.putWithLease(key, value, index++, 0));
+                store.put(key, value);
             }
             store.flush();
 
             for (int i = 0; i < 50; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
-                store.put(Entry.delete(key, index++));
+                store.delete(key);
             }
             store.flush();
 
@@ -110,9 +109,8 @@ class CompactionTest {
 
             for (int i = 0; i < 50; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
-                Optional<Entry> result = store.get(key);
-                assertThat(result).isPresent();
-                assertThat(result.get().tombstone()).isTrue();
+                Optional<ByteArray> result = store.get(key);
+                assertThat(result).isEmpty();
             }
         }
     }
@@ -123,17 +121,16 @@ class CompactionTest {
         StoreConfig config = new StoreConfig(
             memtableConfig,
             SSTableConfig.create(),
-            CompactionFilter.retainAll()
+            Duration.ofHours(24)
         );
 
         try (Store store = Store.open(tempDir, config)) {
             byte[] largeValue = new byte[100];
-            long index = 0;
             for (int batch = 0; batch < 20; batch++) {
                 for (int i = 0; i < 100; i++) {
                     ByteArray key = ByteArray.wrap(String.format("key-%05d", batch * 100 + i).getBytes());
                     ByteArray value = ByteArray.wrap(largeValue);
-                    store.put(Entry.putWithLease(key, value, index++, 0));
+                    store.put(key, value);
                 }
                 store.flush();
             }
@@ -158,7 +155,7 @@ class CompactionTest {
         StoreConfig config = new StoreConfig(
             memtableConfig,
             SSTableConfig.create(),
-            CompactionFilter.retainAll()
+            Duration.ofHours(24)
         );
 
         try (Store store = Store.open(tempDir, config)) {
@@ -168,7 +165,7 @@ class CompactionTest {
                 ByteArray key = ByteArray.wrap(String.format("key-%02d", i).getBytes());
                 String value = "version-" + i;
                 expectedValues.add(value);
-                store.put(Entry.putWithLease(key, ByteArray.wrap(value.getBytes()), i + 1, 0));
+                store.put(key, ByteArray.wrap(value.getBytes()));
 
                 if (i % 10 == 9) {
                     store.flush();
@@ -179,9 +176,9 @@ class CompactionTest {
 
             for (int i = 0; i < 30; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%02d", i).getBytes());
-                Optional<Entry> result = store.get(key);
+                Optional<ByteArray> result = store.get(key);
                 assertThat(result).isPresent();
-                assertThat(new String(result.get().value().toByteArray())).isEqualTo(expectedValues.get(i));
+                assertThat(new String(result.get().toByteArray())).isEqualTo(expectedValues.get(i));
             }
         }
     }
@@ -192,14 +189,14 @@ class CompactionTest {
         StoreConfig config = new StoreConfig(
             memtableConfig,
             SSTableConfig.create(),
-            CompactionFilter.retainAll()
+            Duration.ofHours(24)
         );
 
         try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < 80; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
-                store.put(Entry.putWithLease(key, value, i + 1, 0));
+                store.put(key, value);
             }
             store.flush();
 
@@ -227,7 +224,7 @@ class CompactionTest {
         StoreConfig config = new StoreConfig(
             memtableConfig,
             SSTableConfig.create(),
-            CompactionFilter.retainAll()
+            Duration.ofHours(24)
         );
 
         List<ByteArray> keys = new ArrayList<>();
@@ -239,7 +236,7 @@ class CompactionTest {
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
                 keys.add(key);
                 values.add(value);
-                store.put(Entry.putWithLease(key, value, i + 1, 0));
+                store.put(key, value);
             }
             store.flush();
             Thread.sleep(500);
@@ -247,9 +244,9 @@ class CompactionTest {
 
         try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < keys.size(); i++) {
-                Optional<Entry> result = store.get(keys.get(i));
+                Optional<ByteArray> result = store.get(keys.get(i));
                 assertThat(result).isPresent();
-                assertThat(result.get().value()).isEqualTo(values.get(i));
+                assertThat(result.get()).isEqualTo(values.get(i));
             }
         }
     }
@@ -260,14 +257,14 @@ class CompactionTest {
         StoreConfig config = new StoreConfig(
             memtableConfig,
             SSTableConfig.create(),
-            CompactionFilter.retainAll()
+            Duration.ofHours(24)
         );
 
         try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
-                store.put(Entry.putWithLease(key, value, i + 1, 0));
+                store.put(key, value);
             }
             store.flush();
 
@@ -276,16 +273,17 @@ class CompactionTest {
             ByteArray startKey = ByteArray.wrap("key-020".getBytes());
             ByteArray endKey = ByteArray.wrap("key-030".getBytes());
 
-            var iterator = store.scan(startKey, endKey);
-            int count = 0;
-            while (iterator.hasNext()) {
-                Entry entry = iterator.next();
-                count++;
-                assertThat(entry.key().compareTo(startKey)).isGreaterThanOrEqualTo(0);
-                assertThat(entry.key().compareTo(endKey)).isLessThan(0);
-            }
+            try (CloseableIterator<KeyValue> iterator = store.scan(startKey, endKey)) {
+                int count = 0;
+                while (iterator.hasNext()) {
+                    KeyValue kv = iterator.next();
+                    count++;
+                    assertThat(kv.key().compareTo(startKey)).isGreaterThanOrEqualTo(0);
+                    assertThat(kv.key().compareTo(endKey)).isLessThan(0);
+                }
 
-            assertThat(count).isEqualTo(10);
+                assertThat(count).isEqualTo(10);
+            }
         }
     }
 

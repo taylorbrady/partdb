@@ -32,10 +32,10 @@ public record Entry(
         return new Entry(key, null, version, true, 0);
     }
 
-    public KVPair toKVPair() {
+    public KeyValue toKeyValue() {
         if (tombstone) {
-            throw new IllegalStateException("Cannot convert tombstone to KVPair");
+            throw new IllegalStateException("Cannot convert tombstone to KeyValue");
         }
-        return new KVPair(key, value);
+        return new KeyValue(key, value);
     }
 }

@@ -1,4 +1,4 @@
-package io.partdb.storage;
+package io.partdb.common;
 
 import java.util.Iterator;
 

@@ -4,14 +4,14 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.*;
 
-class KVPairTest {
+class KeyValueTest {
 
     @Test
     void constructorCreatesInstanceWithKeyAndValue() {
         ByteArray key = ByteArray.of((byte) 1);
         ByteArray value = ByteArray.of((byte) 2);
 
-        KVPair pair = new KVPair(key, value);
+        KeyValue pair = new KeyValue(key, value);
 
         assertThat(pair.key()).isEqualTo(key);
         assertThat(pair.value()).isEqualTo(value);
@@ -21,7 +21,7 @@ class KVPairTest {
     void constructorThrowsWhenKeyIsNull() {
         ByteArray value = ByteArray.of((byte) 1);
 
-        assertThatThrownBy(() -> new KVPair(null, value))
+        assertThatThrownBy(() -> new KeyValue(null, value))
             .isInstanceOf(NullPointerException.class)
             .hasMessageContaining("key cannot be null");
     }
@@ -30,7 +30,7 @@ class KVPairTest {
     void constructorThrowsWhenValueIsNull() {
         ByteArray key = ByteArray.of((byte) 1);
 
-        assertThatThrownBy(() -> new KVPair(key, null))
+        assertThatThrownBy(() -> new KeyValue(key, null))
             .isInstanceOf(NullPointerException.class)
             .hasMessageContaining("value cannot be null");
     }
@@ -40,8 +40,8 @@ class KVPairTest {
         ByteArray key = ByteArray.of((byte) 1);
         ByteArray value = ByteArray.of((byte) 2);
 
-        KVPair pair1 = new KVPair(key, value);
-        KVPair pair2 = new KVPair(key, value);
+        KeyValue pair1 = new KeyValue(key, value);
+        KeyValue pair2 = new KeyValue(key, value);
 
         assertThat(pair1).isEqualTo(pair2);
         assertThat(pair1.hashCode()).isEqualTo(pair2.hashCode());
@@ -53,8 +53,8 @@ class KVPairTest {
         ByteArray key2 = ByteArray.of((byte) 2);
         ByteArray value = ByteArray.of((byte) 3);
 
-        KVPair pair1 = new KVPair(key1, value);
-        KVPair pair2 = new KVPair(key2, value);
+        KeyValue pair1 = new KeyValue(key1, value);
+        KeyValue pair2 = new KeyValue(key2, value);
 
         assertThat(pair1).isNotEqualTo(pair2);
     }
@@ -65,8 +65,8 @@ class KVPairTest {
         ByteArray value1 = ByteArray.of((byte) 2);
         ByteArray value2 = ByteArray.of((byte) 3);
 
-        KVPair pair1 = new KVPair(key, value1);
-        KVPair pair2 = new KVPair(key, value2);
+        KeyValue pair1 = new KeyValue(key, value1);
+        KeyValue pair2 = new KeyValue(key, value2);
 
         assertThat(pair1).isNotEqualTo(pair2);
     }
@@ -76,7 +76,7 @@ class KVPairTest {
         ByteArray key = ByteArray.of((byte) 0x0A);
         ByteArray value = ByteArray.of((byte) 0x0B);
 
-        KVPair pair = new KVPair(key, value);
+        KeyValue pair = new KeyValue(key, value);
 
         assertThat(pair.toString()).contains("0a").contains("0b");
     }

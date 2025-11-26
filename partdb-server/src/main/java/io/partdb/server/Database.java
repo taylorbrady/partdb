@@ -2,9 +2,10 @@ package io.partdb.server;
 
 import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
+import io.partdb.common.KeyValue;
 import io.partdb.common.Leases;
 import io.partdb.common.statemachine.*;
-import io.partdb.storage.CompactionFilter;
+import io.partdb.common.CloseableIterator;
 import io.partdb.storage.Store;
 import io.partdb.storage.StoreConfig;
 
@@ -12,9 +13,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
-import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.Set;
 
 public final class Database implements StateMachine, AutoCloseable {
 
@@ -22,46 +23,42 @@ public final class Database implements StateMachine, AutoCloseable {
     private final Leases leases;
     private volatile long lastApplied;
 
-    private Database(Store store, Leases leases, long lastApplied) {
+    private Database(Store store, Leases leases) {
         this.store = store;
         this.leases = leases;
-        this.lastApplied = lastApplied;
+        this.lastApplied = 0;
     }
 
     public static Database open(Path dataDirectory, StoreConfig config) {
+        Store store = Store.open(dataDirectory, config);
         Leases leases = new Leases();
-
-        CompactionFilter filter = entry ->
-            entry.leaseId() == 0 || leases.isLeaseActive(entry.leaseId());
-
-        StoreConfig configWithFilter = new StoreConfig(
-            config.memtableConfig(),
-            config.sstableConfig(),
-            filter
-        );
-
-        Store store = Store.open(dataDirectory, configWithFilter);
-        return new Database(store, leases, store.lastAppliedIndex());
+        return new Database(store, leases);
     }
 
     @Override
     public void apply(long index, Operation operation) {
         lastApplied = index;
-        store.setLastAppliedIndex(index);
 
         switch (operation) {
             case Put put -> {
-                Entry entry = Entry.putWithLease(put.key(), put.value(), index, put.leaseId());
-                store.put(entry);
+                StoredValue stored = new StoredValue(put.value(), index, put.leaseId());
+                store.put(put.key(), stored.encode());
+                if (put.leaseId() != 0) {
+                    leases.attachKey(put.leaseId(), put.key());
+                }
             }
             case Delete delete -> {
-                Entry entry = Entry.delete(delete.key(), index);
-                store.put(entry);
+                detachKeyFromLease(delete.key());
+                store.delete(delete.key());
             }
             case GrantLease grant -> {
                 leases.grant(grant.leaseId(), grant.ttlMillis(), grant.grantedAtMillis());
             }
             case RevokeLease revoke -> {
+                Set<ByteArray> keys = leases.getKeys(revoke.leaseId());
+                for (ByteArray key : keys) {
+                    store.delete(key);
+                }
                 leases.revoke(revoke.leaseId());
             }
             case KeepAliveLease keepAlive -> {
@@ -70,26 +67,33 @@ public final class Database implements StateMachine, AutoCloseable {
         }
     }
 
-    @Override
-    public Optional<ByteArray> get(ByteArray key) {
-        Optional<Entry> entry = store.get(key);
-        if (entry.isEmpty()) {
-            return Optional.empty();
+    private void detachKeyFromLease(ByteArray key) {
+        Optional<ByteArray> existing = store.get(key);
+        if (existing.isPresent()) {
+            StoredValue stored = StoredValue.decode(existing.get());
+            if (stored.leaseId() != 0) {
+                leases.detachKey(stored.leaseId(), key);
+            }
         }
-        Entry e = entry.get();
-        if (e.tombstone()) {
-            return Optional.empty();
-        }
-        if (e.leaseId() != 0 && !leases.isLeaseActive(e.leaseId())) {
-            return Optional.empty();
-        }
-        return Optional.of(e.value());
     }
 
     @Override
-    public Iterator<Entry> scan(ByteArray startKey, ByteArray endKey) {
-        Iterator<Entry> raw = store.scan(startKey, endKey);
-        return new FilteringIterator(raw, leases);
+    public Optional<ByteArray> get(ByteArray key) {
+        Optional<ByteArray> raw = store.get(key);
+        if (raw.isEmpty()) {
+            return Optional.empty();
+        }
+        StoredValue stored = StoredValue.decode(raw.get());
+        if (stored.leaseId() != 0 && !leases.isLeaseActive(stored.leaseId())) {
+            return Optional.empty();
+        }
+        return Optional.of(stored.value());
+    }
+
+    @Override
+    public CloseableIterator<Entry> scan(ByteArray startKey, ByteArray endKey) {
+        CloseableIterator<KeyValue> raw = store.scan(startKey, endKey);
+        return new DecodingIterator(raw, leases);
     }
 
     @Override
@@ -97,11 +101,12 @@ public final class Database implements StateMachine, AutoCloseable {
         store.flush();
 
         try {
-            byte[] storageData = store.toSnapshot(lastApplied);
+            byte[] storageData = store.snapshot();
             byte[] leaseData = leases.toSnapshot();
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ByteBuffer header = ByteBuffer.allocate(8);
+            ByteBuffer header = ByteBuffer.allocate(16);
+            header.putLong(lastApplied);
             header.putInt(storageData.length);
             header.putInt(leaseData.length);
             baos.write(header.array());
@@ -117,6 +122,7 @@ public final class Database implements StateMachine, AutoCloseable {
     @Override
     public void restore(StateSnapshot snapshot) {
         ByteBuffer buffer = ByteBuffer.wrap(snapshot.data());
+        long snapshotIndex = buffer.getLong();
         int storageLen = buffer.getInt();
         int leaseLen = buffer.getInt();
 
@@ -126,10 +132,24 @@ public final class Database implements StateMachine, AutoCloseable {
         byte[] leaseData = new byte[leaseLen];
         buffer.get(leaseData);
 
-        long checkpoint = store.restoreSnapshot(storageData);
+        store.restore(storageData);
         leases.restoreSnapshot(leaseData);
 
-        lastApplied = checkpoint;
+        rebuildLeaseKeyIndex();
+
+        lastApplied = snapshotIndex;
+    }
+
+    private void rebuildLeaseKeyIndex() {
+        try (CloseableIterator<KeyValue> iter = store.scan(null, null)) {
+            while (iter.hasNext()) {
+                KeyValue kv = iter.next();
+                StoredValue stored = StoredValue.decode(kv.value());
+                if (stored.leaseId() != 0 && leases.isLeaseActive(stored.leaseId())) {
+                    leases.attachKey(stored.leaseId(), kv.key());
+                }
+            }
+        }
     }
 
     @Override
@@ -146,13 +166,13 @@ public final class Database implements StateMachine, AutoCloseable {
         store.close();
     }
 
-    private static final class FilteringIterator implements Iterator<Entry> {
+    private static final class DecodingIterator implements CloseableIterator<Entry> {
 
-        private final Iterator<Entry> delegate;
+        private final CloseableIterator<KeyValue> delegate;
         private final Leases leases;
         private Entry next;
 
-        FilteringIterator(Iterator<Entry> delegate, Leases leases) {
+        DecodingIterator(CloseableIterator<KeyValue> delegate, Leases leases) {
             this.delegate = delegate;
             this.leases = leases;
             advance();
@@ -160,14 +180,12 @@ public final class Database implements StateMachine, AutoCloseable {
 
         private void advance() {
             while (delegate.hasNext()) {
-                Entry candidate = delegate.next();
-                if (candidate.tombstone()) {
+                KeyValue kv = delegate.next();
+                StoredValue stored = StoredValue.decode(kv.value());
+                if (stored.leaseId() != 0 && !leases.isLeaseActive(stored.leaseId())) {
                     continue;
                 }
-                if (candidate.leaseId() != 0 && !leases.isLeaseActive(candidate.leaseId())) {
-                    continue;
-                }
-                next = candidate;
+                next = Entry.putWithLease(kv.key(), stored.value(), stored.version(), stored.leaseId());
                 return;
             }
             next = null;
@@ -186,6 +204,11 @@ public final class Database implements StateMachine, AutoCloseable {
             Entry result = next;
             advance();
             return result;
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
         }
     }
 }

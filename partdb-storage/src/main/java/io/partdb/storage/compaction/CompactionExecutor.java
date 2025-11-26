@@ -1,10 +1,9 @@
 package io.partdb.storage.compaction;
 
 import io.partdb.common.ByteArray;
-import io.partdb.common.Entry;
-import io.partdb.storage.CompactionFilter;
-import io.partdb.storage.Store;
 import io.partdb.storage.MergingIterator;
+import io.partdb.storage.Store;
+import io.partdb.storage.StoreEntry;
 import io.partdb.storage.sstable.SSTableReader;
 import io.partdb.storage.sstable.SSTableWriter;
 import org.slf4j.Logger;
@@ -29,15 +28,13 @@ public final class CompactionExecutor implements AutoCloseable {
 
     private final Store engine;
     private final CompactionStrategy strategy;
-    private final CompactionFilter compactionFilter;
     private final ExecutorService executor;
     private final AtomicBoolean compacting;
     private volatile boolean closed;
 
-    public CompactionExecutor(Store engine, CompactionStrategy strategy, CompactionFilter compactionFilter) {
+    public CompactionExecutor(Store engine, CompactionStrategy strategy) {
         this.engine = engine;
         this.strategy = strategy;
-        this.compactionFilter = compactionFilter;
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         this.compacting = new AtomicBoolean(false);
         this.closed = false;
@@ -80,7 +77,7 @@ public final class CompactionExecutor implements AutoCloseable {
         List<SSTableReader> readers = openSSTables(task.inputs());
 
         try {
-            List<Iterator<Entry>> iterators = readers.stream()
+            List<Iterator<StoreEntry>> iterators = readers.stream()
                 .map(r -> r.scan(null, null))
                 .toList();
 
@@ -113,7 +110,7 @@ public final class CompactionExecutor implements AutoCloseable {
     }
 
     private List<SSTableMetadata> writeMergedSSTables(
-        Iterator<Entry> entries,
+        Iterator<StoreEntry> entries,
         int targetLevel
     ) throws IOException {
         List<SSTableMetadata> result = new ArrayList<>();
@@ -126,11 +123,7 @@ public final class CompactionExecutor implements AutoCloseable {
                 long bytesWritten = 0;
 
                 while (entries.hasNext() && bytesWritten < TARGET_SSTABLE_SIZE) {
-                    Entry entry = entries.next();
-
-                    if (!compactionFilter.shouldRetain(entry)) {
-                        continue;
-                    }
+                    StoreEntry entry = entries.next();
 
                     if (entry.tombstone() && targetLevel == 6) {
                         continue;
@@ -170,8 +163,8 @@ public final class CompactionExecutor implements AutoCloseable {
         }
     }
 
-    private long estimateSize(Entry entry) {
-        long size = 8 + 1 + 8 + 4 + entry.key().size() + 4;
+    private long estimateSize(StoreEntry entry) {
+        long size = 1 + 4 + entry.key().size() + 4;
         if (entry.value() != null) {
             size += entry.value().size();
         }

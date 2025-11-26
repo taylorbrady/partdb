@@ -1,25 +1,25 @@
 package io.partdb.storage;
 
 import io.partdb.common.ByteArray;
-import io.partdb.common.Entry;
+import io.partdb.common.CloseableIterator;
 
 import java.util.*;
 
-public final class MergingIterator implements CloseableIterator<Entry> {
+public final class MergingIterator implements CloseableIterator<StoreEntry> {
 
     private final PriorityQueue<IteratorEntry> heap;
-    private final List<Iterator<Entry>> iterators;
+    private final List<Iterator<StoreEntry>> iterators;
     private ByteArray lastKey;
-    private Entry nextEntry;
+    private StoreEntry nextEntry;
 
-    public MergingIterator(List<Iterator<Entry>> iterators) {
+    public MergingIterator(List<Iterator<StoreEntry>> iterators) {
         this.iterators = iterators;
         this.heap = new PriorityQueue<>(Comparator
             .comparing((IteratorEntry e) -> e.entry.key())
             .thenComparingInt(e -> e.iteratorIndex));
 
         for (int i = 0; i < iterators.size(); i++) {
-            Iterator<Entry> it = iterators.get(i);
+            Iterator<StoreEntry> it = iterators.get(i);
             if (it.hasNext()) {
                 heap.offer(new IteratorEntry(it.next(), i));
             }
@@ -34,7 +34,7 @@ public final class MergingIterator implements CloseableIterator<Entry> {
             IteratorEntry current = heap.poll();
 
             if (iterators.get(current.iteratorIndex).hasNext()) {
-                Entry next = iterators.get(current.iteratorIndex).next();
+                StoreEntry next = iterators.get(current.iteratorIndex).next();
                 heap.offer(new IteratorEntry(next, current.iteratorIndex));
             }
 
@@ -56,19 +56,18 @@ public final class MergingIterator implements CloseableIterator<Entry> {
     }
 
     @Override
-    public Entry next() {
+    public StoreEntry next() {
         if (nextEntry == null) {
             throw new NoSuchElementException();
         }
-        Entry result = nextEntry;
+        StoreEntry result = nextEntry;
         advance();
         return result;
     }
 
     @Override
     public void close() {
-        // No resources to release currently
     }
 
-    private record IteratorEntry(Entry entry, int iteratorIndex) {}
+    private record IteratorEntry(StoreEntry entry, int iteratorIndex) {}
 }

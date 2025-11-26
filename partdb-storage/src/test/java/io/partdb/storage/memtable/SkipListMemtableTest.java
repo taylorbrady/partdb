@@ -1,7 +1,7 @@
 package io.partdb.storage.memtable;
 
 import io.partdb.common.ByteArray;
-import io.partdb.common.Entry;
+import io.partdb.storage.StoreEntry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -30,11 +30,11 @@ class SkipListMemtableTest {
     void putAndGetSingleEntry() {
         ByteArray key = ByteArray.of((byte) 1);
         ByteArray value = ByteArray.of((byte) 2);
-        Entry entry = Entry.put(key, value, 1000L);
+        StoreEntry entry = StoreEntry.of(key, value);
 
         memtable.put(entry);
 
-        Optional<Entry> result = memtable.get(key);
+        Optional<StoreEntry> result = memtable.get(key);
         assertThat(result).isPresent();
         assertThat(result.get().key()).isEqualTo(key);
         assertThat(result.get().value()).isEqualTo(value);
@@ -45,7 +45,7 @@ class SkipListMemtableTest {
     void getNonExistentKeyReturnsEmpty() {
         ByteArray key = ByteArray.of((byte) 99);
 
-        Optional<Entry> result = memtable.get(key);
+        Optional<StoreEntry> result = memtable.get(key);
 
         assertThat(result).isEmpty();
     }
@@ -56,23 +56,22 @@ class SkipListMemtableTest {
         ByteArray value1 = ByteArray.of((byte) 10);
         ByteArray value2 = ByteArray.of((byte) 20);
 
-        memtable.put(Entry.put(key, value1, 1000L));
-        memtable.put(Entry.put(key, value2, 2000L));
+        memtable.put(StoreEntry.of(key, value1));
+        memtable.put(StoreEntry.of(key, value2));
 
-        Optional<Entry> result = memtable.get(key);
+        Optional<StoreEntry> result = memtable.get(key);
         assertThat(result).isPresent();
         assertThat(result.get().value()).isEqualTo(value2);
-        assertThat(result.get().version()).isEqualTo(2000L);
     }
 
     @Test
     void putTombstoneEntry() {
         ByteArray key = ByteArray.of((byte) 5);
-        Entry deleteEntry = Entry.delete(key, 3000L);
+        StoreEntry deleteEntry = StoreEntry.tombstone(key);
 
         memtable.put(deleteEntry);
 
-        Optional<Entry> result = memtable.get(key);
+        Optional<StoreEntry> result = memtable.get(key);
         assertThat(result).isPresent();
         assertThat(result.get().tombstone()).isTrue();
         assertThat(result.get().value()).isNull();
@@ -83,10 +82,10 @@ class SkipListMemtableTest {
         ByteArray key = ByteArray.of((byte) 1);
         ByteArray value = ByteArray.of((byte) 10);
 
-        memtable.put(Entry.put(key, value, 1000L));
-        memtable.put(Entry.delete(key, 2000L));
+        memtable.put(StoreEntry.of(key, value));
+        memtable.put(StoreEntry.tombstone(key));
 
-        Optional<Entry> result = memtable.get(key);
+        Optional<StoreEntry> result = memtable.get(key);
         assertThat(result).isPresent();
         assertThat(result.get().tombstone()).isTrue();
     }
@@ -102,7 +101,7 @@ class SkipListMemtableTest {
         ByteArray value = ByteArray.of((byte) 2, (byte) 3, (byte) 4);
 
         long initialSize = memtable.sizeInBytes();
-        memtable.put(Entry.put(key, value, 1000L));
+        memtable.put(StoreEntry.of(key, value));
 
         assertThat(memtable.sizeInBytes()).isGreaterThan(initialSize);
     }
@@ -113,10 +112,10 @@ class SkipListMemtableTest {
         ByteArray smallValue = ByteArray.of((byte) 1);
         byte[] largeValue = new byte[1000];
 
-        memtable.put(Entry.put(key, smallValue, 1000L));
+        memtable.put(StoreEntry.of(key, smallValue));
         long sizeAfterSmall = memtable.sizeInBytes();
 
-        memtable.put(Entry.put(key, ByteArray.wrap(largeValue), 2000L));
+        memtable.put(StoreEntry.of(key, ByteArray.wrap(largeValue)));
         long sizeAfterLarge = memtable.sizeInBytes();
 
         assertThat(sizeAfterLarge).isGreaterThan(sizeAfterSmall);
@@ -129,10 +128,10 @@ class SkipListMemtableTest {
 
     @Test
     void entryCountIncreasesWithNewEntries() {
-        memtable.put(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 1000L));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
         assertThat(memtable.entryCount()).isEqualTo(1);
 
-        memtable.put(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 2000L));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
         assertThat(memtable.entryCount()).isEqualTo(2);
     }
 
@@ -140,16 +139,16 @@ class SkipListMemtableTest {
     void entryCountUnchangedOnOverwrite() {
         ByteArray key = ByteArray.of((byte) 1);
 
-        memtable.put(Entry.put(key, ByteArray.of((byte) 10), 1000L));
-        memtable.put(Entry.put(key, ByteArray.of((byte) 20), 2000L));
+        memtable.put(StoreEntry.of(key, ByteArray.of((byte) 10)));
+        memtable.put(StoreEntry.of(key, ByteArray.of((byte) 20)));
 
         assertThat(memtable.entryCount()).isEqualTo(1);
     }
 
     @Test
     void clearRemovesAllEntries() {
-        memtable.put(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 1000L));
-        memtable.put(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 2000L));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
 
         memtable.clear();
 
@@ -160,12 +159,12 @@ class SkipListMemtableTest {
 
     @Test
     void scanEntireRange() {
-        memtable.put(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
-        memtable.put(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 200L));
-        memtable.put(Entry.put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 300L));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 3), ByteArray.of((byte) 30)));
 
-        Iterator<Entry> it = memtable.scan(null, null);
-        List<Entry> entries = collectEntries(it);
+        Iterator<StoreEntry> it = memtable.scan(null, null);
+        List<StoreEntry> entries = collectEntries(it);
 
         assertThat(entries).hasSize(3);
         assertThat(entries.get(0).key()).isEqualTo(ByteArray.of((byte) 1));
@@ -175,12 +174,12 @@ class SkipListMemtableTest {
 
     @Test
     void scanWithStartKeyOnly() {
-        memtable.put(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
-        memtable.put(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 200L));
-        memtable.put(Entry.put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 300L));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 3), ByteArray.of((byte) 30)));
 
-        Iterator<Entry> it = memtable.scan(ByteArray.of((byte) 2), null);
-        List<Entry> entries = collectEntries(it);
+        Iterator<StoreEntry> it = memtable.scan(ByteArray.of((byte) 2), null);
+        List<StoreEntry> entries = collectEntries(it);
 
         assertThat(entries).hasSize(2);
         assertThat(entries.get(0).key()).isEqualTo(ByteArray.of((byte) 2));
@@ -189,12 +188,12 @@ class SkipListMemtableTest {
 
     @Test
     void scanWithEndKeyOnly() {
-        memtable.put(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
-        memtable.put(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 200L));
-        memtable.put(Entry.put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 300L));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 3), ByteArray.of((byte) 30)));
 
-        Iterator<Entry> it = memtable.scan(null, ByteArray.of((byte) 3));
-        List<Entry> entries = collectEntries(it);
+        Iterator<StoreEntry> it = memtable.scan(null, ByteArray.of((byte) 3));
+        List<StoreEntry> entries = collectEntries(it);
 
         assertThat(entries).hasSize(2);
         assertThat(entries.get(0).key()).isEqualTo(ByteArray.of((byte) 1));
@@ -203,13 +202,13 @@ class SkipListMemtableTest {
 
     @Test
     void scanWithBothStartAndEnd() {
-        memtable.put(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
-        memtable.put(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 200L));
-        memtable.put(Entry.put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 300L));
-        memtable.put(Entry.put(ByteArray.of((byte) 4), ByteArray.of((byte) 40), 400L));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 3), ByteArray.of((byte) 30)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 4), ByteArray.of((byte) 40)));
 
-        Iterator<Entry> it = memtable.scan(ByteArray.of((byte) 2), ByteArray.of((byte) 4));
-        List<Entry> entries = collectEntries(it);
+        Iterator<StoreEntry> it = memtable.scan(ByteArray.of((byte) 2), ByteArray.of((byte) 4));
+        List<StoreEntry> entries = collectEntries(it);
 
         assertThat(entries).hasSize(2);
         assertThat(entries.get(0).key()).isEqualTo(ByteArray.of((byte) 2));
@@ -218,22 +217,22 @@ class SkipListMemtableTest {
 
     @Test
     void scanEmptyRange() {
-        memtable.put(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
 
-        Iterator<Entry> it = memtable.scan(ByteArray.of((byte) 5), ByteArray.of((byte) 10));
-        List<Entry> entries = collectEntries(it);
+        Iterator<StoreEntry> it = memtable.scan(ByteArray.of((byte) 5), ByteArray.of((byte) 10));
+        List<StoreEntry> entries = collectEntries(it);
 
         assertThat(entries).isEmpty();
     }
 
     @Test
     void scanReturnsSortedOrder() {
-        memtable.put(Entry.put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 300L));
-        memtable.put(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
-        memtable.put(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 200L));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 3), ByteArray.of((byte) 30)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
+        memtable.put(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
 
-        Iterator<Entry> it = memtable.scan(null, null);
-        List<Entry> entries = collectEntries(it);
+        Iterator<StoreEntry> it = memtable.scan(null, null);
+        List<StoreEntry> entries = collectEntries(it);
 
         assertThat(entries).hasSize(3);
         assertThat(entries.get(0).key()).isEqualTo(ByteArray.of((byte) 1));
@@ -257,7 +256,7 @@ class SkipListMemtableTest {
                         int keyValue = threadId * entriesPerThread + j;
                         ByteArray key = ByteArray.of((byte) (keyValue & 0xFF));
                         ByteArray value = ByteArray.of((byte) keyValue);
-                        memtable.put(Entry.put(key, value, System.currentTimeMillis()));
+                        memtable.put(StoreEntry.of(key, value));
                     }
                 } finally {
                     latch.countDown();
@@ -287,7 +286,7 @@ class SkipListMemtableTest {
                     for (int j = 0; j < 100; j++) {
                         ByteArray key = ByteArray.of((byte) (threadId * 100 + j));
                         ByteArray value = ByteArray.of((byte) j);
-                        memtable.put(Entry.put(key, value, System.currentTimeMillis()));
+                        memtable.put(StoreEntry.of(key, value));
                     }
                 } finally {
                     latch.countDown();
@@ -314,8 +313,8 @@ class SkipListMemtableTest {
         assertThat(memtable.entryCount()).isGreaterThan(0);
     }
 
-    private List<Entry> collectEntries(Iterator<Entry> iterator) {
-        List<Entry> entries = new ArrayList<>();
+    private List<StoreEntry> collectEntries(Iterator<StoreEntry> iterator) {
+        List<StoreEntry> entries = new ArrayList<>();
         while (iterator.hasNext()) {
             entries.add(iterator.next());
         }

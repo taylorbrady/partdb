@@ -1,7 +1,8 @@
 package io.partdb.storage;
 
 import io.partdb.common.ByteArray;
-import io.partdb.common.Entry;
+import io.partdb.common.CloseableIterator;
+import io.partdb.common.KeyValue;
 import io.partdb.storage.compaction.CompactionExecutor;
 import io.partdb.storage.compaction.LeveledCompactionConfig;
 import io.partdb.storage.compaction.LeveledCompactionStrategy;
@@ -32,7 +33,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-public final class Store implements KVStore, Snapshotable {
+public final class Store implements KeyValueStore {
 
     private static final Pattern SSTABLE_PATTERN = Pattern.compile("(\\d{6})\\.sst");
     private static final int MAX_IMMUTABLE_MEMTABLES = 4;
@@ -43,7 +44,6 @@ public final class Store implements KVStore, Snapshotable {
     private final Object manifestLock = new Object();
     private final Semaphore flushPermits = new Semaphore(MAX_IMMUTABLE_MEMTABLES);
     private final AtomicLong sstableIdCounter;
-    private final AtomicLong lastApplied;
     private final ExecutorService flushExecutor = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
 
     private volatile Memtable activeMemtable;
@@ -58,8 +58,7 @@ public final class Store implements KVStore, Snapshotable {
         Memtable activeMemtable,
         List<SSTableReader> sstables,
         ManifestData manifest,
-        AtomicLong sstableIdCounter,
-        long lastAppliedIndex
+        AtomicLong sstableIdCounter
     ) {
         this.dataDirectory = dataDirectory;
         this.config = config;
@@ -68,7 +67,6 @@ public final class Store implements KVStore, Snapshotable {
         this.sstables = new CopyOnWriteArrayList<>(sstables);
         this.manifest = manifest;
         this.sstableIdCounter = sstableIdCounter;
-        this.lastApplied = new AtomicLong(lastAppliedIndex);
     }
 
     public static Store open(Path dataDirectory, StoreConfig config) {
@@ -97,14 +95,13 @@ public final class Store implements KVStore, Snapshotable {
                 memtable,
                 sstables,
                 manifest,
-                new AtomicLong(manifest.nextSSTableId()),
-                manifest.lastAppliedIndex()
+                new AtomicLong(manifest.nextSSTableId())
             );
 
             LeveledCompactionStrategy strategy = new LeveledCompactionStrategy(
                 LeveledCompactionConfig.create()
             );
-            store.compactionExecutor = new CompactionExecutor(store, strategy, config.compactionFilter());
+            store.compactionExecutor = new CompactionExecutor(store, strategy);
 
             return store;
         } catch (IOException e) {
@@ -113,7 +110,18 @@ public final class Store implements KVStore, Snapshotable {
     }
 
     @Override
-    public void put(Entry entry) {
+    public void put(ByteArray key, ByteArray value) {
+        StoreEntry entry = StoreEntry.of(key, value);
+        putEntry(entry);
+    }
+
+    @Override
+    public void delete(ByteArray key) {
+        StoreEntry entry = StoreEntry.tombstone(key);
+        putEntry(entry);
+    }
+
+    private void putEntry(StoreEntry entry) {
         boolean needsRotation;
         synchronized (memtableLock) {
             activeMemtable.put(entry);
@@ -140,17 +148,17 @@ public final class Store implements KVStore, Snapshotable {
     }
 
     @Override
-    public Optional<Entry> get(ByteArray key) {
-        Optional<Entry> result = activeMemtable.get(key);
+    public Optional<ByteArray> get(ByteArray key) {
+        Optional<StoreEntry> result = activeMemtable.get(key);
         if (result.isPresent()) {
-            return result;
+            return entryToValue(result.get());
         }
 
         synchronized (memtableLock) {
             for (Memtable immutable : immutableMemtables) {
                 result = immutable.get(key);
                 if (result.isPresent()) {
-                    return result;
+                    return entryToValue(result.get());
                 }
             }
         }
@@ -158,16 +166,23 @@ public final class Store implements KVStore, Snapshotable {
         for (SSTableReader sstable : sstables) {
             result = sstable.get(key);
             if (result.isPresent()) {
-                return result;
+                return entryToValue(result.get());
             }
         }
 
         return Optional.empty();
     }
 
+    private Optional<ByteArray> entryToValue(StoreEntry entry) {
+        if (entry.tombstone()) {
+            return Optional.empty();
+        }
+        return Optional.of(entry.value());
+    }
+
     @Override
-    public CloseableIterator<Entry> scan(ByteArray startKey, ByteArray endKey) {
-        List<Iterator<Entry>> iterators = new ArrayList<>();
+    public CloseableIterator<KeyValue> scan(ByteArray startKey, ByteArray endKey) {
+        List<Iterator<StoreEntry>> iterators = new ArrayList<>();
 
         iterators.add(activeMemtable.scan(startKey, endKey));
 
@@ -181,19 +196,19 @@ public final class Store implements KVStore, Snapshotable {
             iterators.add(sstable.scan(startKey, endKey));
         }
 
-        return new MergingIterator(iterators);
+        MergingIterator merged = new MergingIterator(iterators);
+        return new KeyValueIterator(merged);
     }
 
     @Override
-    public byte[] toSnapshot(long checkpoint) {
+    public byte[] snapshot() {
         flush();
 
         try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ByteBuffer header = ByteBuffer.allocate(16);
+            ByteBuffer header = ByteBuffer.allocate(8);
 
             synchronized (manifestLock) {
-                header.putLong(checkpoint);
                 header.putLong(manifest.nextSSTableId());
                 baos.write(header.array());
 
@@ -214,7 +229,7 @@ public final class Store implements KVStore, Snapshotable {
     }
 
     @Override
-    public long restoreSnapshot(byte[] data) {
+    public void restore(byte[] data) {
         try {
             for (SSTableReader sstable : sstables) {
                 sstable.close();
@@ -223,7 +238,6 @@ public final class Store implements KVStore, Snapshotable {
 
             ByteBuffer buffer = ByteBuffer.wrap(data);
 
-            long checkpoint = buffer.getLong();
             long nextSSTableId = buffer.getLong();
             int sstableCount = buffer.getInt();
 
@@ -232,7 +246,7 @@ public final class Store implements KVStore, Snapshotable {
                 metadataList.add(deserializeMetadata(buffer));
             }
 
-            ManifestData newManifest = new ManifestData(nextSSTableId, checkpoint, metadataList);
+            ManifestData newManifest = new ManifestData(nextSSTableId, 0, metadataList);
 
             synchronized (manifestLock) {
                 manifest = newManifest;
@@ -248,20 +262,9 @@ public final class Store implements KVStore, Snapshotable {
             }
 
             sstableIdCounter.set(nextSSTableId);
-            lastApplied.set(checkpoint);
-
-            return checkpoint;
         } catch (Exception e) {
             throw new StoreException.SnapshotException("Failed to restore from snapshot", e);
         }
-    }
-
-    public long lastAppliedIndex() {
-        return lastApplied.get();
-    }
-
-    public void setLastAppliedIndex(long index) {
-        lastApplied.set(index);
     }
 
     @Override
@@ -357,7 +360,7 @@ public final class Store implements KVStore, Snapshotable {
             Path sstablePath = dataDirectory.resolve(String.format("%06d.sst", sstableId));
 
             try (SSTableWriter writer = SSTableWriter.create(sstablePath, config.sstableConfig())) {
-                Iterator<Entry> it = memtable.scan(null, null);
+                Iterator<StoreEntry> it = memtable.scan(null, null);
                 while (it.hasNext()) {
                     writer.append(it.next());
                 }
@@ -370,7 +373,7 @@ public final class Store implements KVStore, Snapshotable {
             synchronized (manifestLock) {
                 List<SSTableMetadata> updatedSSTables = new ArrayList<>(manifest.sstables());
                 updatedSSTables.addFirst(metadata);
-                manifest = new ManifestData(sstableId, lastApplied.get(), updatedSSTables);
+                manifest = new ManifestData(sstableId, 0, updatedSSTables);
                 Manifest.write(dataDirectory, manifest);
 
                 sstables.add(0, reader);
@@ -496,7 +499,7 @@ public final class Store implements KVStore, Snapshotable {
             List<SSTableMetadata> updated = new ArrayList<>(manifest.sstables());
             updated.removeAll(oldMeta);
             updated.addAll(newMeta);
-            manifest = new ManifestData(manifest.nextSSTableId(), lastApplied.get(), updated);
+            manifest = new ManifestData(manifest.nextSSTableId(), 0, updated);
             Manifest.write(dataDirectory, manifest);
 
             sstables.removeIf(r -> oldMeta.stream()
@@ -512,7 +515,7 @@ public final class Store implements KVStore, Snapshotable {
     public long nextSSTableId() {
         synchronized (manifestLock) {
             long nextId = sstableIdCounter.incrementAndGet();
-            manifest = new ManifestData(nextId, lastApplied.get(), manifest.sstables());
+            manifest = new ManifestData(nextId, 0, manifest.sstables());
             return nextId;
         }
     }
@@ -523,5 +526,47 @@ public final class Store implements KVStore, Snapshotable {
 
     public SSTableConfig sstableConfig() {
         return config.sstableConfig();
+    }
+
+    private static final class KeyValueIterator implements CloseableIterator<KeyValue> {
+
+        private final MergingIterator delegate;
+        private KeyValue next;
+
+        KeyValueIterator(MergingIterator delegate) {
+            this.delegate = delegate;
+            advance();
+        }
+
+        private void advance() {
+            while (delegate.hasNext()) {
+                StoreEntry entry = delegate.next();
+                if (!entry.tombstone()) {
+                    next = new KeyValue(entry.key(), entry.value());
+                    return;
+                }
+            }
+            next = null;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return next != null;
+        }
+
+        @Override
+        public KeyValue next() {
+            if (next == null) {
+                throw new NoSuchElementException();
+            }
+            KeyValue result = next;
+            advance();
+            return result;
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
     }
 }

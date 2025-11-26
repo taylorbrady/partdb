@@ -1,7 +1,7 @@
 package io.partdb.storage.sstable;
 
 import io.partdb.common.ByteArray;
-import io.partdb.common.Entry;
+import io.partdb.storage.StoreEntry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -26,7 +26,7 @@ class SSTableTest {
 
         ByteArray key = ByteArray.of((byte) 1);
         ByteArray value = ByteArray.of((byte) 2);
-        Entry entry = Entry.put(key, value, 1000L);
+        StoreEntry entry = StoreEntry.of(key, value);
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
             writer.append(entry);
@@ -35,12 +35,11 @@ class SSTableTest {
         assertThat(Files.exists(sstablePath)).isTrue();
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            Optional<Entry> result = reader.get(key);
+            Optional<StoreEntry> result = reader.get(key);
 
             assertThat(result).isPresent();
             assertThat(result.get().key()).isEqualTo(key);
             assertThat(result.get().value()).isEqualTo(value);
-            assertThat(result.get().version()).isEqualTo(1000L);
             assertThat(result.get().tombstone()).isFalse();
         }
     }
@@ -50,21 +49,21 @@ class SSTableTest {
         Path sstablePath = tempDir.resolve("test.sst");
         SSTableConfig config = SSTableConfig.create();
 
-        List<Entry> entries = List.of(
-            Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L),
-            Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 200L),
-            Entry.put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 300L)
+        List<StoreEntry> entries = List.of(
+            StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)),
+            StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)),
+            StoreEntry.of(ByteArray.of((byte) 3), ByteArray.of((byte) 30))
         );
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
-            for (Entry entry : entries) {
+            for (StoreEntry entry : entries) {
                 writer.append(entry);
             }
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            for (Entry entry : entries) {
-                Optional<Entry> result = reader.get(entry.key());
+            for (StoreEntry entry : entries) {
+                Optional<StoreEntry> result = reader.get(entry.key());
                 assertThat(result).isPresent();
                 assertThat(result.get().value()).isEqualTo(entry.value());
             }
@@ -77,11 +76,11 @@ class SSTableTest {
         SSTableConfig config = SSTableConfig.create();
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
-            writer.append(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            Optional<Entry> result = reader.get(ByteArray.of((byte) 99));
+            Optional<StoreEntry> result = reader.get(ByteArray.of((byte) 99));
             assertThat(result).isEmpty();
         }
     }
@@ -92,39 +91,18 @@ class SSTableTest {
         SSTableConfig config = SSTableConfig.create();
 
         ByteArray key = ByteArray.of((byte) 5);
-        Entry deleteEntry = Entry.delete(key, 1000L);
+        StoreEntry deleteEntry = StoreEntry.tombstone(key);
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
             writer.append(deleteEntry);
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            Optional<Entry> result = reader.get(key);
+            Optional<StoreEntry> result = reader.get(key);
 
             assertThat(result).isPresent();
             assertThat(result.get().tombstone()).isTrue();
             assertThat(result.get().value()).isNull();
-        }
-    }
-
-    @Test
-    void writeAndReadEntryWithLease() {
-        Path sstablePath = tempDir.resolve("test.sst");
-        SSTableConfig config = SSTableConfig.create();
-
-        ByteArray key = ByteArray.of((byte) 1);
-        ByteArray value = ByteArray.of((byte) 2);
-        Entry entry = Entry.putWithLease(key, value, 1000L, 42L);
-
-        try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
-            writer.append(entry);
-        }
-
-        try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            Optional<Entry> result = reader.get(key);
-
-            assertThat(result).isPresent();
-            assertThat(result.get().leaseId()).isEqualTo(42L);
         }
     }
 
@@ -134,10 +112,10 @@ class SSTableTest {
         SSTableConfig config = SSTableConfig.create();
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
-            writer.append(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 200L));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
 
             assertThatThrownBy(() ->
-                writer.append(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L))
+                writer.append(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)))
             )
             .isInstanceOf(SSTableException.class)
             .hasMessageContaining("ascending order");
@@ -152,10 +130,10 @@ class SSTableTest {
         ByteArray key = ByteArray.of((byte) 1);
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
-            writer.append(Entry.put(key, ByteArray.of((byte) 10), 100L));
+            writer.append(StoreEntry.of(key, ByteArray.of((byte) 10)));
 
             assertThatThrownBy(() ->
-                writer.append(Entry.put(key, ByteArray.of((byte) 20), 200L))
+                writer.append(StoreEntry.of(key, ByteArray.of((byte) 20)))
             )
             .isInstanceOf(SSTableException.class)
             .hasMessageContaining("ascending order");
@@ -168,14 +146,14 @@ class SSTableTest {
         SSTableConfig config = SSTableConfig.create();
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
-            writer.append(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
-            writer.append(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 200L));
-            writer.append(Entry.put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 300L));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 3), ByteArray.of((byte) 30)));
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            Iterator<Entry> it = reader.scan(null, null);
-            List<Entry> entries = collectEntries(it);
+            Iterator<StoreEntry> it = reader.scan(null, null);
+            List<StoreEntry> entries = collectEntries(it);
 
             assertThat(entries).hasSize(3);
             assertThat(entries.get(0).key()).isEqualTo(ByteArray.of((byte) 1));
@@ -190,14 +168,14 @@ class SSTableTest {
         SSTableConfig config = SSTableConfig.create();
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
-            writer.append(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
-            writer.append(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 200L));
-            writer.append(Entry.put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 300L));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 3), ByteArray.of((byte) 30)));
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            Iterator<Entry> it = reader.scan(ByteArray.of((byte) 2), null);
-            List<Entry> entries = collectEntries(it);
+            Iterator<StoreEntry> it = reader.scan(ByteArray.of((byte) 2), null);
+            List<StoreEntry> entries = collectEntries(it);
 
             assertThat(entries).hasSize(2);
             assertThat(entries.get(0).key()).isEqualTo(ByteArray.of((byte) 2));
@@ -211,14 +189,14 @@ class SSTableTest {
         SSTableConfig config = SSTableConfig.create();
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
-            writer.append(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
-            writer.append(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 200L));
-            writer.append(Entry.put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 300L));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 3), ByteArray.of((byte) 30)));
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            Iterator<Entry> it = reader.scan(null, ByteArray.of((byte) 3));
-            List<Entry> entries = collectEntries(it);
+            Iterator<StoreEntry> it = reader.scan(null, ByteArray.of((byte) 3));
+            List<StoreEntry> entries = collectEntries(it);
 
             assertThat(entries).hasSize(2);
             assertThat(entries.get(0).key()).isEqualTo(ByteArray.of((byte) 1));
@@ -232,15 +210,15 @@ class SSTableTest {
         SSTableConfig config = SSTableConfig.create();
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
-            writer.append(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
-            writer.append(Entry.put(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 200L));
-            writer.append(Entry.put(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 300L));
-            writer.append(Entry.put(ByteArray.of((byte) 4), ByteArray.of((byte) 40), 400L));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 2), ByteArray.of((byte) 20)));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 3), ByteArray.of((byte) 30)));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 4), ByteArray.of((byte) 40)));
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            Iterator<Entry> it = reader.scan(ByteArray.of((byte) 2), ByteArray.of((byte) 4));
-            List<Entry> entries = collectEntries(it);
+            Iterator<StoreEntry> it = reader.scan(ByteArray.of((byte) 2), ByteArray.of((byte) 4));
+            List<StoreEntry> entries = collectEntries(it);
 
             assertThat(entries).hasSize(2);
             assertThat(entries.get(0).key()).isEqualTo(ByteArray.of((byte) 2));
@@ -254,27 +232,27 @@ class SSTableTest {
         SSTableConfig config = new SSTableConfig(256, SSTableConfig.DEFAULT_BLOOM_FILTER_FPR);
 
         byte[] largeValue = new byte[100];
-        List<Entry> entries = new ArrayList<>();
+        List<StoreEntry> entries = new ArrayList<>();
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
             for (int i = 0; i < 20; i++) {
                 ByteArray key = ByteArray.of((byte) i);
                 ByteArray value = ByteArray.wrap(largeValue);
-                Entry entry = Entry.put(key, value, i * 100L);
+                StoreEntry entry = StoreEntry.of(key, value);
                 entries.add(entry);
                 writer.append(entry);
             }
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            for (Entry entry : entries) {
-                Optional<Entry> result = reader.get(entry.key());
+            for (StoreEntry entry : entries) {
+                Optional<StoreEntry> result = reader.get(entry.key());
                 assertThat(result).isPresent();
                 assertThat(result.get().key()).isEqualTo(entry.key());
             }
 
-            Iterator<Entry> it = reader.scan(null, null);
-            List<Entry> scanned = collectEntries(it);
+            Iterator<StoreEntry> it = reader.scan(null, null);
+            List<StoreEntry> scanned = collectEntries(it);
             assertThat(scanned).hasSize(20);
         }
     }
@@ -285,12 +263,12 @@ class SSTableTest {
         SSTableConfig config = SSTableConfig.create();
 
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
-            writer.append(Entry.put(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 100L));
+            writer.append(StoreEntry.of(ByteArray.of((byte) 1), ByteArray.of((byte) 10)));
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            Iterator<Entry> it = reader.scan(ByteArray.of((byte) 10), ByteArray.of((byte) 20));
-            List<Entry> entries = collectEntries(it);
+            Iterator<StoreEntry> it = reader.scan(ByteArray.of((byte) 10), ByteArray.of((byte) 20));
+            List<StoreEntry> entries = collectEntries(it);
 
             assertThat(entries).isEmpty();
         }
@@ -305,14 +283,14 @@ class SSTableTest {
             for (int i = 0; i < 100; i++) {
                 ByteArray key = ByteArray.of((byte) i);
                 ByteArray value = ByteArray.of((byte) (i * 2));
-                writer.append(Entry.put(key, value, i * 100L));
+                writer.append(StoreEntry.of(key, value));
             }
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
             for (int i = 100; i < 200; i++) {
                 ByteArray missingKey = ByteArray.of((byte) i);
-                Optional<Entry> result = reader.get(missingKey);
+                Optional<StoreEntry> result = reader.get(missingKey);
                 assertThat(result).isEmpty();
             }
         }
@@ -323,20 +301,20 @@ class SSTableTest {
         Path sstablePath = tempDir.resolve("test.sst");
         SSTableConfig config = SSTableConfig.create();
 
-        List<Entry> entries = new ArrayList<>();
+        List<StoreEntry> entries = new ArrayList<>();
         try (SSTableWriter writer = SSTableWriter.create(sstablePath, config)) {
             for (int i = 0; i < 100; i++) {
                 ByteArray key = ByteArray.of((byte) i);
                 ByteArray value = ByteArray.of((byte) (i * 2));
-                Entry entry = Entry.put(key, value, i * 100L);
+                StoreEntry entry = StoreEntry.of(key, value);
                 entries.add(entry);
                 writer.append(entry);
             }
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
-            for (Entry entry : entries) {
-                Optional<Entry> result = reader.get(entry.key());
+            for (StoreEntry entry : entries) {
+                Optional<StoreEntry> result = reader.get(entry.key());
                 assertThat(result).isPresent();
                 assertThat(result.get().key()).isEqualTo(entry.key());
                 assertThat(result.get().value()).isEqualTo(entry.value());
@@ -353,21 +331,21 @@ class SSTableTest {
             for (int i = 0; i < 50; i++) {
                 ByteArray key = ByteArray.of((byte) i);
                 ByteArray value = ByteArray.of((byte) (i * 2));
-                writer.append(Entry.put(key, value, i * 100L));
+                writer.append(StoreEntry.of(key, value));
             }
         }
 
         try (SSTableReader reader = SSTableReader.open(sstablePath)) {
             for (int i = 0; i < 50; i++) {
                 ByteArray key = ByteArray.of((byte) i);
-                Optional<Entry> result = reader.get(key);
+                Optional<StoreEntry> result = reader.get(key);
                 assertThat(result).isPresent();
             }
         }
     }
 
-    private List<Entry> collectEntries(Iterator<Entry> iterator) {
-        List<Entry> entries = new ArrayList<>();
+    private List<StoreEntry> collectEntries(Iterator<StoreEntry> iterator) {
+        List<StoreEntry> entries = new ArrayList<>();
         while (iterator.hasNext()) {
             entries.add(iterator.next());
         }
