@@ -40,7 +40,7 @@ class SSTableTest {
             assertThat(result).isPresent();
             assertThat(result.get().key()).isEqualTo(key);
             assertThat(result.get().value()).isEqualTo(value);
-            assertThat(result.get().timestamp()).isEqualTo(1000L);
+            assertThat(result.get().version()).isEqualTo(1000L);
             assertThat(result.get().tombstone()).isFalse();
         }
     }

@@ -62,7 +62,7 @@ class SkipListMemtableTest {
         Optional<Entry> result = memtable.get(key);
         assertThat(result).isPresent();
         assertThat(result.get().value()).isEqualTo(value2);
-        assertThat(result.get().timestamp()).isEqualTo(2000L);
+        assertThat(result.get().version()).isEqualTo(2000L);
     }
 
     @Test

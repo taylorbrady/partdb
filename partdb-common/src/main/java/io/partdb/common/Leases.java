@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-public final class Leases implements LeaseProvider {
+public final class Leases {
 
     private final Map<Long, Lease> active = new ConcurrentHashMap<>();
 
@@ -22,7 +22,6 @@ public final class Leases implements LeaseProvider {
         active.computeIfPresent(leaseId, (id, lease) -> lease.renew(currentTimeMillis));
     }
 
-    @Override
     public boolean isLeaseActive(long leaseId) {
         if (leaseId == 0) {
             return true;

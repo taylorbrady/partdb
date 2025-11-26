@@ -69,7 +69,7 @@ final class DataBlock {
         long offset = 0;
 
         for (int i = 0; i < entryCount; i++) {
-            long timestamp = dataSegment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
+            long version = dataSegment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
             byte flags = dataSegment.get(ValueLayout.JAVA_BYTE, offset + 8);
             boolean tombstone = (flags & 0x01) != 0;
             long leaseId = dataSegment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 9);
@@ -81,11 +81,11 @@ final class DataBlock {
             offset += 21 + keyLength + 4;
 
             if (tombstone) {
-                entries.add(new Entry(key, null, timestamp, true, leaseId));
+                entries.add(new Entry(key, null, version, true, leaseId));
             } else {
                 byte[] valueBytes = dataSegment.asSlice(offset, valueLength).toArray(ValueLayout.JAVA_BYTE);
                 offset += valueLength;
-                entries.add(new Entry(key, ByteArray.wrap(valueBytes), timestamp, false, leaseId));
+                entries.add(new Entry(key, ByteArray.wrap(valueBytes), version, false, leaseId));
             }
         }
 
@@ -101,7 +101,7 @@ final class DataBlock {
     }
 
     private static void serializeEntry(ByteBuffer buffer, Entry entry) {
-        buffer.putLong(entry.timestamp());
+        buffer.putLong(entry.version());
 
         byte flags = 0;
         if (entry.tombstone()) {

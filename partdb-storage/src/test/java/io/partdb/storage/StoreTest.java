@@ -2,8 +2,8 @@ package io.partdb.storage;
 
 import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
-import io.partdb.common.LeaseProvider;
 import io.partdb.storage.memtable.MemtableConfig;
+import io.partdb.storage.sstable.SSTableConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -22,15 +22,15 @@ class StoreTest {
 
     @Test
     void putAndGet() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
             ByteArray value = ByteArray.of((byte) 10);
 
             store.put(Entry.putWithLease(key, value, 1, 0));
 
-            Optional<Entry> result = store.getEntry(key);
+            Optional<Entry> result = store.get(key);
 
             assertThat(result).isPresent();
             assertThat(result.get().value()).isEqualTo(value);
@@ -39,26 +39,26 @@ class StoreTest {
 
     @Test
     void getNonExistentKey() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
-            Optional<Entry> result = store.getEntry(ByteArray.of((byte) 99));
+        try (Store store = Store.open(tempDir, config)) {
+            Optional<Entry> result = store.get(ByteArray.of((byte) 99));
             assertThat(result).isEmpty();
         }
     }
 
     @Test
     void deleteKey() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
             ByteArray value = ByteArray.of((byte) 10);
 
             store.put(Entry.putWithLease(key, value, 1, 0));
             store.put(Entry.delete(key, 2));
 
-            Optional<Entry> result = store.getEntry(key);
+            Optional<Entry> result = store.get(key);
             assertThat(result).isPresent();
             assertThat(result.get().tombstone()).isTrue();
         }
@@ -66,14 +66,14 @@ class StoreTest {
 
     @Test
     void deleteNonExistentKey() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
 
             store.put(Entry.delete(key, 1));
 
-            Optional<Entry> result = store.getEntry(key);
+            Optional<Entry> result = store.get(key);
             assertThat(result).isPresent();
             assertThat(result.get().tombstone()).isTrue();
         }
@@ -81,15 +81,15 @@ class StoreTest {
 
     @Test
     void putOverwritesPreviousValue() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
 
             store.put(Entry.putWithLease(key, ByteArray.of((byte) 10), 1, 0));
             store.put(Entry.putWithLease(key, ByteArray.of((byte) 20), 2, 0));
 
-            Optional<Entry> result = store.getEntry(key);
+            Optional<Entry> result = store.get(key);
 
             assertThat(result).isPresent();
             assertThat(result.get().value()).isEqualTo(ByteArray.of((byte) 20));
@@ -98,16 +98,16 @@ class StoreTest {
 
     @Test
     void manualFlush() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             store.put(Entry.putWithLease(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 1, 0));
             store.put(Entry.putWithLease(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 2, 0));
 
             store.flush();
 
-            Optional<Entry> result1 = store.getEntry(ByteArray.of((byte) 1));
-            Optional<Entry> result2 = store.getEntry(ByteArray.of((byte) 2));
+            Optional<Entry> result1 = store.get(ByteArray.of((byte) 1));
+            Optional<Entry> result2 = store.get(ByteArray.of((byte) 2));
 
             assertThat(result1).isPresent();
             assertThat(result2).isPresent();
@@ -118,14 +118,14 @@ class StoreTest {
     void automaticFlushOnMemtableSize() {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            StoreConfig.create(tempDir).sstableConfig()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
         byte[] largeValue = new byte[200];
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < 10; i++) {
                 ByteArray key = ByteArray.of((byte) i);
                 ByteArray value = ByteArray.wrap(largeValue);
@@ -133,7 +133,7 @@ class StoreTest {
             }
 
             for (int i = 0; i < 10; i++) {
-                Optional<Entry> result = store.getEntry(ByteArray.of((byte) i));
+                Optional<Entry> result = store.get(ByteArray.of((byte) i));
                 assertThat(result).isPresent();
             }
         }
@@ -141,9 +141,9 @@ class StoreTest {
 
     @Test
     void scanEntireRange() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             store.put(Entry.putWithLease(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 1, 0));
             store.put(Entry.putWithLease(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 2, 0));
             store.put(Entry.putWithLease(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 3, 0));
@@ -160,9 +160,9 @@ class StoreTest {
 
     @Test
     void scanWithRange() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             store.put(Entry.putWithLease(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 1, 0));
             store.put(Entry.putWithLease(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 2, 0));
             store.put(Entry.putWithLease(ByteArray.of((byte) 3), ByteArray.of((byte) 30), 3, 0));
@@ -179,9 +179,9 @@ class StoreTest {
 
     @Test
     void scanIncludesTombstones() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             store.put(Entry.putWithLease(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 1, 0));
             store.put(Entry.putWithLease(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 2, 0));
             store.put(Entry.delete(ByteArray.of((byte) 2), 3));
@@ -202,14 +202,14 @@ class StoreTest {
     void scanMergesFromMultipleSources() {
         MemtableConfig memtableConfig = new MemtableConfig(512);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            StoreConfig.create(tempDir).sstableConfig()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
         byte[] largeValue = new byte[100];
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < 20; i++) {
                 ByteArray key = ByteArray.of((byte) i);
                 ByteArray value = ByteArray.wrap(largeValue);
@@ -230,14 +230,14 @@ class StoreTest {
     void scanUsesLatestValueForDuplicateKeys() {
         MemtableConfig memtableConfig = new MemtableConfig(256);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            StoreConfig.create(tempDir).sstableConfig()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
         byte[] largeValue = new byte[100];
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
 
             store.put(Entry.putWithLease(key, ByteArray.of((byte) 10), 1, 0));
@@ -255,23 +255,23 @@ class StoreTest {
 
             assertThat(keyEntry).isPresent();
             assertThat(keyEntry.get().value()).isEqualTo(ByteArray.of((byte) 20));
-            assertThat(keyEntry.get().timestamp()).isEqualTo(3);
+            assertThat(keyEntry.get().version()).isEqualTo(3);
         }
     }
 
     @Test
     void recoveryFromSSTables() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             store.put(Entry.putWithLease(ByteArray.of((byte) 1), ByteArray.of((byte) 10), 1, 0));
             store.put(Entry.putWithLease(ByteArray.of((byte) 2), ByteArray.of((byte) 20), 2, 0));
             store.flush();
         }
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
-            Optional<Entry> result1 = store.getEntry(ByteArray.of((byte) 1));
-            Optional<Entry> result2 = store.getEntry(ByteArray.of((byte) 2));
+        try (Store store = Store.open(tempDir, config)) {
+            Optional<Entry> result1 = store.get(ByteArray.of((byte) 1));
+            Optional<Entry> result2 = store.get(ByteArray.of((byte) 2));
 
             assertThat(result1).isPresent();
             assertThat(result1.get().value()).isEqualTo(ByteArray.of((byte) 10));
@@ -283,9 +283,9 @@ class StoreTest {
 
     @Test
     void readPathPriority() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             ByteArray key = ByteArray.of((byte) 1);
 
             store.put(Entry.putWithLease(key, ByteArray.of((byte) 10), 1, 0));
@@ -293,7 +293,7 @@ class StoreTest {
 
             store.put(Entry.putWithLease(key, ByteArray.of((byte) 20), 2, 0));
 
-            Optional<Entry> result = store.getEntry(key);
+            Optional<Entry> result = store.get(key);
 
             assertThat(result).isPresent();
             assertThat(result.get().value()).isEqualTo(ByteArray.of((byte) 20));
@@ -304,14 +304,14 @@ class StoreTest {
     void multipleSSTables() {
         MemtableConfig memtableConfig = new MemtableConfig(512);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            StoreConfig.create(tempDir).sstableConfig()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
         byte[] largeValue = new byte[100];
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < 30; i++) {
                 ByteArray key = ByteArray.of((byte) i);
                 ByteArray value = ByteArray.wrap(largeValue);
@@ -321,7 +321,7 @@ class StoreTest {
             store.flush();
 
             for (int i = 0; i < 30; i++) {
-                Optional<Entry> result = store.getEntry(ByteArray.of((byte) i));
+                Optional<Entry> result = store.get(ByteArray.of((byte) i));
                 assertThat(result).isPresent();
             }
         }

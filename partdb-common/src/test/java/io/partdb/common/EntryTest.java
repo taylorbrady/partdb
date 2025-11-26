@@ -10,13 +10,13 @@ class EntryTest {
     void putFactoryCreatesNonTombstoneEntry() {
         ByteArray key = ByteArray.of((byte) 1);
         ByteArray value = ByteArray.of((byte) 2);
-        long timestamp = 1000L;
+        long version = 1000L;
 
-        Entry entry = Entry.put(key, value, timestamp);
+        Entry entry = Entry.put(key, value, version);
 
         assertThat(entry.key()).isEqualTo(key);
         assertThat(entry.value()).isEqualTo(value);
-        assertThat(entry.timestamp()).isEqualTo(timestamp);
+        assertThat(entry.version()).isEqualTo(version);
         assertThat(entry.tombstone()).isFalse();
         assertThat(entry.leaseId()).isZero();
     }
@@ -25,10 +25,10 @@ class EntryTest {
     void putWithLeaseAttachesLease() {
         ByteArray key = ByteArray.of((byte) 1);
         ByteArray value = ByteArray.of((byte) 2);
-        long timestamp = 1000L;
+        long version = 1000L;
         long leaseId = 42L;
 
-        Entry entry = Entry.putWithLease(key, value, timestamp, leaseId);
+        Entry entry = Entry.putWithLease(key, value, version, leaseId);
 
         assertThat(entry.leaseId()).isEqualTo(leaseId);
         assertThat(entry.tombstone()).isFalse();
@@ -37,13 +37,13 @@ class EntryTest {
     @Test
     void deleteFactoryCreatesTombstoneEntry() {
         ByteArray key = ByteArray.of((byte) 1);
-        long timestamp = 2000L;
+        long version = 2000L;
 
-        Entry entry = Entry.delete(key, timestamp);
+        Entry entry = Entry.delete(key, version);
 
         assertThat(entry.key()).isEqualTo(key);
         assertThat(entry.value()).isNull();
-        assertThat(entry.timestamp()).isEqualTo(timestamp);
+        assertThat(entry.version()).isEqualTo(version);
         assertThat(entry.tombstone()).isTrue();
         assertThat(entry.leaseId()).isZero();
     }

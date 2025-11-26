@@ -5,7 +5,7 @@ import io.partdb.common.Entry;
 
 import java.util.*;
 
-public final class MergingIterator implements Iterator<Entry> {
+public final class MergingIterator implements CloseableIterator<Entry> {
 
     private final PriorityQueue<IteratorEntry> heap;
     private final List<Iterator<Entry>> iterators;
@@ -63,6 +63,11 @@ public final class MergingIterator implements Iterator<Entry> {
         Entry result = nextEntry;
         advance();
         return result;
+    }
+
+    @Override
+    public void close() {
+        // No resources to release currently
     }
 
     private record IteratorEntry(Entry entry, int iteratorIndex) {}

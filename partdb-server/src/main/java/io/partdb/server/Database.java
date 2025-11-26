@@ -4,6 +4,7 @@ import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
 import io.partdb.common.Leases;
 import io.partdb.common.statemachine.*;
+import io.partdb.storage.CompactionFilter;
 import io.partdb.storage.Store;
 import io.partdb.storage.StoreConfig;
 
@@ -29,7 +30,17 @@ public final class Database implements StateMachine, AutoCloseable {
 
     public static Database open(Path dataDirectory, StoreConfig config) {
         Leases leases = new Leases();
-        Store store = Store.open(dataDirectory, config, leases);
+
+        CompactionFilter filter = entry ->
+            entry.leaseId() == 0 || leases.isLeaseActive(entry.leaseId());
+
+        StoreConfig configWithFilter = new StoreConfig(
+            config.memtableConfig(),
+            config.sstableConfig(),
+            filter
+        );
+
+        Store store = Store.open(dataDirectory, configWithFilter);
         return new Database(store, leases, store.lastAppliedIndex());
     }
 
@@ -61,7 +72,7 @@ public final class Database implements StateMachine, AutoCloseable {
 
     @Override
     public Optional<ByteArray> get(ByteArray key) {
-        Optional<Entry> entry = store.getEntry(key);
+        Optional<Entry> entry = store.get(key);
         if (entry.isEmpty()) {
             return Optional.empty();
         }
@@ -86,7 +97,7 @@ public final class Database implements StateMachine, AutoCloseable {
         store.flush();
 
         try {
-            byte[] storageData = store.toSnapshot();
+            byte[] storageData = store.toSnapshot(lastApplied);
             byte[] leaseData = leases.toSnapshot();
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -115,11 +126,10 @@ public final class Database implements StateMachine, AutoCloseable {
         byte[] leaseData = new byte[leaseLen];
         buffer.get(leaseData);
 
-        store.restoreSnapshot(storageData);
+        long checkpoint = store.restoreSnapshot(storageData);
         leases.restoreSnapshot(leaseData);
 
-        lastApplied = snapshot.lastAppliedIndex();
-        store.setLastAppliedIndex(lastApplied);
+        lastApplied = checkpoint;
     }
 
     @Override

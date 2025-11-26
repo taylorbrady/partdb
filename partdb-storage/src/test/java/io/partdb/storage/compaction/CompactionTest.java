@@ -2,7 +2,7 @@ package io.partdb.storage.compaction;
 
 import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
-import io.partdb.common.LeaseProvider;
+import io.partdb.storage.CompactionFilter;
 import io.partdb.storage.Store;
 import io.partdb.storage.StoreConfig;
 import io.partdb.storage.memtable.MemtableConfig;
@@ -26,12 +26,12 @@ class CompactionTest {
     void testL0CompactionTriggersWhenThresholdReached() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            SSTableConfig.create()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
@@ -55,12 +55,12 @@ class CompactionTest {
     void testCompactionMergesOverlappingKeys() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            SSTableConfig.create()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             long index = 0;
             for (int version = 0; version < 5; version++) {
                 for (int i = 0; i < 20; i++) {
@@ -75,7 +75,7 @@ class CompactionTest {
 
             for (int i = 0; i < 20; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%02d", i).getBytes());
-                Optional<Entry> result = store.getEntry(key);
+                Optional<Entry> result = store.get(key);
                 assertThat(result).isPresent();
                 assertThat(new String(result.get().value().toByteArray())).startsWith("v4");
             }
@@ -86,12 +86,12 @@ class CompactionTest {
     void testTombstonesDroppedAtBottomLevel() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            SSTableConfig.create()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             long index = 0;
             for (int i = 0; i < 50; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
@@ -110,7 +110,7 @@ class CompactionTest {
 
             for (int i = 0; i < 50; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
-                Optional<Entry> result = store.getEntry(key);
+                Optional<Entry> result = store.get(key);
                 assertThat(result).isPresent();
                 assertThat(result.get().tombstone()).isTrue();
             }
@@ -121,12 +121,12 @@ class CompactionTest {
     void testLevelSizeRespected() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(2048);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            SSTableConfig.create()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             byte[] largeValue = new byte[100];
             long index = 0;
             for (int batch = 0; batch < 20; batch++) {
@@ -156,12 +156,12 @@ class CompactionTest {
     void testCompactionPreservesNewestVersions() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            SSTableConfig.create()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             List<String> expectedValues = new ArrayList<>();
 
             for (int i = 0; i < 30; i++) {
@@ -179,7 +179,7 @@ class CompactionTest {
 
             for (int i = 0; i < 30; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%02d", i).getBytes());
-                Optional<Entry> result = store.getEntry(key);
+                Optional<Entry> result = store.get(key);
                 assertThat(result).isPresent();
                 assertThat(new String(result.get().value().toByteArray())).isEqualTo(expectedValues.get(i));
             }
@@ -190,12 +190,12 @@ class CompactionTest {
     void testManifestConsistencyAfterCompaction() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            SSTableConfig.create()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < 80; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
@@ -225,15 +225,15 @@ class CompactionTest {
     void testReopenAfterCompaction() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            SSTableConfig.create()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
         List<ByteArray> keys = new ArrayList<>();
         List<ByteArray> values = new ArrayList<>();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < 60; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
@@ -245,9 +245,9 @@ class CompactionTest {
             Thread.sleep(500);
         }
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < keys.size(); i++) {
-                Optional<Entry> result = store.getEntry(keys.get(i));
+                Optional<Entry> result = store.get(keys.get(i));
                 assertThat(result).isPresent();
                 assertThat(result.get().value()).isEqualTo(values.get(i));
             }
@@ -258,12 +258,12 @@ class CompactionTest {
     void testScanAfterCompaction() throws Exception {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
-            tempDir,
             memtableConfig,
-            SSTableConfig.create()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
         );
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
                 ByteArray key = ByteArray.wrap(String.format("key-%03d", i).getBytes());
                 ByteArray value = ByteArray.wrap(("value-" + i).getBytes());
@@ -291,9 +291,9 @@ class CompactionTest {
 
     @Test
     void testEmptyManifestLoad() {
-        StoreConfig config = StoreConfig.create(tempDir);
+        StoreConfig config = StoreConfig.create();
 
-        try (Store store = Store.open(tempDir, config, LeaseProvider.alwaysActive())) {
+        try (Store store = Store.open(tempDir, config)) {
             ManifestData manifest = store.getManifest();
             assertThat(manifest).isNotNull();
             assertThat(manifest.sstables()).isEmpty();

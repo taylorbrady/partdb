@@ -3,25 +3,32 @@ package io.partdb.storage;
 import io.partdb.storage.memtable.MemtableConfig;
 import io.partdb.storage.sstable.SSTableConfig;
 
-import java.nio.file.Path;
 import java.util.Objects;
 
 public record StoreConfig(
-    Path dataDirectory,
     MemtableConfig memtableConfig,
-    SSTableConfig sstableConfig
+    SSTableConfig sstableConfig,
+    CompactionFilter compactionFilter
 ) {
     public StoreConfig {
-        Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
         Objects.requireNonNull(memtableConfig, "memtableConfig must not be null");
         Objects.requireNonNull(sstableConfig, "sstableConfig must not be null");
+        Objects.requireNonNull(compactionFilter, "compactionFilter must not be null");
     }
 
-    public static StoreConfig create(Path dataDirectory) {
+    public static StoreConfig create() {
         return new StoreConfig(
-            dataDirectory,
             MemtableConfig.create(),
-            SSTableConfig.create()
+            SSTableConfig.create(),
+            CompactionFilter.retainAll()
+        );
+    }
+
+    public static StoreConfig withFilter(CompactionFilter filter) {
+        return new StoreConfig(
+            MemtableConfig.create(),
+            SSTableConfig.create(),
+            filter
         );
     }
 }
