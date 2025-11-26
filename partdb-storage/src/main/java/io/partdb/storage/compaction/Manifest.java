@@ -16,7 +16,7 @@ import java.util.zip.CRC32;
 public final class Manifest {
 
     private static final int MAGIC_NUMBER = 0x4D414E46;
-    private static final int VERSION = 2;
+    private static final int VERSION = 3;
     private static final String MANIFEST_FILENAME = "MANIFEST";
     private static final String MANIFEST_TEMP_FILENAME = "MANIFEST.tmp";
 
@@ -50,7 +50,7 @@ public final class Manifest {
             Path manifestPath = dataDirectory.resolve(MANIFEST_FILENAME);
 
             if (!Files.exists(manifestPath)) {
-                return new ManifestData(0, 0, List.of());
+                return new ManifestData(0, List.of());
             }
 
             byte[] bytes = Files.readAllBytes(manifestPath);
@@ -69,7 +69,6 @@ public final class Manifest {
         buffer.putInt(MAGIC_NUMBER);
         buffer.putInt(VERSION);
         buffer.putLong(data.nextSSTableId());
-        buffer.putLong(data.lastAppliedIndex());
         buffer.putInt(data.sstables().size());
 
         for (SSTableMetadata sst : data.sstables()) {
@@ -116,7 +115,6 @@ public final class Manifest {
         }
 
         long nextSSTableId = buffer.getLong();
-        long lastAppliedIndex = buffer.getLong();
         int sstableCount = buffer.getInt();
 
         List<SSTableMetadata> sstables = new ArrayList<>(sstableCount);
@@ -140,11 +138,11 @@ public final class Manifest {
             sstables.add(new SSTableMetadata(id, level, smallestKey, largestKey, fileSizeBytes, entryCount));
         }
 
-        return new ManifestData(nextSSTableId, lastAppliedIndex, sstables);
+        return new ManifestData(nextSSTableId, sstables);
     }
 
     private static int calculateSize(ManifestData data) {
-        int size = 4 + 4 + 8 + 8 + 4;
+        int size = 4 + 4 + 8 + 4;
 
         for (SSTableMetadata sst : data.sstables()) {
             size += 8;

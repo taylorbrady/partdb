@@ -5,7 +5,6 @@ import java.util.Objects;
 
 public record ManifestData(
     long nextSSTableId,
-    long lastAppliedIndex,
     List<SSTableMetadata> sstables
 ) {
 
@@ -15,9 +14,6 @@ public record ManifestData(
 
         if (nextSSTableId < 0) {
             throw new IllegalArgumentException("nextSSTableId must be non-negative");
-        }
-        if (lastAppliedIndex < 0) {
-            throw new IllegalArgumentException("lastAppliedIndex must be non-negative");
         }
     }
 

@@ -43,8 +43,4 @@ public record SSTableMetadata(
         }
         return true;
     }
-
-    public boolean overlaps(SSTableMetadata other) {
-        return overlaps(other.smallestKey, other.largestKey);
-    }
 }

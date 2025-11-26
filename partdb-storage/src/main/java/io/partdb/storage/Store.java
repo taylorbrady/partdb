@@ -22,7 +22,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public final class Store implements KeyValueStore {
@@ -48,7 +48,7 @@ public final class Store implements KeyValueStore {
 
     private volatile Memtable activeMemtable;
     private final Deque<Memtable> immutableMemtables;
-    private final CopyOnWriteArrayList<SSTableReader> sstables;
+    private volatile SSTableSnapshot sstableSnapshot;
     private volatile ManifestData manifest;
     private CompactionExecutor compactionExecutor;
 
@@ -56,7 +56,7 @@ public final class Store implements KeyValueStore {
         Path dataDirectory,
         StoreConfig config,
         Memtable activeMemtable,
-        List<SSTableReader> sstables,
+        SSTableSnapshot sstableSnapshot,
         ManifestData manifest,
         AtomicLong sstableIdCounter
     ) {
@@ -64,7 +64,7 @@ public final class Store implements KeyValueStore {
         this.config = config;
         this.activeMemtable = activeMemtable;
         this.immutableMemtables = new ArrayDeque<>();
-        this.sstables = new CopyOnWriteArrayList<>(sstables);
+        this.sstableSnapshot = sstableSnapshot;
         this.manifest = manifest;
         this.sstableIdCounter = sstableIdCounter;
     }
@@ -93,7 +93,7 @@ public final class Store implements KeyValueStore {
                 dataDirectory,
                 config,
                 memtable,
-                sstables,
+                SSTableSnapshot.of(sstables),
                 manifest,
                 new AtomicLong(manifest.nextSSTableId())
             );
@@ -163,14 +163,22 @@ public final class Store implements KeyValueStore {
             }
         }
 
-        for (SSTableReader sstable : sstables) {
-            result = sstable.get(key);
-            if (result.isPresent()) {
-                return entryToValue(result.get());
+        while (true) {
+            SSTableSnapshot snapshot = sstableSnapshot.tryAcquire();
+            if (snapshot != null) {
+                try {
+                    for (SSTableReader sstable : snapshot.readers()) {
+                        result = sstable.get(key);
+                        if (result.isPresent()) {
+                            return entryToValue(result.get());
+                        }
+                    }
+                    return Optional.empty();
+                } finally {
+                    snapshot.release();
+                }
             }
         }
-
-        return Optional.empty();
     }
 
     private Optional<ByteArray> entryToValue(StoreEntry entry) {
@@ -192,12 +200,16 @@ public final class Store implements KeyValueStore {
             }
         }
 
-        for (SSTableReader sstable : sstables) {
-            iterators.add(sstable.scan(startKey, endKey));
+        while (true) {
+            SSTableSnapshot snapshot = sstableSnapshot.tryAcquire();
+            if (snapshot != null) {
+                for (SSTableReader sstable : snapshot.readers()) {
+                    iterators.add(sstable.scan(startKey, endKey));
+                }
+                MergingIterator merged = new MergingIterator(iterators);
+                return new KeyValueIterator(merged, snapshot);
+            }
         }
-
-        MergingIterator merged = new MergingIterator(iterators);
-        return new KeyValueIterator(merged);
     }
 
     @Override
@@ -231,11 +243,6 @@ public final class Store implements KeyValueStore {
     @Override
     public void restore(byte[] data) {
         try {
-            for (SSTableReader sstable : sstables) {
-                sstable.close();
-            }
-            sstables.clear();
-
             ByteBuffer buffer = ByteBuffer.wrap(data);
 
             long nextSSTableId = buffer.getLong();
@@ -246,15 +253,19 @@ public final class Store implements KeyValueStore {
                 metadataList.add(deserializeMetadata(buffer));
             }
 
-            ManifestData newManifest = new ManifestData(nextSSTableId, 0, metadataList);
+            ManifestData newManifest = new ManifestData(nextSSTableId, metadataList);
+
+            List<SSTableReader> newReaders = loadSSTablesFromManifest(dataDirectory, newManifest);
 
             synchronized (manifestLock) {
                 manifest = newManifest;
                 Manifest.write(dataDirectory, manifest);
-            }
 
-            List<SSTableReader> newSSTables = loadSSTablesFromManifest(dataDirectory, newManifest);
-            sstables.addAll(newSSTables);
+                SSTableSnapshot oldSnapshot = sstableSnapshot;
+                List<SSTableReader> orphanedReaders = new ArrayList<>(oldSnapshot.readers());
+                sstableSnapshot = SSTableSnapshot.of(newReaders);
+                oldSnapshot.retire(orphanedReaders);
+            }
 
             activeMemtable = new SkipListMemtable(config.memtableConfig());
             synchronized (memtableLock) {
@@ -323,8 +334,8 @@ public final class Store implements KeyValueStore {
             compactionExecutor.close();
         }
 
-        for (SSTableReader sstable : sstables) {
-            sstable.close();
+        for (SSTableReader reader : sstableSnapshot.readers()) {
+            reader.close();
         }
     }
 
@@ -373,10 +384,16 @@ public final class Store implements KeyValueStore {
             synchronized (manifestLock) {
                 List<SSTableMetadata> updatedSSTables = new ArrayList<>(manifest.sstables());
                 updatedSSTables.addFirst(metadata);
-                manifest = new ManifestData(sstableId, 0, updatedSSTables);
+                manifest = new ManifestData(sstableId, updatedSSTables);
                 Manifest.write(dataDirectory, manifest);
 
-                sstables.add(0, reader);
+                List<SSTableReader> newReaders = new ArrayList<>();
+                newReaders.add(reader);
+                newReaders.addAll(sstableSnapshot.readers());
+
+                SSTableSnapshot oldSnapshot = sstableSnapshot;
+                sstableSnapshot = SSTableSnapshot.of(newReaders);
+                oldSnapshot.retire(List.of());
             }
 
             compactionExecutor.maybeScheduleCompaction();
@@ -426,7 +443,7 @@ public final class Store implements KeyValueStore {
             metadataList.add(metadata);
         }
 
-        return new ManifestData(maxId, 0, metadataList);
+        return new ManifestData(maxId, metadataList);
     }
 
     private static List<SSTableReader> loadSSTablesFromManifest(Path dataDirectory, ManifestData manifest) {
@@ -499,23 +516,39 @@ public final class Store implements KeyValueStore {
             List<SSTableMetadata> updated = new ArrayList<>(manifest.sstables());
             updated.removeAll(oldMeta);
             updated.addAll(newMeta);
-            manifest = new ManifestData(manifest.nextSSTableId(), 0, updated);
+            manifest = new ManifestData(manifest.nextSSTableId(), updated);
             Manifest.write(dataDirectory, manifest);
 
-            sstables.removeIf(r -> oldMeta.stream()
-                .anyMatch(m -> extractIdFromPath(r.path()) == m.id()));
+            Set<Long> oldIds = oldMeta.stream()
+                .map(SSTableMetadata::id)
+                .collect(Collectors.toSet());
+
+            List<SSTableReader> orphanedReaders = new ArrayList<>();
+            List<SSTableReader> retainedReaders = new ArrayList<>();
+
+            for (SSTableReader reader : sstableSnapshot.readers()) {
+                if (oldIds.contains(extractIdFromPath(reader.path()))) {
+                    orphanedReaders.add(reader);
+                } else {
+                    retainedReaders.add(reader);
+                }
+            }
 
             for (SSTableMetadata meta : newMeta) {
                 Path path = dataDirectory.resolve(String.format("%06d.sst", meta.id()));
-                sstables.add(SSTableReader.open(path));
+                retainedReaders.add(SSTableReader.open(path));
             }
+
+            SSTableSnapshot oldSnapshot = sstableSnapshot;
+            sstableSnapshot = SSTableSnapshot.of(retainedReaders);
+            oldSnapshot.retire(orphanedReaders);
         }
     }
 
     public long nextSSTableId() {
         synchronized (manifestLock) {
             long nextId = sstableIdCounter.incrementAndGet();
-            manifest = new ManifestData(nextId, 0, manifest.sstables());
+            manifest = new ManifestData(nextId, manifest.sstables());
             return nextId;
         }
     }
@@ -531,10 +564,12 @@ public final class Store implements KeyValueStore {
     private static final class KeyValueIterator implements CloseableIterator<KeyValue> {
 
         private final MergingIterator delegate;
+        private final SSTableSnapshot snapshot;
         private KeyValue next;
 
-        KeyValueIterator(MergingIterator delegate) {
+        KeyValueIterator(MergingIterator delegate, SSTableSnapshot snapshot) {
             this.delegate = delegate;
+            this.snapshot = snapshot;
             advance();
         }
 
@@ -567,6 +602,7 @@ public final class Store implements KeyValueStore {
         @Override
         public void close() {
             delegate.close();
+            snapshot.release();
         }
     }
 }
