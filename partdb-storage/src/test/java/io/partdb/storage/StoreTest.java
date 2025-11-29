@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -118,8 +117,7 @@ class StoreTest {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         byte[] largeValue = new byte[200];
@@ -203,8 +201,7 @@ class StoreTest {
         MemtableConfig memtableConfig = new MemtableConfig(512);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         byte[] largeValue = new byte[100];
@@ -232,8 +229,7 @@ class StoreTest {
         MemtableConfig memtableConfig = new MemtableConfig(256);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         byte[] largeValue = new byte[100];
@@ -306,8 +302,7 @@ class StoreTest {
         MemtableConfig memtableConfig = new MemtableConfig(512);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         byte[] largeValue = new byte[100];

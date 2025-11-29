@@ -3,7 +3,8 @@ package io.partdb.storage;
 public sealed class StoreException extends RuntimeException
     permits StoreException.FlushException,
             StoreException.RecoveryException,
-            StoreException.SnapshotException {
+            StoreException.SnapshotException,
+            StoreException.ConcurrencyException {
 
     public StoreException(String message) {
         super(message);
@@ -28,6 +29,12 @@ public sealed class StoreException extends RuntimeException
     public static final class SnapshotException extends StoreException {
         public SnapshotException(String message, Throwable cause) {
             super(message, cause);
+        }
+    }
+
+    public static final class ConcurrencyException extends StoreException {
+        public ConcurrencyException(String message) {
+            super(message);
         }
     }
 }

@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -28,8 +27,7 @@ class CompactionTest {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         try (Store store = Store.open(tempDir, config)) {
@@ -57,8 +55,7 @@ class CompactionTest {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         try (Store store = Store.open(tempDir, config)) {
@@ -87,8 +84,7 @@ class CompactionTest {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         try (Store store = Store.open(tempDir, config)) {
@@ -120,8 +116,7 @@ class CompactionTest {
         MemtableConfig memtableConfig = new MemtableConfig(2048);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         try (Store store = Store.open(tempDir, config)) {
@@ -154,8 +149,7 @@ class CompactionTest {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         try (Store store = Store.open(tempDir, config)) {
@@ -188,8 +182,7 @@ class CompactionTest {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         try (Store store = Store.open(tempDir, config)) {
@@ -223,8 +216,7 @@ class CompactionTest {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         List<ByteArray> keys = new ArrayList<>();
@@ -256,8 +248,7 @@ class CompactionTest {
         MemtableConfig memtableConfig = new MemtableConfig(1024);
         StoreConfig config = new StoreConfig(
             memtableConfig,
-            SSTableConfig.create(),
-            Duration.ofHours(24)
+            SSTableConfig.create()
         );
 
         try (Store store = Store.open(tempDir, config)) {

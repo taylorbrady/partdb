@@ -5,7 +5,8 @@ import java.util.Objects;
 
 public record CompactionTask(
     List<SSTableMetadata> inputs,
-    int targetLevel
+    int targetLevel,
+    boolean isBottomLevel
 ) {
 
     public CompactionTask {

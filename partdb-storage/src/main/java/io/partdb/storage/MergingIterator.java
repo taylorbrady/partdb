@@ -8,18 +8,18 @@ import java.util.*;
 public final class MergingIterator implements CloseableIterator<StoreEntry> {
 
     private final PriorityQueue<IteratorEntry> heap;
-    private final List<Iterator<StoreEntry>> iterators;
+    private final List<CloseableIterator<StoreEntry>> iterators;
     private ByteArray lastKey;
     private StoreEntry nextEntry;
 
-    public MergingIterator(List<Iterator<StoreEntry>> iterators) {
+    public MergingIterator(List<CloseableIterator<StoreEntry>> iterators) {
         this.iterators = iterators;
         this.heap = new PriorityQueue<>(Comparator
             .comparing((IteratorEntry e) -> e.entry.key())
             .thenComparingInt(e -> e.iteratorIndex));
 
         for (int i = 0; i < iterators.size(); i++) {
-            Iterator<StoreEntry> it = iterators.get(i);
+            CloseableIterator<StoreEntry> it = iterators.get(i);
             if (it.hasNext()) {
                 heap.offer(new IteratorEntry(it.next(), i));
             }
@@ -67,6 +67,9 @@ public final class MergingIterator implements CloseableIterator<StoreEntry> {
 
     @Override
     public void close() {
+        for (CloseableIterator<StoreEntry> it : iterators) {
+            it.close();
+        }
     }
 
     private record IteratorEntry(StoreEntry entry, int iteratorIndex) {}

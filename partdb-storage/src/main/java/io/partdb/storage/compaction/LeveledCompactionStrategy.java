@@ -50,7 +50,8 @@ public final class LeveledCompactionStrategy implements CompactionStrategy {
         allInputs.addAll(l0Files);
         allInputs.addAll(overlappingL1);
 
-        return Optional.of(new CompactionTask(allInputs, 1));
+        boolean isBottomLevel = 1 == config.maxLevels() - 1;
+        return Optional.of(new CompactionTask(allInputs, 1, isBottomLevel));
     }
 
     private Optional<CompactionTask> selectLevelCompaction(ManifestData manifest, int level) {
@@ -66,9 +67,8 @@ public final class LeveledCompactionStrategy implements CompactionStrategy {
             return Optional.empty();
         }
 
-        int index = levelRoundRobin.computeIfAbsent(level, k -> new AtomicInteger(0))
-            .getAndUpdate(i -> (i + 1) % levelFiles.size());
-
+        AtomicInteger counter = levelRoundRobin.computeIfAbsent(level, k -> new AtomicInteger(0));
+        int index = Math.floorMod(counter.getAndIncrement(), levelFiles.size());
         SSTableMetadata selected = levelFiles.get(index);
 
         List<SSTableMetadata> nextLevelFiles = manifest.level(level + 1);
@@ -78,7 +78,9 @@ public final class LeveledCompactionStrategy implements CompactionStrategy {
         allInputs.add(selected);
         allInputs.addAll(overlapping);
 
-        return Optional.of(new CompactionTask(allInputs, level + 1));
+        int targetLevel = level + 1;
+        boolean isBottomLevel = targetLevel == config.maxLevels() - 1;
+        return Optional.of(new CompactionTask(allInputs, targetLevel, isBottomLevel));
     }
 
     private List<SSTableMetadata> findOverlapping(

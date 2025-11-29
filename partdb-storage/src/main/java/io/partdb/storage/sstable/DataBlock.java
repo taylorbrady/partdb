@@ -27,19 +27,13 @@ final class DataBlock {
             serializeEntry(buffer, entry);
         }
 
-        int entryCount = entries.size();
-        byte[] data = new byte[buffer.position()];
-        buffer.flip();
-        buffer.get(data);
+        int dataEnd = buffer.position();
 
         CRC32 crc = new CRC32();
-        crc.update(data);
-        int checksum = (int) crc.getValue();
+        crc.update(buffer.array(), 0, dataEnd);
 
-        buffer = ByteBuffer.allocate(data.length + TRAILER_SIZE).order(ByteOrder.nativeOrder());
-        buffer.put(data);
-        buffer.putInt(entryCount);
-        buffer.putInt(checksum);
+        buffer.putInt(entries.size());
+        buffer.putInt((int) crc.getValue());
 
         return buffer.array();
     }

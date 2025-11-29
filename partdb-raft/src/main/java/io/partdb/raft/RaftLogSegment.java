@@ -27,7 +27,7 @@ import java.util.zip.CRC32C;
 final class RaftLogSegment implements AutoCloseable {
     private static final int MAGIC_NUMBER = 0x5241464C;
     private static final int VERSION = 1;
-    private static final int HEADER_SIZE = 12;
+    private static final int HEADER_SIZE = 16;
     private static final int ENTRY_HEADER_SIZE = 16;
 
     private final Path path;

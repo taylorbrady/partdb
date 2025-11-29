@@ -1,7 +1,5 @@
 package io.partdb.storage.compaction;
 
-import io.partdb.common.ByteArray;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -72,17 +70,7 @@ public final class Manifest {
         buffer.putInt(data.sstables().size());
 
         for (SSTableMetadata sst : data.sstables()) {
-            buffer.putLong(sst.id());
-            buffer.putInt(sst.level());
-
-            buffer.putInt(sst.smallestKey().size());
-            buffer.put(sst.smallestKey().toByteArray());
-
-            buffer.putInt(sst.largestKey().size());
-            buffer.put(sst.largestKey().toByteArray());
-
-            buffer.putLong(sst.fileSizeBytes());
-            buffer.putLong(sst.entryCount());
+            sst.writeTo(buffer);
         }
 
         CRC32 crc = new CRC32();
@@ -119,42 +107,17 @@ public final class Manifest {
 
         List<SSTableMetadata> sstables = new ArrayList<>(sstableCount);
         for (int i = 0; i < sstableCount; i++) {
-            long id = buffer.getLong();
-            int level = buffer.getInt();
-
-            int smallestKeySize = buffer.getInt();
-            byte[] smallestKeyBytes = new byte[smallestKeySize];
-            buffer.get(smallestKeyBytes);
-            ByteArray smallestKey = ByteArray.wrap(smallestKeyBytes);
-
-            int largestKeySize = buffer.getInt();
-            byte[] largestKeyBytes = new byte[largestKeySize];
-            buffer.get(largestKeyBytes);
-            ByteArray largestKey = ByteArray.wrap(largestKeyBytes);
-
-            long fileSizeBytes = buffer.getLong();
-            long entryCount = buffer.getLong();
-
-            sstables.add(new SSTableMetadata(id, level, smallestKey, largestKey, fileSizeBytes, entryCount));
+            sstables.add(SSTableMetadata.readFrom(buffer));
         }
 
         return new ManifestData(nextSSTableId, sstables);
     }
 
     private static int calculateSize(ManifestData data) {
-        int size = 4 + 4 + 8 + 4;
-
+        int size = 4 + 4 + 8 + 4 + 4;
         for (SSTableMetadata sst : data.sstables()) {
-            size += 8;
-            size += 4;
-            size += 4 + sst.smallestKey().size();
-            size += 4 + sst.largestKey().size();
-            size += 8;
-            size += 8;
+            size += sst.serializedSize();
         }
-
-        size += 4;
-
         return size;
     }
 }

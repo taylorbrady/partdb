@@ -3,10 +3,10 @@ syntax = "proto3";
 package io.partdb.protocol.kv;
 
 option java_package = "io.partdb.protocol.kv.proto";
-option java_outer_classname = "KVProto";
+option java_outer_classname = "KvProto";
 option java_multiple_files = false;
 
-service KVService {
+service KvService {
   rpc Get(GetRequest) returns (GetResponse);
   rpc Put(PutRequest) returns (PutResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);

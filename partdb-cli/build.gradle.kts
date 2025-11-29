@@ -1,4 +1,12 @@
+plugins {
+    application
+}
+
 dependencies {
     implementation(project(":partdb-common"))
-    implementation(project(":partdb-client"))
+    implementation(project(":partdb-server"))
+}
+
+application {
+    mainClass.set("io.partdb.cli.PartDbCli")
 }

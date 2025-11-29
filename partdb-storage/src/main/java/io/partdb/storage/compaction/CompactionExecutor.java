@@ -1,6 +1,7 @@
 package io.partdb.storage.compaction;
 
 import io.partdb.common.ByteArray;
+import io.partdb.common.CloseableIterator;
 import io.partdb.storage.MergingIterator;
 import io.partdb.storage.Store;
 import io.partdb.storage.StoreEntry;
@@ -77,7 +78,7 @@ public final class CompactionExecutor implements AutoCloseable {
         List<SSTableReader> readers = openSSTables(task.inputs());
 
         try {
-            List<Iterator<StoreEntry>> iterators = readers.stream()
+            List<CloseableIterator<StoreEntry>> iterators = readers.stream()
                 .map(r -> r.scan(null, null))
                 .toList();
 
@@ -85,14 +86,15 @@ public final class CompactionExecutor implements AutoCloseable {
 
             List<SSTableMetadata> newSSTables = writeMergedSSTables(
                 mergeIterator,
-                task.targetLevel()
+                task.targetLevel(),
+                task.isBottomLevel()
             );
 
             engine.swapSSTables(task.inputs(), newSSTables);
 
-            readers.forEach(SSTableReader::close);
-
             deleteOldSSTables(task.inputs());
+
+            maybeScheduleCompaction();
 
         } catch (Exception e) {
             readers.forEach(SSTableReader::close);
@@ -111,7 +113,8 @@ public final class CompactionExecutor implements AutoCloseable {
 
     private List<SSTableMetadata> writeMergedSSTables(
         Iterator<StoreEntry> entries,
-        int targetLevel
+        int targetLevel,
+        boolean dropTombstones
     ) throws IOException {
         List<SSTableMetadata> result = new ArrayList<>();
 
@@ -125,7 +128,7 @@ public final class CompactionExecutor implements AutoCloseable {
                 while (entries.hasNext() && bytesWritten < TARGET_SSTABLE_SIZE) {
                     StoreEntry entry = entries.next();
 
-                    if (entry.tombstone() && targetLevel == 6) {
+                    if (entry.tombstone() && dropTombstones) {
                         continue;
                     }
 

@@ -15,7 +15,4 @@ public record SSTableHeader(int magic, int version) {
         }
     }
 
-    public static SSTableHeader create() {
-        return new SSTableHeader(MAGIC_NUMBER, CURRENT_VERSION);
-    }
 }

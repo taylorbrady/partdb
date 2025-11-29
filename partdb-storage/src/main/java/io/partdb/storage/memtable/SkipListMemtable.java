@@ -1,9 +1,9 @@
 package io.partdb.storage.memtable;
 
 import io.partdb.common.ByteArray;
+import io.partdb.common.CloseableIterator;
 import io.partdb.storage.StoreEntry;
 
-import java.util.Iterator;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -46,15 +46,15 @@ public final class SkipListMemtable implements Memtable {
     }
 
     @Override
-    public Iterator<StoreEntry> scan(ByteArray startKey, ByteArray endKey) {
+    public CloseableIterator<StoreEntry> scan(ByteArray startKey, ByteArray endKey) {
         if (startKey == null && endKey == null) {
-            return entries.values().iterator();
+            return CloseableIterator.wrap(entries.values().iterator());
         } else if (startKey == null) {
-            return entries.headMap(endKey, false).values().iterator();
+            return CloseableIterator.wrap(entries.headMap(endKey, false).values().iterator());
         } else if (endKey == null) {
-            return entries.tailMap(startKey, true).values().iterator();
+            return CloseableIterator.wrap(entries.tailMap(startKey, true).values().iterator());
         } else {
-            return entries.subMap(startKey, true, endKey, false).values().iterator();
+            return CloseableIterator.wrap(entries.subMap(startKey, true, endKey, false).values().iterator());
         }
     }
 

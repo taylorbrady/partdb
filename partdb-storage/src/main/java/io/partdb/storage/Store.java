@@ -9,6 +9,7 @@ import io.partdb.storage.compaction.LeveledCompactionStrategy;
 import io.partdb.storage.compaction.Manifest;
 import io.partdb.storage.compaction.ManifestData;
 import io.partdb.storage.compaction.SSTableMetadata;
+import io.partdb.storage.SSTableSnapshot.AcquireResult;
 import io.partdb.storage.memtable.Memtable;
 import io.partdb.storage.memtable.SkipListMemtable;
 import io.partdb.storage.sstable.SSTableConfig;
@@ -20,6 +21,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -27,7 +29,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.StampedLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -37,17 +44,23 @@ public final class Store implements KeyValueStore {
 
     private static final Pattern SSTABLE_PATTERN = Pattern.compile("(\\d{6})\\.sst");
     private static final int MAX_IMMUTABLE_MEMTABLES = 4;
+    private static final int MAX_SNAPSHOT_ACQUIRE_ATTEMPTS = 100;
+    private static final long INITIAL_BACKOFF_NANOS = 100;
+    private static final long MAX_BACKOFF_NANOS = 10_000;
+    private static final Duration SHUTDOWN_DRAIN_TIMEOUT = Duration.ofSeconds(30);
 
     private final Path dataDirectory;
     private final StoreConfig config;
-    private final Object memtableLock = new Object();
-    private final Object manifestLock = new Object();
-    private final Semaphore flushPermits = new Semaphore(MAX_IMMUTABLE_MEMTABLES);
-    private final AtomicLong sstableIdCounter;
-    private final ExecutorService flushExecutor = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
-
-    private volatile Memtable activeMemtable;
+    private final AtomicReference<Memtable> activeMemtable;
     private final Deque<Memtable> immutableMemtables;
+    private final StampedLock memtableLock;
+    private final ReentrantLock rotationLock;
+    private final ReentrantLock manifestLock;
+    private final Semaphore flushPermits;
+    private final AtomicLong sstableIdCounter;
+    private final ExecutorService flushExecutor;
+    private final AtomicBoolean closed;
+
     private volatile SSTableSnapshot sstableSnapshot;
     private volatile ManifestData manifest;
     private CompactionExecutor compactionExecutor;
@@ -62,11 +75,17 @@ public final class Store implements KeyValueStore {
     ) {
         this.dataDirectory = dataDirectory;
         this.config = config;
-        this.activeMemtable = activeMemtable;
+        this.activeMemtable = new AtomicReference<>(activeMemtable);
         this.immutableMemtables = new ArrayDeque<>();
+        this.memtableLock = new StampedLock();
+        this.rotationLock = new ReentrantLock();
+        this.manifestLock = new ReentrantLock();
+        this.flushPermits = new Semaphore(MAX_IMMUTABLE_MEMTABLES);
+        this.sstableIdCounter = sstableIdCounter;
+        this.flushExecutor = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
+        this.closed = new AtomicBoolean(false);
         this.sstableSnapshot = sstableSnapshot;
         this.manifest = manifest;
-        this.sstableIdCounter = sstableIdCounter;
     }
 
     public static Store open(Path dataDirectory, StoreConfig config) {
@@ -122,13 +141,27 @@ public final class Store implements KeyValueStore {
     }
 
     private void putEntry(StoreEntry entry) {
-        boolean needsRotation;
-        synchronized (memtableLock) {
-            activeMemtable.put(entry);
-            needsRotation = activeMemtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes();
-        }
+        Memtable memtable = activeMemtable.get();
+        memtable.put(entry);
 
-        if (needsRotation) {
+        if (memtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes()) {
+            maybeRotateMemtable(memtable);
+        }
+    }
+
+    private void maybeRotateMemtable(Memtable fullMemtable) {
+        if (!rotationLock.tryLock()) {
+            return;
+        }
+        try {
+            Memtable current = activeMemtable.get();
+            if (current != fullMemtable) {
+                return;
+            }
+            if (current.sizeInBytes() < config.memtableConfig().maxSizeInBytes()) {
+                return;
+            }
+
             try {
                 flushPermits.acquire();
             } catch (InterruptedException e) {
@@ -136,48 +169,57 @@ public final class Store implements KeyValueStore {
                 throw new StoreException.FlushException("Interrupted waiting for flush permit", e);
             }
 
-            synchronized (memtableLock) {
-                if (activeMemtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes()) {
-                    rotateMemtable();
-                    flushExecutor.submit(this::flushPendingMemtables);
-                } else {
-                    flushPermits.release();
-                }
+            Memtable newMemtable = new SkipListMemtable(config.memtableConfig());
+            long stamp = memtableLock.writeLock();
+            try {
+                immutableMemtables.addLast(current);
+                activeMemtable.set(newMemtable);
+            } finally {
+                memtableLock.unlockWrite(stamp);
             }
+
+            flushExecutor.submit(this::flushPendingMemtables);
+        } finally {
+            rotationLock.unlock();
         }
     }
 
     @Override
     public Optional<ByteArray> get(ByteArray key) {
-        Optional<StoreEntry> result = activeMemtable.get(key);
+        Optional<StoreEntry> result = activeMemtable.get().get(key);
         if (result.isPresent()) {
             return entryToValue(result.get());
         }
 
-        synchronized (memtableLock) {
-            for (Memtable immutable : immutableMemtables) {
-                result = immutable.get(key);
+        long stamp = memtableLock.tryOptimisticRead();
+        List<Memtable> immutablesCopy = List.copyOf(immutableMemtables);
+        if (!memtableLock.validate(stamp)) {
+            stamp = memtableLock.readLock();
+            try {
+                immutablesCopy = List.copyOf(immutableMemtables);
+            } finally {
+                memtableLock.unlockRead(stamp);
+            }
+        }
+
+        for (Memtable immutable : immutablesCopy) {
+            result = immutable.get(key);
+            if (result.isPresent()) {
+                return entryToValue(result.get());
+            }
+        }
+
+        SSTableSnapshot snapshot = acquireSnapshot();
+        try {
+            for (SSTableReader sstable : snapshot.readers()) {
+                result = sstable.get(key);
                 if (result.isPresent()) {
                     return entryToValue(result.get());
                 }
             }
-        }
-
-        while (true) {
-            SSTableSnapshot snapshot = sstableSnapshot.tryAcquire();
-            if (snapshot != null) {
-                try {
-                    for (SSTableReader sstable : snapshot.readers()) {
-                        result = sstable.get(key);
-                        if (result.isPresent()) {
-                            return entryToValue(result.get());
-                        }
-                    }
-                    return Optional.empty();
-                } finally {
-                    snapshot.release();
-                }
-            }
+            return Optional.empty();
+        } finally {
+            snapshot.release();
         }
     }
 
@@ -190,26 +232,59 @@ public final class Store implements KeyValueStore {
 
     @Override
     public CloseableIterator<KeyValue> scan(ByteArray startKey, ByteArray endKey) {
-        List<Iterator<StoreEntry>> iterators = new ArrayList<>();
+        List<CloseableIterator<StoreEntry>> iterators = new ArrayList<>();
 
-        iterators.add(activeMemtable.scan(startKey, endKey));
+        iterators.add(activeMemtable.get().scan(startKey, endKey));
 
-        synchronized (memtableLock) {
-            for (Memtable immutable : immutableMemtables) {
-                iterators.add(immutable.scan(startKey, endKey));
+        long stamp = memtableLock.tryOptimisticRead();
+        List<Memtable> immutablesCopy = List.copyOf(immutableMemtables);
+        if (!memtableLock.validate(stamp)) {
+            stamp = memtableLock.readLock();
+            try {
+                immutablesCopy = List.copyOf(immutableMemtables);
+            } finally {
+                memtableLock.unlockRead(stamp);
             }
         }
 
-        while (true) {
-            SSTableSnapshot snapshot = sstableSnapshot.tryAcquire();
-            if (snapshot != null) {
-                for (SSTableReader sstable : snapshot.readers()) {
-                    iterators.add(sstable.scan(startKey, endKey));
+        for (Memtable immutable : immutablesCopy) {
+            iterators.add(immutable.scan(startKey, endKey));
+        }
+
+        SSTableSnapshot snapshot = acquireSnapshot();
+        for (SSTableReader sstable : snapshot.readers()) {
+            iterators.add(sstable.scan(startKey, endKey));
+        }
+
+        MergingIterator merged = new MergingIterator(iterators);
+        return new KeyValueIterator(merged, snapshot);
+    }
+
+    private SSTableSnapshot acquireSnapshot() {
+        long backoffNanos = INITIAL_BACKOFF_NANOS;
+
+        for (int attempt = 0; attempt < MAX_SNAPSHOT_ACQUIRE_ATTEMPTS; attempt++) {
+            SSTableSnapshot current = sstableSnapshot;
+            AcquireResult result = current.tryAcquire();
+
+            switch (result) {
+                case AcquireResult.Success(var snapshot) -> {
+                    return snapshot;
                 }
-                MergingIterator merged = new MergingIterator(iterators);
-                return new KeyValueIterator(merged, snapshot);
+                case AcquireResult.Retired _ -> {
+                    if (attempt < 16) {
+                        Thread.onSpinWait();
+                    } else {
+                        LockSupport.parkNanos(backoffNanos);
+                        backoffNanos = Math.min(backoffNanos * 2, MAX_BACKOFF_NANOS);
+                    }
+                }
             }
         }
+
+        throw new StoreException.ConcurrencyException(
+            "Failed to acquire SSTable snapshot after " + MAX_SNAPSHOT_ACQUIRE_ATTEMPTS + " attempts"
+        );
     }
 
     @Override
@@ -220,7 +295,8 @@ public final class Store implements KeyValueStore {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             ByteBuffer header = ByteBuffer.allocate(8);
 
-            synchronized (manifestLock) {
+            manifestLock.lock();
+            try {
                 header.putLong(manifest.nextSSTableId());
                 baos.write(header.array());
 
@@ -229,9 +305,12 @@ public final class Store implements KeyValueStore {
                 baos.write(countBuffer.array());
 
                 for (SSTableMetadata meta : manifest.sstables()) {
-                    ByteBuffer metaBuffer = serializeMetadata(meta);
+                    ByteBuffer metaBuffer = ByteBuffer.allocate(meta.serializedSize());
+                    meta.writeTo(metaBuffer);
                     baos.write(metaBuffer.array());
                 }
+            } finally {
+                manifestLock.unlock();
             }
 
             return baos.toByteArray();
@@ -250,14 +329,14 @@ public final class Store implements KeyValueStore {
 
             List<SSTableMetadata> metadataList = new ArrayList<>(sstableCount);
             for (int i = 0; i < sstableCount; i++) {
-                metadataList.add(deserializeMetadata(buffer));
+                metadataList.add(SSTableMetadata.readFrom(buffer));
             }
 
             ManifestData newManifest = new ManifestData(nextSSTableId, metadataList);
-
             List<SSTableReader> newReaders = loadSSTablesFromManifest(dataDirectory, newManifest);
 
-            synchronized (manifestLock) {
+            manifestLock.lock();
+            try {
                 manifest = newManifest;
                 Manifest.write(dataDirectory, manifest);
 
@@ -265,11 +344,17 @@ public final class Store implements KeyValueStore {
                 List<SSTableReader> orphanedReaders = new ArrayList<>(oldSnapshot.readers());
                 sstableSnapshot = SSTableSnapshot.of(newReaders);
                 oldSnapshot.retire(orphanedReaders);
+            } finally {
+                manifestLock.unlock();
             }
 
-            activeMemtable = new SkipListMemtable(config.memtableConfig());
-            synchronized (memtableLock) {
+            Memtable newMemtable = new SkipListMemtable(config.memtableConfig());
+            long stamp = memtableLock.writeLock();
+            try {
+                activeMemtable.set(newMemtable);
                 immutableMemtables.clear();
+            } finally {
+                memtableLock.unlockWrite(stamp);
             }
 
             sstableIdCounter.set(nextSSTableId);
@@ -280,12 +365,14 @@ public final class Store implements KeyValueStore {
 
     @Override
     public void flush() {
-        boolean needsRotation;
-        synchronized (memtableLock) {
-            needsRotation = activeMemtable.entryCount() > 0;
-        }
+        rotationLock.lock();
+        try {
+            Memtable current = activeMemtable.get();
+            if (current.entryCount() == 0) {
+                awaitPendingFlushes();
+                return;
+            }
 
-        if (needsRotation) {
             try {
                 flushPermits.acquire();
             } catch (InterruptedException e) {
@@ -293,14 +380,18 @@ public final class Store implements KeyValueStore {
                 throw new StoreException.FlushException("Interrupted waiting for flush permit", e);
             }
 
-            synchronized (memtableLock) {
-                if (activeMemtable.entryCount() > 0) {
-                    rotateMemtable();
-                    flushExecutor.submit(this::flushPendingMemtables);
-                } else {
-                    flushPermits.release();
-                }
+            Memtable newMemtable = new SkipListMemtable(config.memtableConfig());
+            long stamp = memtableLock.writeLock();
+            try {
+                immutableMemtables.addLast(current);
+                activeMemtable.set(newMemtable);
+            } finally {
+                memtableLock.unlockWrite(stamp);
             }
+
+            flushExecutor.submit(this::flushPendingMemtables);
+        } finally {
+            rotationLock.unlock();
         }
 
         awaitPendingFlushes();
@@ -321,44 +412,68 @@ public final class Store implements KeyValueStore {
 
     @Override
     public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+
         flush();
 
         flushExecutor.shutdown();
         try {
-            flushExecutor.awaitTermination(30, TimeUnit.SECONDS);
+            if (!flushExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+                flushExecutor.shutdownNow();
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            flushExecutor.shutdownNow();
         }
 
         if (compactionExecutor != null) {
             compactionExecutor.close();
         }
 
-        for (SSTableReader reader : sstableSnapshot.readers()) {
-            reader.close();
-        }
+        SSTableSnapshot finalSnapshot = sstableSnapshot;
+        List<SSTableReader> allReaders = new ArrayList<>(finalSnapshot.readers());
+        finalSnapshot.retire(allReaders);
+
+        awaitSnapshotDrain(finalSnapshot, SHUTDOWN_DRAIN_TIMEOUT);
     }
 
-    private void rotateMemtable() {
-        immutableMemtables.addLast(activeMemtable);
-        activeMemtable = new SkipListMemtable(config.memtableConfig());
+    private void awaitSnapshotDrain(SSTableSnapshot snapshot, Duration timeout) {
+        long deadlineNanos = System.nanoTime() + timeout.toNanos();
+
+        while (!snapshot.isDrained()) {
+            if (System.nanoTime() > deadlineNanos) {
+                for (SSTableReader reader : snapshot.readers()) {
+                    reader.close();
+                }
+                return;
+            }
+            LockSupport.parkNanos(1_000_000);
+        }
     }
 
     private void flushPendingMemtables() {
         while (true) {
             Memtable toFlush;
-            synchronized (memtableLock) {
+            long stamp = memtableLock.readLock();
+            try {
                 toFlush = immutableMemtables.peekFirst();
                 if (toFlush == null) {
                     return;
                 }
+            } finally {
+                memtableLock.unlockRead(stamp);
             }
 
             try {
                 flushMemtableToSSTable(toFlush);
             } finally {
-                synchronized (memtableLock) {
+                stamp = memtableLock.writeLock();
+                try {
                     immutableMemtables.pollFirst();
+                } finally {
+                    memtableLock.unlockWrite(stamp);
                 }
                 flushPermits.release();
             }
@@ -378,10 +493,10 @@ public final class Store implements KeyValueStore {
             }
 
             SSTableReader reader = SSTableReader.open(sstablePath);
-
             SSTableMetadata metadata = buildMetadata(reader, sstableId, 0);
 
-            synchronized (manifestLock) {
+            manifestLock.lock();
+            try {
                 List<SSTableMetadata> updatedSSTables = new ArrayList<>(manifest.sstables());
                 updatedSSTables.addFirst(metadata);
                 manifest = new ManifestData(sstableId, updatedSSTables);
@@ -394,6 +509,8 @@ public final class Store implements KeyValueStore {
                 SSTableSnapshot oldSnapshot = sstableSnapshot;
                 sstableSnapshot = SSTableSnapshot.of(newReaders);
                 oldSnapshot.retire(List.of());
+            } finally {
+                manifestLock.unlock();
             }
 
             compactionExecutor.maybeScheduleCompaction();
@@ -469,50 +586,18 @@ public final class Store implements KeyValueStore {
         return new SSTableMetadata(id, level, smallestKey, largestKey, fileSize, entryCount);
     }
 
-    private ByteBuffer serializeMetadata(SSTableMetadata meta) {
-        int size = 8 + 4 + 4 + meta.smallestKey().size() + 4 + meta.largestKey().size() + 8 + 8;
-        ByteBuffer buffer = ByteBuffer.allocate(size);
-
-        buffer.putLong(meta.id());
-        buffer.putInt(meta.level());
-        buffer.putInt(meta.smallestKey().size());
-        buffer.put(meta.smallestKey().toByteArray());
-        buffer.putInt(meta.largestKey().size());
-        buffer.put(meta.largestKey().toByteArray());
-        buffer.putLong(meta.fileSizeBytes());
-        buffer.putLong(meta.entryCount());
-
-        return buffer;
-    }
-
-    private SSTableMetadata deserializeMetadata(ByteBuffer buffer) {
-        long id = buffer.getLong();
-        int level = buffer.getInt();
-
-        int smallestKeySize = buffer.getInt();
-        byte[] smallestKeyBytes = new byte[smallestKeySize];
-        buffer.get(smallestKeyBytes);
-        ByteArray smallestKey = ByteArray.wrap(smallestKeyBytes);
-
-        int largestKeySize = buffer.getInt();
-        byte[] largestKeyBytes = new byte[largestKeySize];
-        buffer.get(largestKeyBytes);
-        ByteArray largestKey = ByteArray.wrap(largestKeyBytes);
-
-        long fileSizeBytes = buffer.getLong();
-        long entryCount = buffer.getLong();
-
-        return new SSTableMetadata(id, level, smallestKey, largestKey, fileSizeBytes, entryCount);
-    }
-
     public ManifestData getManifest() {
-        synchronized (manifestLock) {
+        manifestLock.lock();
+        try {
             return manifest;
+        } finally {
+            manifestLock.unlock();
         }
     }
 
     public void swapSSTables(List<SSTableMetadata> oldMeta, List<SSTableMetadata> newMeta) {
-        synchronized (manifestLock) {
+        manifestLock.lock();
+        try {
             List<SSTableMetadata> updated = new ArrayList<>(manifest.sstables());
             updated.removeAll(oldMeta);
             updated.addAll(newMeta);
@@ -542,14 +627,19 @@ public final class Store implements KeyValueStore {
             SSTableSnapshot oldSnapshot = sstableSnapshot;
             sstableSnapshot = SSTableSnapshot.of(retainedReaders);
             oldSnapshot.retire(orphanedReaders);
+        } finally {
+            manifestLock.unlock();
         }
     }
 
     public long nextSSTableId() {
-        synchronized (manifestLock) {
+        manifestLock.lock();
+        try {
             long nextId = sstableIdCounter.incrementAndGet();
             manifest = new ManifestData(nextId, manifest.sstables());
             return nextId;
+        } finally {
+            manifestLock.unlock();
         }
     }
 

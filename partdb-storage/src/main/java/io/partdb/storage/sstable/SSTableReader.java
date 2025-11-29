@@ -1,6 +1,7 @@
 package io.partdb.storage.sstable;
 
 import io.partdb.common.ByteArray;
+import io.partdb.common.CloseableIterator;
 import io.partdb.storage.StoreEntry;
 
 import java.io.IOException;
@@ -109,7 +110,7 @@ public final class SSTableReader implements AutoCloseable {
         return Optional.empty();
     }
 
-    public Iterator<StoreEntry> scan(ByteArray startKey, ByteArray endKey) {
+    public CloseableIterator<StoreEntry> scan(ByteArray startKey, ByteArray endKey) {
         return new ScanIterator(startKey, endKey);
     }
 
@@ -139,7 +140,7 @@ public final class SSTableReader implements AutoCloseable {
         arena.close();
     }
 
-    private class ScanIterator implements Iterator<StoreEntry> {
+    private class ScanIterator implements CloseableIterator<StoreEntry> {
 
         private final ByteArray startKey;
         private final ByteArray endKey;
@@ -204,5 +205,8 @@ public final class SSTableReader implements AutoCloseable {
             advance();
             return result;
         }
+
+        @Override
+        public void close() {}
     }
 }
