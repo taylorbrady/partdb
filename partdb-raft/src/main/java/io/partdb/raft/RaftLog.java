@@ -10,10 +10,6 @@ public interface RaftLog extends AutoCloseable {
 
     SequencedCollection<LogEntry> getRange(long startIndex, long endIndex);
 
-    default SequencedCollection<LogEntry> getReversed(long startIndex, long endIndex) {
-        return getRange(startIndex, endIndex).reversed();
-    }
-
     long firstIndex();
 
     long lastIndex();

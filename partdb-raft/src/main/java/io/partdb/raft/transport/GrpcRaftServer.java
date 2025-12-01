@@ -16,17 +16,13 @@ import java.util.zip.CRC32C;
 public final class GrpcRaftServer extends RaftServiceGrpc.RaftServiceImplBase implements AutoCloseable {
 
     private final RaftNode raftNode;
-    private final RaftTransportConfig config;
     private final Server server;
 
     public GrpcRaftServer(RaftNode raftNode, RaftTransportConfig config) {
         this.raftNode = raftNode;
-        this.config = config;
-
-        ServerBuilder<?> builder = ServerBuilder.forPort(config.bindPort())
-            .addService(this);
-
-        this.server = builder.build();
+        this.server = ServerBuilder.forPort(config.bindPort())
+            .addService(this)
+            .build();
     }
 
     public void start() throws IOException {

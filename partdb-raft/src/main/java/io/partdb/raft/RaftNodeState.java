@@ -12,10 +12,6 @@ public record RaftNodeState(
         return new RaftNodeState(0, NodeRole.FOLLOWER, null, null, 0, 0);
     }
 
-    public RaftNodeState withTerm(long newTerm) {
-        return new RaftNodeState(newTerm, role, votedFor, leaderId, commitIndex, lastApplied);
-    }
-
     public RaftNodeState becomeFollower(long term) {
         return new RaftNodeState(term, NodeRole.FOLLOWER, null, null, commitIndex, lastApplied);
     }
@@ -50,9 +46,5 @@ public record RaftNodeState(
 
     public boolean isCandidate() {
         return role == NodeRole.CANDIDATE;
-    }
-
-    public boolean isFollower() {
-        return role == NodeRole.FOLLOWER;
     }
 }

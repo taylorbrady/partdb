@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,23 +16,21 @@ import java.nio.file.StandardOpenOption;
 import java.util.Optional;
 import java.util.zip.CRC32C;
 
-public final class SnapshotManager implements AutoCloseable {
+public final class Snapshotter {
     private static final int MAGIC_NUMBER = 0x52534E50;
     private static final int VERSION = 1;
+    private static final int HEADER_SIZE = 4 + 4 + 8 + 8 + 8 + 4; // magic + version + lastIncludedIndex + lastIncludedTerm + lastAppliedIndex + dataLength
     private static final String SNAPSHOT_FILENAME = "snapshot.dat";
     private static final String SNAPSHOT_TEMP_FILENAME = "snapshot.tmp";
-    private static final long CHUNK_SIZE = 64 * 1024;
 
     private final Path snapshotDirectory;
     private final StateMachine stateMachine;
     private final RaftLog log;
-    private final Arena arena;
 
-    public SnapshotManager(Path snapshotDirectory, StateMachine stateMachine, RaftLog log) {
+    public Snapshotter(Path snapshotDirectory, StateMachine stateMachine, RaftLog log) {
         this.snapshotDirectory = snapshotDirectory;
         this.stateMachine = stateMachine;
         this.log = log;
-        this.arena = Arena.ofShared();
     }
 
     public RaftSnapshot createSnapshot(long lastIncludedIndex, long lastIncludedTerm) {
@@ -65,18 +64,19 @@ public final class SnapshotManager implements AutoCloseable {
     }
 
     public Optional<RaftSnapshot> loadLatestSnapshot() {
-        try {
-            Path snapshotPath = snapshotDirectory.resolve(SNAPSHOT_FILENAME);
+        Path snapshotPath = snapshotDirectory.resolve(SNAPSHOT_FILENAME);
 
-            if (!Files.exists(snapshotPath)) {
-                return Optional.empty();
-            }
+        if (!Files.exists(snapshotPath)) {
+            return Optional.empty();
+        }
 
-            try (FileChannel channel = FileChannel.open(snapshotPath, StandardOpenOption.READ)) {
-                long fileSize = channel.size();
-                MemorySegment mapped = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize, arena);
-                return Optional.of(deserializeSnapshotFromMemory(mapped));
-            }
+        try (FileChannel channel = FileChannel.open(snapshotPath, StandardOpenOption.READ);
+             Arena arena = Arena.ofConfined()) {
+
+            long fileSize = channel.size();
+            MemorySegment mapped = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize, arena);
+            return Optional.of(deserializeSnapshot(mapped));
+
         } catch (IOException e) {
             throw new RaftException.SnapshotException("Failed to load snapshot", e);
         }
@@ -94,32 +94,35 @@ public final class SnapshotManager implements AutoCloseable {
                 StandardOpenOption.WRITE,
                 StandardOpenOption.TRUNCATE_EXISTING)) {
 
-                MemorySegment header = serializeSnapshotHeaderOffHeap(snapshot);
-                channel.write(header.asByteBuffer());
-
                 byte[] stateData = snapshot.stateSnapshot().data();
-                long remaining = stateData.length;
-                long srcOffset = 0;
 
-                while (remaining > 0) {
-                    long chunkSize = Math.min(CHUNK_SIZE, remaining);
-                    MemorySegment chunk = arena.allocate(chunkSize);
-                    MemorySegment.copy(stateData, (int) srcOffset, chunk, ValueLayout.JAVA_BYTE, 0, (int) chunkSize);
-                    channel.write(chunk.asByteBuffer());
-
-                    srcOffset += chunkSize;
-                    remaining -= chunkSize;
+                ByteBuffer header = ByteBuffer.allocate(HEADER_SIZE);
+                header.putInt(MAGIC_NUMBER);
+                header.putInt(VERSION);
+                header.putLong(snapshot.lastIncludedIndex());
+                header.putLong(snapshot.lastIncludedTerm());
+                header.putLong(snapshot.stateSnapshot().lastAppliedIndex());
+                header.putInt(stateData.length);
+                header.flip();
+                while (header.hasRemaining()) {
+                    channel.write(header);
                 }
 
-                MemorySegment checksumSeg = arena.allocate(ValueLayout.JAVA_LONG);
-                checksumSeg.set(ValueLayout.JAVA_LONG, 0, snapshot.stateSnapshot().checksum());
-                channel.write(checksumSeg.asByteBuffer());
+                ByteBuffer dataBuffer = ByteBuffer.wrap(stateData);
+                while (dataBuffer.hasRemaining()) {
+                    channel.write(dataBuffer);
+                }
 
                 CRC32C crc = new CRC32C();
                 crc.update(stateData);
-                MemorySegment crcSeg = arena.allocate(ValueLayout.JAVA_INT);
-                crcSeg.set(ValueLayout.JAVA_INT, 0, (int) crc.getValue());
-                channel.write(crcSeg.asByteBuffer());
+
+                ByteBuffer trailer = ByteBuffer.allocate(12);
+                trailer.putLong(snapshot.stateSnapshot().checksum());
+                trailer.putInt((int) crc.getValue());
+                trailer.flip();
+                while (trailer.hasRemaining()) {
+                    channel.write(trailer);
+                }
 
                 channel.force(true);
             }
@@ -136,27 +139,7 @@ public final class SnapshotManager implements AutoCloseable {
         }
     }
 
-    private MemorySegment serializeSnapshotHeaderOffHeap(RaftSnapshot snapshot) {
-        long headerSize = 4 + 4 + 8 + 8 + 8 + 4;
-        MemorySegment seg = arena.allocate(headerSize);
-        long offset = 0;
-
-        seg.set(ValueLayout.JAVA_INT, offset, MAGIC_NUMBER);
-        offset += 4;
-        seg.set(ValueLayout.JAVA_INT, offset, VERSION);
-        offset += 4;
-        seg.set(ValueLayout.JAVA_LONG, offset, snapshot.lastIncludedIndex());
-        offset += 8;
-        seg.set(ValueLayout.JAVA_LONG, offset, snapshot.lastIncludedTerm());
-        offset += 8;
-        seg.set(ValueLayout.JAVA_LONG, offset, snapshot.stateSnapshot().lastAppliedIndex());
-        offset += 8;
-        seg.set(ValueLayout.JAVA_INT, offset, snapshot.stateSnapshot().data().length);
-
-        return seg;
-    }
-
-    private RaftSnapshot deserializeSnapshotFromMemory(MemorySegment mapped) {
+    private RaftSnapshot deserializeSnapshot(MemorySegment mapped) {
         long offset = 0;
 
         int magic = mapped.get(ValueLayout.JAVA_INT, offset);
@@ -201,10 +184,5 @@ public final class SnapshotManager implements AutoCloseable {
         StateSnapshot stateSnapshot = StateSnapshot.restore(lastAppliedIndex, data, stateChecksum);
 
         return new RaftSnapshot(lastIncludedIndex, lastIncludedTerm, stateSnapshot);
-    }
-
-    @Override
-    public void close() {
-        arena.close();
     }
 }

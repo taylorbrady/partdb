@@ -3,34 +3,30 @@ package io.partdb.raft;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.SequencedCollection;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public final class SegmentedRaftLog implements RaftLog {
+
     private static final Pattern SEGMENT_PATTERN = Pattern.compile("(\\d{16})\\.raftlog");
     private static final String SEGMENT_FORMAT = "%016d.raftlog";
 
     private final RaftLogConfig config;
-    private final Object lock = new Object();
+    private final ReentrantLock lock = new ReentrantLock();
     private final ConcurrentSkipListMap<Long, RaftLogSegment> segments;
 
     private RaftLogSegment activeSegment;
     private long nextSegmentId;
-
-    private SegmentedRaftLog(
-        RaftLogConfig config,
-        ConcurrentSkipListMap<Long, RaftLogSegment> segments,
-        RaftLogSegment activeSegment,
-        long nextSegmentId
-    ) {
-        this.config = config;
-        this.segments = segments;
-        this.activeSegment = activeSegment;
-        this.nextSegmentId = nextSegmentId;
-    }
 
     public static SegmentedRaftLog open(RaftLogConfig config) {
         try {
@@ -77,9 +73,22 @@ public final class SegmentedRaftLog implements RaftLog {
         }
     }
 
+    private SegmentedRaftLog(
+        RaftLogConfig config,
+        ConcurrentSkipListMap<Long, RaftLogSegment> segments,
+        RaftLogSegment activeSegment,
+        long nextSegmentId
+    ) {
+        this.config = config;
+        this.segments = segments;
+        this.activeSegment = activeSegment;
+        this.nextSegmentId = nextSegmentId;
+    }
+
     @Override
     public long append(LogEntry entry) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             activeSegment.append(entry);
 
             if (activeSegment.size() >= config.segmentSize()) {
@@ -87,6 +96,8 @@ public final class SegmentedRaftLog implements RaftLog {
             }
 
             return entry.index();
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -158,7 +169,8 @@ public final class SegmentedRaftLog implements RaftLog {
 
     @Override
     public void truncateAfter(long index) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             List<Long> toRemove = new ArrayList<>();
 
             for (Map.Entry<Long, RaftLogSegment> segmentEntry : segments.entrySet()) {
@@ -177,6 +189,8 @@ public final class SegmentedRaftLog implements RaftLog {
                     long segmentId = segment.segmentId();
                     Path path = segment.path();
 
+                    List<LogEntry> entries = segment.readAll();
+
                     segment.close();
 
                     try {
@@ -187,7 +201,6 @@ public final class SegmentedRaftLog implements RaftLog {
 
                     RaftLogSegment newSegment = RaftLogSegment.create(path, segmentId, firstIndex);
 
-                    List<LogEntry> entries = segment.readAll();
                     for (LogEntry entry : entries) {
                         if (entry.index() <= index) {
                             newSegment.append(entry);
@@ -203,12 +216,15 @@ public final class SegmentedRaftLog implements RaftLog {
             }
 
             toRemove.forEach(segments::remove);
+        } finally {
+            lock.unlock();
         }
     }
 
     @Override
     public void deleteBefore(long index) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             List<Long> toRemove = new ArrayList<>();
 
             for (Map.Entry<Long, RaftLogSegment> segmentEntry : segments.entrySet()) {
@@ -226,26 +242,34 @@ public final class SegmentedRaftLog implements RaftLog {
             }
 
             toRemove.forEach(segments::remove);
+        } finally {
+            lock.unlock();
         }
     }
 
     @Override
     public void sync() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (activeSegment != null) {
                 activeSegment.sync();
             }
+        } finally {
+            lock.unlock();
         }
     }
 
     @Override
     public void close() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             for (RaftLogSegment segment : segments.values()) {
                 segment.close();
             }
             segments.clear();
             activeSegment = null;
+        } finally {
+            lock.unlock();
         }
     }
 

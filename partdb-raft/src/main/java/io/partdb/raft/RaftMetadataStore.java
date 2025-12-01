@@ -11,7 +11,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.CRC32C;
 
-public final class RaftMetadataStore implements AutoCloseable {
+public final class RaftMetadataStore {
     private static final int MAGIC = 0x5241464D;
     private static final int VERSION = 1;
 
@@ -41,7 +41,10 @@ public final class RaftMetadataStore implements AutoCloseable {
                     StandardOpenOption.TRUNCATE_EXISTING)) {
 
                 byte[] serialized = serialize(metadata);
-                channel.write(ByteBuffer.wrap(serialized));
+                ByteBuffer buffer = ByteBuffer.wrap(serialized);
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer);
+                }
                 channel.force(true);
             }
 
@@ -77,10 +80,6 @@ public final class RaftMetadataStore implements AutoCloseable {
         } finally {
             lock.unlock();
         }
-    }
-
-    @Override
-    public void close() {
     }
 
     private byte[] serialize(RaftMetadata metadata) {

@@ -35,9 +35,4 @@ public final class HeartbeatScheduler {
             timer.cancel(false);
         }
     }
-
-    public boolean isActive() {
-        ScheduledFuture<?> timer = currentTimer.get();
-        return timer != null && !timer.isDone();
-    }
 }

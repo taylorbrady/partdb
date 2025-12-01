@@ -17,14 +17,15 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.CRC32C;
 
 final class RaftLogSegment implements AutoCloseable {
+
     private static final int MAGIC_NUMBER = 0x5241464C;
     private static final int VERSION = 1;
     private static final int HEADER_SIZE = 16;
@@ -33,30 +34,13 @@ final class RaftLogSegment implements AutoCloseable {
     private final Path path;
     private final long segmentId;
     private final FileChannel channel;
+    private final ReentrantLock channelLock = new ReentrantLock();
     private final Map<Long, Long> indexToOffset;
+
     private long firstIndex;
     private long lastIndex;
-
     private Arena arena;
     private MemorySegment mappedSegment;
-
-    private RaftLogSegment(
-        Path path,
-        long segmentId,
-        FileChannel channel,
-        Map<Long, Long> indexToOffset,
-        long firstIndex,
-        long lastIndex
-    ) {
-        this.path = path;
-        this.segmentId = segmentId;
-        this.channel = channel;
-        this.indexToOffset = indexToOffset;
-        this.firstIndex = firstIndex;
-        this.lastIndex = lastIndex;
-        this.arena = null;
-        this.mappedSegment = null;
-    }
 
     static RaftLogSegment create(Path path, long segmentId, long firstIndex) {
         try {
@@ -154,6 +138,22 @@ final class RaftLogSegment implements AutoCloseable {
         }
     }
 
+    private RaftLogSegment(
+        Path path,
+        long segmentId,
+        FileChannel channel,
+        Map<Long, Long> indexToOffset,
+        long firstIndex,
+        long lastIndex
+    ) {
+        this.path = path;
+        this.segmentId = segmentId;
+        this.channel = channel;
+        this.indexToOffset = indexToOffset;
+        this.firstIndex = firstIndex;
+        this.lastIndex = lastIndex;
+    }
+
     void append(LogEntry entry) {
         try {
             long entryOffset = channel.size();
@@ -170,7 +170,9 @@ final class RaftLogSegment implements AutoCloseable {
             buffer.flip();
 
             channel.position(entryOffset);
-            channel.write(buffer);
+            while (buffer.hasRemaining()) {
+                channel.write(buffer);
+            }
             channel.force(true);
 
             indexToOffset.put(entry.index(), entryOffset);
@@ -208,67 +210,25 @@ final class RaftLogSegment implements AutoCloseable {
             .toList();
     }
 
-    private LogEntry readEntryAtOffset(long offset) {
+    void seal() {
         if (mappedSegment != null) {
-            return readEntryFromMapped(offset);
-        }
-        return readEntryFromChannel(offset);
-    }
-
-    private LogEntry readEntryFromMapped(long offset) {
-        int crc = mappedSegment.get(ValueLayout.JAVA_INT, offset);
-        int length = mappedSegment.get(ValueLayout.JAVA_INT, offset + 4);
-        long index = mappedSegment.get(ValueLayout.JAVA_LONG, offset + 8);
-
-        byte[] entryData = new byte[length];
-        MemorySegment.copy(mappedSegment, ValueLayout.JAVA_BYTE, offset + ENTRY_HEADER_SIZE,
-                         entryData, 0, length);
-
-        CRC32C crc32c = new CRC32C();
-        crc32c.update(entryData);
-        if ((int) crc32c.getValue() != crc) {
-            throw new RaftException.LogException("CRC mismatch at offset " + offset);
+            return;
         }
 
-        return deserializeEntry(index, entryData);
-    }
-
-    private LogEntry readEntryFromChannel(long offset) {
         try {
-            synchronized (channel) {
-                channel.position(offset);
-
-                ByteBuffer entryHeader = ByteBuffer.allocate(ENTRY_HEADER_SIZE);
-                if (channel.read(entryHeader) < ENTRY_HEADER_SIZE) {
-                    throw new RaftException.LogException("Incomplete entry header at offset " + offset);
-                }
-                entryHeader.flip();
-
-                int crc = entryHeader.getInt();
-                int length = entryHeader.getInt();
-                long index = entryHeader.getLong();
-
-                ByteBuffer entryData = ByteBuffer.allocate(length);
-                int bytesRead = 0;
-                while (bytesRead < length) {
-                    int read = channel.read(entryData);
-                    if (read == -1) {
-                        throw new RaftException.LogException("Incomplete entry data at offset " + offset);
-                    }
-                    bytesRead += read;
-                }
-                entryData.flip();
-
-                CRC32C crc32c = new CRC32C();
-                crc32c.update(entryData.array());
-                if ((int) crc32c.getValue() != crc) {
-                    throw new RaftException.LogException("CRC mismatch at offset " + offset);
-                }
-
-                return deserializeEntry(index, entryData.array());
-            }
+            long fileSize = channel.size();
+            arena = Arena.ofShared();
+            mappedSegment = channel.map(FileChannel.MapMode.READ_WRITE, 0, fileSize, arena);
         } catch (IOException e) {
-            throw new RaftException.LogException("Failed to read entry at offset " + offset, e);
+            throw new RaftException.LogException("Failed to seal segment: " + path, e);
+        }
+    }
+
+    void sync() {
+        try {
+            channel.force(true);
+        } catch (IOException e) {
+            throw new RaftException.LogException("Failed to sync segment", e);
         }
     }
 
@@ -296,28 +256,6 @@ final class RaftLogSegment implements AutoCloseable {
         }
     }
 
-    void sync() {
-        try {
-            channel.force(true);
-        } catch (IOException e) {
-            throw new RaftException.LogException("Failed to sync segment", e);
-        }
-    }
-
-    void seal() {
-        if (mappedSegment != null) {
-            return;
-        }
-
-        try {
-            long fileSize = channel.size();
-            arena = Arena.ofShared();
-            mappedSegment = channel.map(FileChannel.MapMode.READ_WRITE, 0, fileSize, arena);
-        } catch (IOException e) {
-            throw new RaftException.LogException("Failed to seal segment: " + path, e);
-        }
-    }
-
     @Override
     public void close() {
         try {
@@ -327,6 +265,71 @@ final class RaftLogSegment implements AutoCloseable {
             channel.close();
         } catch (IOException e) {
             throw new RaftException.LogException("Failed to close segment", e);
+        }
+    }
+
+    private LogEntry readEntryAtOffset(long offset) {
+        if (mappedSegment != null) {
+            return readEntryFromMapped(offset);
+        }
+        return readEntryFromChannel(offset);
+    }
+
+    private LogEntry readEntryFromMapped(long offset) {
+        int crc = mappedSegment.get(ValueLayout.JAVA_INT, offset);
+        int length = mappedSegment.get(ValueLayout.JAVA_INT, offset + 4);
+        long index = mappedSegment.get(ValueLayout.JAVA_LONG, offset + 8);
+
+        byte[] entryData = new byte[length];
+        MemorySegment.copy(mappedSegment, ValueLayout.JAVA_BYTE, offset + ENTRY_HEADER_SIZE,
+                         entryData, 0, length);
+
+        CRC32C crc32c = new CRC32C();
+        crc32c.update(entryData);
+        if ((int) crc32c.getValue() != crc) {
+            throw new RaftException.LogException("CRC mismatch at offset " + offset);
+        }
+
+        return deserializeEntry(index, entryData);
+    }
+
+    private LogEntry readEntryFromChannel(long offset) {
+        channelLock.lock();
+        try {
+            channel.position(offset);
+
+            ByteBuffer entryHeader = ByteBuffer.allocate(ENTRY_HEADER_SIZE);
+            if (channel.read(entryHeader) < ENTRY_HEADER_SIZE) {
+                throw new RaftException.LogException("Incomplete entry header at offset " + offset);
+            }
+            entryHeader.flip();
+
+            int crc = entryHeader.getInt();
+            int length = entryHeader.getInt();
+            long index = entryHeader.getLong();
+
+            ByteBuffer entryData = ByteBuffer.allocate(length);
+            int bytesRead = 0;
+            while (bytesRead < length) {
+                int read = channel.read(entryData);
+                if (read == -1) {
+                    throw new RaftException.LogException("Incomplete entry data at offset " + offset);
+                }
+                bytesRead += read;
+            }
+            entryData.flip();
+
+            CRC32C crc32c = new CRC32C();
+            crc32c.update(entryData.array());
+            if ((int) crc32c.getValue() != crc) {
+                throw new RaftException.LogException("CRC mismatch at offset " + offset);
+            }
+
+            return deserializeEntry(index, entryData.array());
+        } catch (IOException e) {
+            throw new RaftException.LogException("Failed to read entry at offset " + offset, e);
+        } finally {
+            channelLock.unlock();
         }
     }
 

@@ -2,8 +2,6 @@ package io.partdb.raft;
 
 public sealed class RaftException extends RuntimeException
     permits RaftException.LogException,
-            RaftException.ElectionException,
-            RaftException.ReplicationException,
             RaftException.SnapshotException,
             RaftException.MetadataException {
 
@@ -21,26 +19,6 @@ public sealed class RaftException extends RuntimeException
         }
 
         public LogException(String message, Throwable cause) {
-            super(message, cause);
-        }
-    }
-
-    public static final class ElectionException extends RaftException {
-        public ElectionException(String message) {
-            super(message);
-        }
-
-        public ElectionException(String message, Throwable cause) {
-            super(message, cause);
-        }
-    }
-
-    public static final class ReplicationException extends RaftException {
-        public ReplicationException(String message) {
-            super(message);
-        }
-
-        public ReplicationException(String message, Throwable cause) {
             super(message, cause);
         }
     }

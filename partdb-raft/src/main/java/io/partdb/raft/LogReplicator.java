@@ -141,8 +141,4 @@ public final class LogReplicator {
     public PeerReplicationState getPeerState(String peerId) {
         return peerStates.get(peerId);
     }
-
-    public Map<String, PeerReplicationState> getAllPeerStates() {
-        return Map.copyOf(peerStates);
-    }
 }
