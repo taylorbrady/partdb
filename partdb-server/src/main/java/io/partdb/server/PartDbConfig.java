@@ -1,12 +1,14 @@
 package io.partdb.server;
 
-import io.partdb.raft.ClusterConfig;
+import io.partdb.common.ClusterConfig;
+import io.partdb.common.Peer;
 import io.partdb.raft.RaftConfig;
 import io.partdb.raft.transport.RaftTransportConfig;
 import io.partdb.server.grpc.KvServerConfig;
 import io.partdb.storage.StoreConfig;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Objects;
 
 public record PartDbConfig(
@@ -25,11 +27,17 @@ public record PartDbConfig(
     }
 
     public static PartDbConfig create(
-        ClusterConfig cluster,
+        String nodeId,
+        List<String> peerSpecs,
         Path dataDirectory,
         int raftPort,
         int kvPort
     ) {
+        List<Peer> peers = peerSpecs.stream()
+            .map(Peer::parse)
+            .toList();
+        ClusterConfig cluster = new ClusterConfig(nodeId, peers);
+
         return new PartDbConfig(
             dataDirectory,
             StoreConfig.create(),

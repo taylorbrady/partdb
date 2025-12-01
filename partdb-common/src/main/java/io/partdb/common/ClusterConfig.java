@@ -1,4 +1,4 @@
-package io.partdb.raft;
+package io.partdb.common;
 
 import java.util.List;
 import java.util.Map;

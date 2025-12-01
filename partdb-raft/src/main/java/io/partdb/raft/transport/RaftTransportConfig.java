@@ -1,6 +1,6 @@
 package io.partdb.raft.transport;
 
-import io.partdb.raft.Peer;
+import io.partdb.common.Peer;
 
 import java.nio.file.Path;
 import java.time.Duration;

@@ -1,7 +1,5 @@
 package io.partdb.cli;
 
-import io.partdb.raft.ClusterConfig;
-import io.partdb.raft.Peer;
 import io.partdb.server.PartDb;
 import io.partdb.server.PartDbConfig;
 
@@ -39,13 +37,19 @@ final class StartCommand {
             return 1;
         }
 
-        ClusterConfig cluster = new ClusterConfig(options.nodeId, options.peers);
-        PartDbConfig config = PartDbConfig.create(
-            cluster,
-            options.dataDir,
-            options.raftPort,
-            options.kvPort
-        );
+        PartDbConfig config;
+        try {
+            config = PartDbConfig.create(
+                options.nodeId,
+                options.peers,
+                options.dataDir,
+                options.raftPort,
+                options.kvPort
+            );
+        } catch (IllegalArgumentException e) {
+            err.println("Error: " + e.getMessage());
+            return 1;
+        }
 
         CountDownLatch shutdownLatch = new CountDownLatch(1);
 
@@ -93,8 +97,7 @@ final class StartCommand {
                     options.nodeId = requireValue(args, ++i, "--node-id");
                 }
                 case "--peer", "-p" -> {
-                    String peerSpec = requireValue(args, ++i, "--peer");
-                    options.peers.add(Peer.parse(peerSpec));
+                    options.peers.add(requireValue(args, ++i, "--peer"));
                 }
                 case "--data-dir", "-d" -> {
                     options.dataDir = Path.of(requireValue(args, ++i, "--data-dir"));
@@ -156,7 +159,7 @@ final class StartCommand {
     private static final class Options {
         boolean help;
         String nodeId;
-        List<Peer> peers = new ArrayList<>();
+        List<String> peers = new ArrayList<>();
         Path dataDir;
         int raftPort = DEFAULT_RAFT_PORT;
         int kvPort = DEFAULT_KV_PORT;
@@ -167,11 +170,6 @@ final class StartCommand {
             }
             if (dataDir == null) {
                 return "--data-dir is required";
-            }
-            for (Peer peer : peers) {
-                if (peer.nodeId().equals(nodeId)) {
-                    return "--peer must not include self (nodeId: " + nodeId + ")";
-                }
             }
             return null;
         }

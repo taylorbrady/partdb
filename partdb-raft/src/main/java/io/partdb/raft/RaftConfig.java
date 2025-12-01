@@ -1,5 +1,7 @@
 package io.partdb.raft;
 
+import io.partdb.common.ClusterConfig;
+
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;

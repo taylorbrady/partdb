@@ -1,5 +1,6 @@
 package io.partdb.raft;
 
+import io.partdb.common.ClusterConfig;
 import io.partdb.raft.rpc.AppendEntriesRequest;
 import io.partdb.raft.rpc.AppendEntriesResponse;
 import org.slf4j.Logger;
