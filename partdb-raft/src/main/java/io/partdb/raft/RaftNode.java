@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -37,7 +38,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.UnaryOperator;
-import java.util.Map;
 
 public final class RaftNode implements AutoCloseable {
 
@@ -49,10 +49,10 @@ public final class RaftNode implements AutoCloseable {
     private final RaftLog log;
     private final RaftTransport transport;
     private final Snapshotter snapshotter;
-    private final RaftMetadataStore metadataStore;
+    private final HardStateStore hardStateStore;
 
     private final ReentrantLock stateLock = new ReentrantLock();
-    private final AtomicReference<RaftNodeState> state;
+    private final AtomicReference<RaftState> state;
 
     private final LogReplicator logReplicator;
     private final ElectionTimer electionTimer;
@@ -75,55 +75,91 @@ public final class RaftNode implements AutoCloseable {
 
     private volatile boolean closed;
 
-    public RaftNode(
+    private RaftNode(
+        String nodeId,
+        RaftConfig config,
+        StateMachine stateMachine,
+        RaftLog log,
+        RaftTransport transport,
+        Snapshotter snapshotter,
+        HardStateStore hardStateStore,
+        AtomicReference<RaftState> state,
+        LogReplicator logReplicator,
+        ElectionTimer electionTimer,
+        HeartbeatScheduler heartbeatScheduler,
+        BlockingQueue<ProposalRequest> proposalQueue,
+        Map<Long, CompletableFuture<Void>> pendingProposals,
+        Map<Long, List<CompletableFuture<Void>>> applyWaiters,
+        ScheduledExecutorService scheduler,
+        ScheduledExecutorService snapshotScheduler,
+        ExecutorService executor,
+        ExecutorService proposalProcessor
+    ) {
+        this.nodeId = nodeId;
+        this.config = config;
+        this.stateMachine = stateMachine;
+        this.log = log;
+        this.transport = transport;
+        this.snapshotter = snapshotter;
+        this.hardStateStore = hardStateStore;
+        this.state = state;
+        this.logReplicator = logReplicator;
+        this.electionTimer = electionTimer;
+        this.heartbeatScheduler = heartbeatScheduler;
+        this.proposalQueue = proposalQueue;
+        this.pendingProposals = pendingProposals;
+        this.applyWaiters = applyWaiters;
+        this.scheduler = scheduler;
+        this.snapshotScheduler = snapshotScheduler;
+        this.executor = executor;
+        this.proposalProcessor = proposalProcessor;
+        this.snapshotInProgress = new AtomicBoolean(false);
+        this.lastSnapshotTime = Instant.MIN;
+        this.snapshotCheckInterval = Duration.ofSeconds(10);
+        this.closed = false;
+    }
+
+    public static RaftNode start(
         RaftConfig config,
         StateMachine stateMachine,
         RaftTransport transport
     ) {
-        this.nodeId = config.nodeId();
-        this.config = config;
-        this.stateMachine = stateMachine;
-        this.transport = transport;
+        String nodeId = config.nodeId();
 
-        this.log = SegmentedRaftLog.open(
+        RaftLog log = SegmentedRaftLog.open(
             new RaftLogConfig(config.dataDirectory().resolve("raft-log"), RaftLogConfig.DEFAULT_SEGMENT_SIZE)
         );
 
-        this.snapshotter = new Snapshotter(
+        Snapshotter snapshotter = new Snapshotter(
             config.dataDirectory().resolve("snapshots"),
             stateMachine,
             log
         );
 
+        HardStateStore hardStateStore;
+        AtomicReference<RaftState> state;
         try {
-            this.metadataStore = RaftMetadataStore.open(config.dataDirectory());
-            RaftMetadata metadata = metadataStore.load();
-            this.state = new AtomicReference<>(new RaftNodeState(
-                metadata.currentTerm(),
-                NodeRole.FOLLOWER,
-                metadata.votedFor(),
-                null,
-                0,
-                0
-            ));
+            hardStateStore = HardStateStore.open(config.dataDirectory());
+            HardState hard = hardStateStore.load();
+            state = new AtomicReference<>(RaftState.fromHard(hard));
         } catch (Exception e) {
-            throw new RaftException.MetadataException("Failed to initialize metadata store", e);
+            throw new RaftException.MetadataException("Failed to initialize hard state store", e);
         }
 
-        this.proposalQueue = new LinkedBlockingQueue<>(config.maxProposalQueueSize());
-        this.pendingProposals = new ConcurrentHashMap<>();
-        this.applyWaiters = new ConcurrentHashMap<>();
+        BlockingQueue<ProposalRequest> proposalQueue = new LinkedBlockingQueue<>(config.maxProposalQueueSize());
+        Map<Long, CompletableFuture<Void>> pendingProposals = new ConcurrentHashMap<>();
+        Map<Long, List<CompletableFuture<Void>>> applyWaiters = new ConcurrentHashMap<>();
 
-        this.scheduler = Executors.newScheduledThreadPool(2, Thread.ofVirtual().factory());
-        this.snapshotScheduler = Executors.newSingleThreadScheduledExecutor(
+        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, Thread.ofVirtual().factory());
+        ScheduledExecutorService snapshotScheduler = Executors.newSingleThreadScheduledExecutor(
             Thread.ofVirtual().name("raft-snapshot-", 0).factory()
         );
-        this.executor = Executors.newVirtualThreadPerTaskExecutor();
-        this.proposalProcessor = Executors.newSingleThreadExecutor(
+        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        ExecutorService proposalProcessor = Executors.newSingleThreadExecutor(
             Thread.ofVirtual().name("proposal-processor").factory()
         );
 
-        this.logReplicator = new LogReplicator(
+        LogReplicator logReplicator = new LogReplicator(
             nodeId,
             config.cluster(),
             log,
@@ -134,15 +170,30 @@ public final class RaftNode implements AutoCloseable {
 
         long electionTimeoutBase = config.electionTimeoutMinMs();
         long electionTimeoutJitter = config.electionTimeoutMaxMs() - config.electionTimeoutMinMs();
-        this.electionTimer = new ElectionTimer(scheduler, electionTimeoutBase, electionTimeoutJitter);
+        ElectionTimer electionTimer = new ElectionTimer(scheduler, electionTimeoutBase, electionTimeoutJitter);
 
-        this.heartbeatScheduler = new HeartbeatScheduler(scheduler, config.heartbeatIntervalMs());
+        HeartbeatScheduler heartbeatScheduler = new HeartbeatScheduler(scheduler, config.heartbeatIntervalMs());
 
-        this.snapshotInProgress = new AtomicBoolean(false);
-        this.lastSnapshotTime = Instant.MIN;
-        this.snapshotCheckInterval = Duration.ofSeconds(10);
-
-        this.closed = false;
+        RaftNode node = new RaftNode(
+            nodeId,
+            config,
+            stateMachine,
+            log,
+            transport,
+            snapshotter,
+            hardStateStore,
+            state,
+            logReplicator,
+            electionTimer,
+            heartbeatScheduler,
+            proposalQueue,
+            pendingProposals,
+            applyWaiters,
+            scheduler,
+            snapshotScheduler,
+            executor,
+            proposalProcessor
+        );
 
         Optional<RaftSnapshot> snapshot = snapshotter.loadLatestSnapshot();
         if (snapshot.isPresent()) {
@@ -153,13 +204,15 @@ public final class RaftNode implements AutoCloseable {
             );
         }
 
-        electionTimer.start(this::startElection);
-        startApplyThread();
-        startSnapshotMonitor();
+        electionTimer.start(node::startElection);
+        node.startApplyThread();
+        node.startSnapshotMonitor();
+
+        return node;
     }
 
     public CompletableFuture<Void> propose(Operation operation) {
-        RaftNodeState currentState = state.get();
+        RaftState currentState = state.get();
         if (!currentState.isLeader()) {
             return CompletableFuture.failedFuture(
                 new NotLeaderException(Optional.ofNullable(currentState.leaderId()))
@@ -185,7 +238,7 @@ public final class RaftNode implements AutoCloseable {
     }
 
     public CompletableFuture<Optional<ByteArray>> get(ByteArray key) {
-        RaftNodeState currentState = state.get();
+        RaftState currentState = state.get();
         if (!currentState.isLeader()) {
             return CompletableFuture.failedFuture(
                 new NotLeaderException(Optional.ofNullable(currentState.leaderId()))
@@ -198,7 +251,7 @@ public final class RaftNode implements AutoCloseable {
     }
 
     public CompletableFuture<Iterator<Entry>> scan(ByteArray startKey, ByteArray endKey) {
-        RaftNodeState currentState = state.get();
+        RaftState currentState = state.get();
         if (!currentState.isLeader()) {
             return CompletableFuture.failedFuture(
                 new NotLeaderException(Optional.ofNullable(currentState.leaderId()))
@@ -211,19 +264,19 @@ public final class RaftNode implements AutoCloseable {
     }
 
     public RequestVoteResponse handleRequestVote(RequestVoteRequest request) {
-        RaftNodeState currentState = state.get();
+        RaftState currentState = state.get();
 
-        if (request.term() > currentState.currentTerm()) {
+        if (request.term() > currentState.term()) {
             stepDown(request.term());
             currentState = state.get();
         }
 
-        if (request.term() < currentState.currentTerm()) {
-            return new RequestVoteResponse(currentState.currentTerm(), false);
+        if (request.term() < currentState.term()) {
+            return new RequestVoteResponse(currentState.term(), false);
         }
 
         if (currentState.votedFor() != null && !currentState.votedFor().equals(request.candidateId())) {
-            return new RequestVoteResponse(currentState.currentTerm(), false);
+            return new RequestVoteResponse(currentState.term(), false);
         }
 
         long lastLogIndex = log.lastIndex();
@@ -235,28 +288,28 @@ public final class RaftNode implements AutoCloseable {
         if (logUpToDate) {
             transitionState(s -> s.withVote(request.candidateId()));
             electionTimer.reset(this::startElection);
-            return new RequestVoteResponse(state.get().currentTerm(), true);
+            return new RequestVoteResponse(state.get().term(), true);
         }
 
-        return new RequestVoteResponse(state.get().currentTerm(), false);
+        return new RequestVoteResponse(state.get().term(), false);
     }
 
     public AppendEntriesResponse handleAppendEntries(AppendEntriesRequest request) {
-        RaftNodeState currentState = state.get();
+        RaftState currentState = state.get();
 
-        if (request.term() > currentState.currentTerm()) {
+        if (request.term() > currentState.term()) {
             stepDown(request.term());
             currentState = state.get();
         }
 
-        if (request.term() < currentState.currentTerm()) {
-            return new AppendEntriesResponse(currentState.currentTerm(), false, 0);
+        if (request.term() < currentState.term()) {
+            return new AppendEntriesResponse(currentState.term(), false, 0);
         }
 
         electionTimer.reset(this::startElection);
 
         if (state.get().isCandidate()) {
-            transitionState(s -> s.becomeFollower(s.currentTerm()).withLeader(request.leaderId()));
+            transitionState(s -> s.becomeFollower(s.term()).withLeader(request.leaderId()));
         } else {
             state.updateAndGet(s -> s.withLeader(request.leaderId()));
         }
@@ -265,7 +318,7 @@ public final class RaftNode implements AutoCloseable {
             Optional<LogEntry> prevEntry = log.get(request.prevLogIndex());
 
             if (prevEntry.isEmpty() || prevEntry.get().term() != request.prevLogTerm()) {
-                return new AppendEntriesResponse(state.get().currentTerm(), false, 0);
+                return new AppendEntriesResponse(state.get().term(), false, 0);
             }
         }
 
@@ -292,19 +345,19 @@ public final class RaftNode implements AutoCloseable {
             signalCommit();
         }
 
-        return new AppendEntriesResponse(state.get().currentTerm(), true, matchIndex);
+        return new AppendEntriesResponse(state.get().term(), true, matchIndex);
     }
 
     public InstallSnapshotResponse handleInstallSnapshot(InstallSnapshotRequest request) {
-        RaftNodeState currentState = state.get();
+        RaftState currentState = state.get();
 
-        if (request.term() > currentState.currentTerm()) {
+        if (request.term() > currentState.term()) {
             stepDown(request.term());
             currentState = state.get();
         }
 
-        if (request.term() < currentState.currentTerm()) {
-            return new InstallSnapshotResponse(currentState.currentTerm());
+        if (request.term() < currentState.term()) {
+            return new InstallSnapshotResponse(currentState.term());
         }
 
         state.updateAndGet(s -> s.withLeader(request.leaderId()));
@@ -331,7 +384,7 @@ public final class RaftNode implements AutoCloseable {
             .withLastApplied(request.lastIncludedIndex())
         );
 
-        return new InstallSnapshotResponse(state.get().currentTerm());
+        return new InstallSnapshotResponse(state.get().term());
     }
 
     @Override
@@ -341,49 +394,44 @@ public final class RaftNode implements AutoCloseable {
         electionTimer.cancel();
         heartbeatScheduler.cancel();
 
-        scheduler.shutdown();
-        snapshotScheduler.shutdown();
-        executor.shutdown();
-        proposalProcessor.shutdown();
+        boolean interrupted = false;
+        interrupted |= !shutdownExecutor(scheduler);
+        interrupted |= !shutdownExecutor(snapshotScheduler);
+        interrupted |= !shutdownExecutor(executor);
+        interrupted |= !shutdownExecutor(proposalProcessor);
 
-        try {
-            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                scheduler.shutdownNow();
-            }
-            if (!snapshotScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                snapshotScheduler.shutdownNow();
-            }
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-            if (!proposalProcessor.awaitTermination(5, TimeUnit.SECONDS)) {
-                proposalProcessor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            scheduler.shutdownNow();
-            snapshotScheduler.shutdownNow();
-            executor.shutdownNow();
-            proposalProcessor.shutdownNow();
+        if (interrupted) {
             Thread.currentThread().interrupt();
         }
 
         log.close();
     }
 
-    private void transitionState(UnaryOperator<RaftNodeState> transition) {
+    private boolean shutdownExecutor(ExecutorService exec) {
+        exec.shutdown();
+        try {
+            if (!exec.awaitTermination(5, TimeUnit.SECONDS)) {
+                exec.shutdownNow();
+            }
+            return true;
+        } catch (InterruptedException e) {
+            exec.shutdownNow();
+            return false;
+        }
+    }
+
+    private void transitionState(UnaryOperator<RaftState> transition) {
         stateLock.lock();
         try {
             state.updateAndGet(transition);
-            persistCurrentState();
+            persistHardState();
         } finally {
             stateLock.unlock();
         }
     }
 
-    private void persistCurrentState() {
-        RaftNodeState currentState = state.get();
-        RaftMetadata metadata = new RaftMetadata(currentState.currentTerm(), currentState.votedFor());
-        metadataStore.save(metadata);
+    private void persistHardState() {
+        hardStateStore.save(state.get().hard());
     }
 
     private void startElection() {
@@ -391,73 +439,77 @@ public final class RaftNode implements AutoCloseable {
             return;
         }
 
-        RaftNodeState currentState = state.get();
+        RaftState currentState = state.get();
         if (currentState.isLeader()) {
             return;
         }
 
-        long newTerm = currentState.currentTerm() + 1;
-        transitionState(s -> s.becomeCandidate(newTerm, nodeId));
+        try {
+            long newTerm = currentState.term() + 1;
+            transitionState(s -> s.becomeCandidate(newTerm, nodeId));
 
-        currentState = state.get();
-        AtomicLong votesReceived = new AtomicLong(1);
+            currentState = state.get();
+            AtomicLong votesReceived = new AtomicLong(1);
 
-        logger.info("Election started: votes={}, quorum={}", votesReceived.get(), config.cluster().quorum());
+            logger.info("Election started: votes={}, quorum={}", votesReceived.get(), config.cluster().quorum());
 
-        if (votesReceived.get() >= config.cluster().quorum()) {
-            logger.info("Single-node quorum reached, becoming leader");
-            becomeLeader();
-            return;
-        }
+            if (votesReceived.get() >= config.cluster().quorum()) {
+                logger.info("Single-node quorum reached, becoming leader");
+                becomeLeader();
+                return;
+            }
 
-        long lastLogIndex = log.lastIndex();
-        long lastLogTerm = log.lastTerm();
+            long lastLogIndex = log.lastIndex();
+            long lastLogTerm = log.lastTerm();
 
-        RequestVoteRequest request = new RequestVoteRequest(
-            currentState.currentTerm(),
-            nodeId,
-            lastLogIndex,
-            lastLogTerm
-        );
+            RequestVoteRequest request = new RequestVoteRequest(
+                currentState.term(),
+                nodeId,
+                lastLogIndex,
+                lastLogTerm
+            );
 
-        for (String peerId : config.peerNodeIds()) {
-            transport.requestVote(peerId, request).thenAccept(response -> {
-                if (response.term() > state.get().currentTerm()) {
-                    stepDown(response.term());
-                    return;
-                }
-
-                if (response.voteGranted() && state.get().isCandidate()) {
-                    long votes = votesReceived.incrementAndGet();
-
-                    if (votes >= config.cluster().quorum()) {
-                        becomeLeader();
+            for (String peerId : config.peerNodeIds()) {
+                transport.requestVote(peerId, request).thenAccept(response -> {
+                    if (response.term() > state.get().term()) {
+                        stepDown(response.term());
+                        return;
                     }
-                }
-            }).exceptionally(_ -> null);
-        }
 
-        electionTimer.reset(this::startElection);
+                    if (response.voteGranted() && state.get().isCandidate()) {
+                        long votes = votesReceived.incrementAndGet();
+
+                        if (votes >= config.cluster().quorum()) {
+                            becomeLeader();
+                        }
+                    }
+                }).exceptionally(_ -> null);
+            }
+        } finally {
+            if (!closed && !state.get().isLeader()) {
+                electionTimer.reset(this::startElection);
+            }
+        }
     }
 
     private void becomeLeader() {
         stateLock.lock();
         try {
-            RaftNodeState currentState = state.get();
+            RaftState currentState = state.get();
             if (!currentState.isCandidate()) {
                 logger.warn("becomeLeader: not a candidate, role={}", currentState.role());
                 return;
             }
 
-            RaftNodeState newState = currentState.becomeLeader(currentState.currentTerm(), nodeId);
+            RaftState newState = currentState.becomeLeader(currentState.term(), nodeId);
             if (!state.compareAndSet(currentState, newState)) {
                 logger.warn("becomeLeader: CAS failed");
                 return;
             }
-            logger.info("Became leader for term {}", newState.currentTerm());
-            persistCurrentState();
+            logger.info("Became leader for term {}", newState.term());
+            persistHardState();
 
-            logReplicator.resetPeerStates(log.lastIndex());
+            logReplicator.resetProgress(log.lastIndex());
 
             electionTimer.cancel();
             heartbeatScheduler.start(this::sendHeartbeats);
@@ -484,11 +536,11 @@ public final class RaftNode implements AutoCloseable {
                 return;
             }
 
-            RaftNodeState currentState = state.get();
+            RaftState currentState = state.get();
 
             for (ProposalRequest request : batch) {
                 long index = log.lastIndex() + 1;
-                LogEntry entry = new LogEntry(index, currentState.currentTerm(), request.operation);
+                LogEntry entry = new LogEntry(index, currentState.term(), request.operation);
 
                 try {
                     log.append(entry);
@@ -506,13 +558,13 @@ public final class RaftNode implements AutoCloseable {
     }
 
     private void sendHeartbeats() {
-        RaftNodeState currentState = state.get();
+        RaftState currentState = state.get();
         if (!currentState.isLeader()) {
             return;
         }
 
         logReplicator.replicateToAll(
-            currentState.currentTerm(),
+            currentState.term(),
             currentState.commitIndex(),
             this::stepDown
         );
@@ -521,13 +573,13 @@ public final class RaftNode implements AutoCloseable {
     }
 
     private void updateCommitIndex() {
-        RaftNodeState currentState = state.get();
+        RaftState currentState = state.get();
         if (!currentState.isLeader()) {
             return;
         }
 
         long newCommitIndex = logReplicator.calculateCommitIndex(
-            currentState.currentTerm(),
+            currentState.term(),
             currentState.commitIndex()
         );
 
@@ -547,24 +599,24 @@ public final class RaftNode implements AutoCloseable {
     }
 
     private CompletableFuture<Long> confirmLeadership() {
-        RaftNodeState currentState = state.get();
+        RaftState currentState = state.get();
         long readIndex = currentState.commitIndex();
 
         List<CompletableFuture<Boolean>> acks = new ArrayList<>();
 
         for (String peerId : config.peerNodeIds()) {
-            PeerReplicationState peerState = logReplicator.getPeerState(peerId);
-            if (peerState == null) {
+            Progress progress = logReplicator.getProgress(peerId);
+            if (progress == null) {
                 continue;
             }
 
-            long prevLogIndex = peerState.nextIndex() - 1;
+            long prevLogIndex = progress.nextIndex() - 1;
             long prevLogTerm = prevLogIndex > 0
                 ? log.get(prevLogIndex).map(LogEntry::term).orElse(0L)
                 : 0;
 
             AppendEntriesRequest request = new AppendEntriesRequest(
-                currentState.currentTerm(),
+                currentState.term(),
                 nodeId,
                 prevLogIndex,
                 prevLogTerm,
@@ -619,7 +671,7 @@ public final class RaftNode implements AutoCloseable {
         executor.submit(() -> {
             while (!closed) {
                 try {
-                    RaftNodeState currentState = state.get();
+                    RaftState currentState = state.get();
 
                     while (currentState.lastApplied() < currentState.commitIndex() && !closed) {
                         long nextIndex = currentState.lastApplied() + 1;
@@ -695,7 +747,7 @@ public final class RaftNode implements AutoCloseable {
     private void createSnapshotAsync() {
         executor.submit(() -> {
             try {
-                RaftNodeState currentState = state.get();
+                RaftState currentState = state.get();
                 long snapshotIndex = currentState.commitIndex();
                 long snapshotTerm = log.get(snapshotIndex)
                     .map(LogEntry::term)

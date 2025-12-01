@@ -21,7 +21,7 @@ public final class LogReplicator {
     private final RaftTransport transport;
     private final RaftConfig config;
     private final ExecutorService executor;
-    private final Map<String, PeerReplicationState> peerStates;
+    private final Map<String, Progress> peerProgress;
 
     public LogReplicator(
         String nodeId,
@@ -37,46 +37,44 @@ public final class LogReplicator {
         this.transport = transport;
         this.config = config;
         this.executor = executor;
-        this.peerStates = new ConcurrentHashMap<>();
+        this.peerProgress = new ConcurrentHashMap<>();
 
         for (String peer : cluster.peerNodeIds()) {
-            peerStates.put(peer, new PeerReplicationState());
+            peerProgress.put(peer, new Progress());
         }
     }
 
-    public void resetPeerStates(long lastLogIndex) {
-        for (String peer : peerStates.keySet()) {
-            peerStates.put(peer, new PeerReplicationState(lastLogIndex + 1, 0));
-        }
+    public void resetProgress(long lastLogIndex) {
+        peerProgress.replaceAll((_, _) -> new Progress(lastLogIndex + 1, 0));
     }
 
     public void replicateToAll(long currentTerm, long commitIndex, java.util.function.LongConsumer onHigherTerm) {
-        for (String peerId : peerStates.keySet()) {
+        for (String peerId : peerProgress.keySet()) {
             executor.submit(() -> replicateToPeer(peerId, currentTerm, commitIndex, onHigherTerm));
         }
     }
 
     private void replicateToPeer(String peerId, long currentTerm, long commitIndex, java.util.function.LongConsumer onHigherTerm) {
-        PeerReplicationState state = peerStates.get(peerId);
-        if (state == null) {
+        Progress progress = peerProgress.get(peerId);
+        if (progress == null) {
             return;
         }
 
         long logFirstIndex = log.firstIndex();
-        if (state.nextIndex() < logFirstIndex) {
+        if (progress.nextIndex() < logFirstIndex) {
             return;
         }
 
-        long prevLogIndex = state.nextIndex() - 1;
+        long prevLogIndex = progress.nextIndex() - 1;
         long prevLogTerm = prevLogIndex > 0
             ? log.get(prevLogIndex).map(LogEntry::term).orElse(0L)
             : 0;
 
         long endIndex = Math.min(
-            state.nextIndex() + config.maxEntriesPerAppend(),
+            progress.nextIndex() + config.maxEntriesPerAppend(),
             log.lastIndex() + 1
         );
-        List<LogEntry> entries = new ArrayList<>(log.getRange(state.nextIndex(), endIndex));
+        List<LogEntry> entries = new ArrayList<>(log.getRange(progress.nextIndex(), endIndex));
 
         AppendEntriesRequest request = new AppendEntriesRequest(
             currentTerm,
@@ -108,11 +106,11 @@ public final class LogReplicator {
             return;
         }
 
-        peerStates.computeIfPresent(peerId, (id, state) -> {
+        peerProgress.computeIfPresent(peerId, (_, progress) -> {
             if (response.success()) {
-                return state.withMatch(response.matchIndex());
+                return progress.withMatch(response.matchIndex());
             } else {
-                return state.decrementNext();
+                return progress.decrementNext();
             }
         });
     }
@@ -124,8 +122,8 @@ public final class LogReplicator {
             }
 
             int replicationCount = 1;
-            for (PeerReplicationState state : peerStates.values()) {
-                if (state.matchIndex() >= n) {
+            for (Progress progress : peerProgress.values()) {
+                if (progress.matchIndex() >= n) {
                     replicationCount++;
                 }
             }
@@ -138,7 +136,7 @@ public final class LogReplicator {
         return currentCommitIndex;
     }
 
-    public PeerReplicationState getPeerState(String peerId) {
-        return peerStates.get(peerId);
+    public Progress getProgress(String peerId) {
+        return peerProgress.get(peerId);
     }
 }

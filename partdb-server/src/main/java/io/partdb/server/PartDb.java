@@ -29,7 +29,7 @@ public final class PartDb implements AutoCloseable {
 
         this.raftTransport = new GrpcRaftTransport(config.raftTransportConfig());
 
-        this.raftNode = new RaftNode(
+        this.raftNode = RaftNode.start(
             config.raftConfig(),
             database,
             raftTransport

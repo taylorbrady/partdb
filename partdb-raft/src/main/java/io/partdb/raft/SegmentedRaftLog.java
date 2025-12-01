@@ -23,51 +23,58 @@ public final class SegmentedRaftLog implements RaftLog {
 
     private final RaftLogConfig config;
     private final ReentrantLock lock = new ReentrantLock();
-    private final ConcurrentSkipListMap<Long, RaftLogSegment> segments;
+    private final ConcurrentSkipListMap<Long, SealedSegment> sealedSegments;
 
-    private RaftLogSegment activeSegment;
+    private ActiveSegment activeSegment;
     private long nextSegmentId;
 
     public static SegmentedRaftLog open(RaftLogConfig config) {
         try {
             Files.createDirectories(config.logDirectory());
 
-            ConcurrentSkipListMap<Long, RaftLogSegment> segments = new ConcurrentSkipListMap<>();
+            ConcurrentSkipListMap<Long, SealedSegment> sealedSegments = new ConcurrentSkipListMap<>();
             long maxSegmentId = 0;
 
+            List<Path> segmentPaths = List.of();
             if (Files.exists(config.logDirectory())) {
                 try (Stream<Path> paths = Files.list(config.logDirectory())) {
-                    List<Path> segmentPaths = paths
+                    segmentPaths = paths
                         .filter(path -> SEGMENT_PATTERN.matcher(path.getFileName().toString()).matches())
                         .sorted(Comparator.comparingLong(SegmentedRaftLog::extractSegmentId))
                         .toList();
-
-                    for (Path path : segmentPaths) {
-                        long segmentId = extractSegmentId(path);
-                        maxSegmentId = Math.max(maxSegmentId, segmentId);
-
-                        RaftLogSegment segment = RaftLogSegment.open(path, segmentId);
-                        if (segment.firstIndex() >= 0) {
-                            segments.put(segment.firstIndex(), segment);
-                        }
-                    }
                 }
             }
 
-            RaftLogSegment activeSegment;
-            long nextSegmentId = maxSegmentId + 1;
+            ActiveSegment activeSegment;
+            long nextSegmentId;
 
-            if (segments.isEmpty()) {
+            if (segmentPaths.isEmpty()) {
+                nextSegmentId = 1;
                 long firstIndex = 1;
                 Path segmentPath = config.logDirectory().resolve(String.format(SEGMENT_FORMAT, nextSegmentId));
-                activeSegment = RaftLogSegment.create(segmentPath, nextSegmentId, firstIndex);
-                segments.put(firstIndex, activeSegment);
+                activeSegment = ActiveSegment.create(segmentPath, nextSegmentId, firstIndex);
                 nextSegmentId++;
             } else {
-                activeSegment = segments.lastEntry().getValue();
+                for (int i = 0; i < segmentPaths.size() - 1; i++) {
+                    Path path = segmentPaths.get(i);
+                    long segmentId = extractSegmentId(path);
+                    maxSegmentId = Math.max(maxSegmentId, segmentId);
+
+                    SealedSegment segment = SealedSegment.open(path, segmentId);
+                    if (segment.firstIndex() >= 0) {
+                        sealedSegments.put(segment.firstIndex(), segment);
+                    }
+                }
+
+                Path lastPath = segmentPaths.getLast();
+                long lastSegmentId = extractSegmentId(lastPath);
+                maxSegmentId = Math.max(maxSegmentId, lastSegmentId);
+
+                activeSegment = ActiveSegment.open(lastPath, lastSegmentId);
+                nextSegmentId = maxSegmentId + 1;
             }
 
-            return new SegmentedRaftLog(config, segments, activeSegment, nextSegmentId);
+            return new SegmentedRaftLog(config, sealedSegments, activeSegment, nextSegmentId);
         } catch (IOException e) {
             throw new RaftException.LogException("Failed to open Raft log", e);
         }
@@ -75,12 +82,12 @@ public final class SegmentedRaftLog implements RaftLog {
 
     private SegmentedRaftLog(
         RaftLogConfig config,
-        ConcurrentSkipListMap<Long, RaftLogSegment> segments,
-        RaftLogSegment activeSegment,
+        ConcurrentSkipListMap<Long, SealedSegment> sealedSegments,
+        ActiveSegment activeSegment,
         long nextSegmentId
     ) {
         this.config = config;
-        this.segments = segments;
+        this.sealedSegments = sealedSegments;
         this.activeSegment = activeSegment;
         this.nextSegmentId = nextSegmentId;
     }
@@ -103,13 +110,18 @@ public final class SegmentedRaftLog implements RaftLog {
 
     @Override
     public Optional<LogEntry> get(long index) {
-        Map.Entry<Long, RaftLogSegment> entry = segments.floorEntry(index);
+        if (activeSegment != null &&
+            index >= activeSegment.firstIndex() &&
+            index <= activeSegment.lastIndex()) {
+            return activeSegment.get(index);
+        }
 
+        Map.Entry<Long, SealedSegment> entry = sealedSegments.floorEntry(index);
         if (entry == null) {
             return Optional.empty();
         }
 
-        RaftLogSegment segment = entry.getValue();
+        SealedSegment segment = entry.getValue();
         if (index > segment.lastIndex()) {
             return Optional.empty();
         }
@@ -121,7 +133,7 @@ public final class SegmentedRaftLog implements RaftLog {
     public SequencedCollection<LogEntry> getRange(long startIndex, long endIndex) {
         LinkedHashMap<Long, LogEntry> result = new LinkedHashMap<>();
 
-        for (RaftLogSegment segment : segments.values()) {
+        for (SealedSegment segment : sealedSegments.values()) {
             if (segment.firstIndex() > endIndex) {
                 break;
             }
@@ -131,7 +143,14 @@ public final class SegmentedRaftLog implements RaftLog {
             }
 
             segment.getRange(startIndex, endIndex)
-                   .forEach(entry -> result.put(entry.index(), entry));
+                .forEach(entry -> result.put(entry.index(), entry));
+        }
+
+        if (activeSegment != null &&
+            activeSegment.lastIndex() >= startIndex &&
+            activeSegment.firstIndex() <= endIndex) {
+            activeSegment.getRange(startIndex, endIndex)
+                .forEach(entry -> result.put(entry.index(), entry));
         }
 
         return result.sequencedValues();
@@ -139,7 +158,13 @@ public final class SegmentedRaftLog implements RaftLog {
 
     @Override
     public long firstIndex() {
-        return segments.isEmpty() ? 1 : segments.firstKey();
+        if (!sealedSegments.isEmpty()) {
+            return sealedSegments.firstKey();
+        }
+        if (activeSegment != null && activeSegment.firstIndex() >= 0) {
+            return activeSegment.firstIndex();
+        }
+        return 1;
     }
 
     @Override
@@ -162,9 +187,15 @@ public final class SegmentedRaftLog implements RaftLog {
 
     @Override
     public long sizeInBytes() {
-        return segments.values().stream()
-            .mapToLong(RaftLogSegment::size)
+        long size = sealedSegments.values().stream()
+            .mapToLong(SealedSegment::size)
             .sum();
+
+        if (activeSegment != null) {
+            size += activeSegment.size();
+        }
+
+        return size;
     }
 
     @Override
@@ -173,8 +204,8 @@ public final class SegmentedRaftLog implements RaftLog {
         try {
             List<Long> toRemove = new ArrayList<>();
 
-            for (Map.Entry<Long, RaftLogSegment> segmentEntry : segments.entrySet()) {
-                RaftLogSegment segment = segmentEntry.getValue();
+            for (Map.Entry<Long, SealedSegment> segmentEntry : sealedSegments.entrySet()) {
+                SealedSegment segment = segmentEntry.getValue();
 
                 if (segment.firstIndex() > index) {
                     toRemove.add(segmentEntry.getKey());
@@ -185,37 +216,34 @@ public final class SegmentedRaftLog implements RaftLog {
                         throw new RaftException.LogException("Failed to delete segment", e);
                     }
                 } else if (segment.lastIndex() > index) {
-                    long firstIndex = segment.firstIndex();
-                    long segmentId = segment.segmentId();
-                    Path path = segment.path();
-
-                    List<LogEntry> entries = segment.readAll();
-
-                    segment.close();
-
-                    try {
-                        Files.deleteIfExists(path);
-                    } catch (IOException e) {
-                        throw new RaftException.LogException("Failed to delete segment", e);
-                    }
-
-                    RaftLogSegment newSegment = RaftLogSegment.create(path, segmentId, firstIndex);
-
-                    for (LogEntry entry : entries) {
-                        if (entry.index() <= index) {
-                            newSegment.append(entry);
-                        }
-                    }
-
-                    segments.put(firstIndex, newSegment);
-
-                    if (segment == activeSegment) {
-                        activeSegment = newSegment;
-                    }
+                    toRemove.add(segmentEntry.getKey());
+                    SealedSegment newSegment = rebuildSegment(segment, index);
+                    sealedSegments.put(newSegment.firstIndex(), newSegment);
                 }
             }
 
-            toRemove.forEach(segments::remove);
+            toRemove.forEach(sealedSegments::remove);
+
+            if (activeSegment != null && activeSegment.firstIndex() > index) {
+                activeSegment.close();
+                try {
+                    Files.deleteIfExists(activeSegment.path());
+                } catch (IOException e) {
+                    throw new RaftException.LogException("Failed to delete segment", e);
+                }
+
+                if (sealedSegments.isEmpty()) {
+                    Path segmentPath = config.logDirectory().resolve(String.format(SEGMENT_FORMAT, nextSegmentId));
+                    activeSegment = ActiveSegment.create(segmentPath, nextSegmentId, 1);
+                    nextSegmentId++;
+                } else {
+                    SealedSegment lastSealed = sealedSegments.lastEntry().getValue();
+                    sealedSegments.remove(lastSealed.firstIndex());
+                    activeSegment = reopenAsActive(lastSealed);
+                }
+            } else if (activeSegment != null && activeSegment.lastIndex() > index) {
+                activeSegment = rebuildActiveSegment(activeSegment, index);
+            }
         } finally {
             lock.unlock();
         }
@@ -227,8 +255,8 @@ public final class SegmentedRaftLog implements RaftLog {
         try {
             List<Long> toRemove = new ArrayList<>();
 
-            for (Map.Entry<Long, RaftLogSegment> segmentEntry : segments.entrySet()) {
-                RaftLogSegment segment = segmentEntry.getValue();
+            for (Map.Entry<Long, SealedSegment> segmentEntry : sealedSegments.entrySet()) {
+                SealedSegment segment = segmentEntry.getValue();
 
                 if (segment.lastIndex() < index) {
                     toRemove.add(segmentEntry.getKey());
@@ -241,7 +269,7 @@ public final class SegmentedRaftLog implements RaftLog {
                 }
             }
 
-            toRemove.forEach(segments::remove);
+            toRemove.forEach(sealedSegments::remove);
         } finally {
             lock.unlock();
         }
@@ -263,25 +291,84 @@ public final class SegmentedRaftLog implements RaftLog {
     public void close() {
         lock.lock();
         try {
-            for (RaftLogSegment segment : segments.values()) {
+            for (SealedSegment segment : sealedSegments.values()) {
                 segment.close();
             }
-            segments.clear();
-            activeSegment = null;
+            sealedSegments.clear();
+
+            if (activeSegment != null) {
+                activeSegment.close();
+                activeSegment = null;
+            }
         } finally {
             lock.unlock();
         }
     }
 
     private void rotateSegment() {
-        activeSegment.seal();
+        SealedSegment sealed = activeSegment.seal();
+        sealedSegments.put(sealed.firstIndex(), sealed);
 
-        long firstIndex = activeSegment.lastIndex() + 1;
+        long firstIndex = sealed.lastIndex() + 1;
         Path segmentPath = config.logDirectory().resolve(String.format(SEGMENT_FORMAT, nextSegmentId));
 
-        activeSegment = RaftLogSegment.create(segmentPath, nextSegmentId, firstIndex);
-        segments.put(firstIndex, activeSegment);
+        activeSegment = ActiveSegment.create(segmentPath, nextSegmentId, firstIndex);
         nextSegmentId++;
+    }
+
+    private SealedSegment rebuildSegment(SealedSegment old, long truncateAfterIndex) {
+        long firstIdx = old.firstIndex();
+        long segmentId = old.segmentId();
+        Path path = old.path();
+
+        List<LogEntry> entries = old.readAll();
+        old.close();
+
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            throw new RaftException.LogException("Failed to delete segment", e);
+        }
+
+        ActiveSegment temp = ActiveSegment.create(path, segmentId, firstIdx);
+        for (LogEntry entry : entries) {
+            if (entry.index() <= truncateAfterIndex) {
+                temp.append(entry);
+            }
+        }
+
+        return temp.seal();
+    }
+
+    private ActiveSegment rebuildActiveSegment(ActiveSegment old, long truncateAfterIndex) {
+        long firstIdx = old.firstIndex();
+        long segmentId = old.segmentId();
+        Path path = old.path();
+
+        List<LogEntry> entries = old.readAll();
+        old.close();
+
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            throw new RaftException.LogException("Failed to delete segment", e);
+        }
+
+        ActiveSegment newSegment = ActiveSegment.create(path, segmentId, firstIdx);
+        for (LogEntry entry : entries) {
+            if (entry.index() <= truncateAfterIndex) {
+                newSegment.append(entry);
+            }
+        }
+
+        return newSegment;
+    }
+
+    private ActiveSegment reopenAsActive(SealedSegment sealed) {
+        Path path = sealed.path();
+        long segmentId = sealed.segmentId();
+        sealed.close();
+        return ActiveSegment.open(path, segmentId);
     }
 
     private static long extractSegmentId(Path path) {
