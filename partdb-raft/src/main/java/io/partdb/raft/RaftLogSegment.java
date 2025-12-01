@@ -37,7 +37,6 @@ final class RaftLogSegment implements AutoCloseable {
     private long firstIndex;
     private long lastIndex;
 
-    private final Arena writeArena;
     private Arena arena;
     private MemorySegment mappedSegment;
 
@@ -55,7 +54,6 @@ final class RaftLogSegment implements AutoCloseable {
         this.indexToOffset = indexToOffset;
         this.firstIndex = firstIndex;
         this.lastIndex = lastIndex;
-        this.writeArena = Arena.ofConfined();
         this.arena = null;
         this.mappedSegment = null;
     }
@@ -159,22 +157,20 @@ final class RaftLogSegment implements AutoCloseable {
     void append(LogEntry entry) {
         try {
             long entryOffset = channel.size();
-            MemorySegment serialized = serializeEntryOffHeap(entry, writeArena);
-            long serializedSize = serialized.byteSize();
+            byte[] serialized = serializeEntry(entry);
 
             CRC32C crc = new CRC32C();
-            for (long i = 0; i < serializedSize; i++) {
-                crc.update(serialized.get(ValueLayout.JAVA_BYTE, i));
-            }
+            crc.update(serialized);
 
-            MemorySegment buffer = writeArena.allocate(ENTRY_HEADER_SIZE + serializedSize);
-            buffer.set(ValueLayout.JAVA_INT, 0, (int) crc.getValue());
-            buffer.set(ValueLayout.JAVA_INT, 4, (int) serializedSize);
-            buffer.set(ValueLayout.JAVA_LONG, 8, entry.index());
-            MemorySegment.copy(serialized, 0, buffer, ENTRY_HEADER_SIZE, serializedSize);
+            ByteBuffer buffer = ByteBuffer.allocate(ENTRY_HEADER_SIZE + serialized.length);
+            buffer.putInt((int) crc.getValue());
+            buffer.putInt(serialized.length);
+            buffer.putLong(entry.index());
+            buffer.put(serialized);
+            buffer.flip();
 
             channel.position(entryOffset);
-            channel.write(buffer.asByteBuffer());
+            channel.write(buffer);
             channel.force(true);
 
             indexToOffset.put(entry.index(), entryOffset);
@@ -325,7 +321,6 @@ final class RaftLogSegment implements AutoCloseable {
     @Override
     public void close() {
         try {
-            writeArena.close();
             if (arena != null) {
                 arena.close();
             }
@@ -335,88 +330,53 @@ final class RaftLogSegment implements AutoCloseable {
         }
     }
 
-    private MemorySegment serializeEntryOffHeap(LogEntry entry, Arena arena) {
+    private byte[] serializeEntry(LogEntry entry) {
         Operation op = entry.command();
 
         return switch (op) {
             case Put put -> {
-                long size = 8 + 1 + 4 + put.key().size() + 4 + put.value().size() + 8;
-                MemorySegment seg = arena.allocate(size);
-                long offset = 0;
-
-                seg.set(ValueLayout.JAVA_LONG, offset, entry.term());
-                offset += 8;
-                seg.set(ValueLayout.JAVA_BYTE, offset, (byte) 1);
-                offset += 1;
-                seg.set(ValueLayout.JAVA_INT, offset, put.key().size());
-                offset += 4;
-                MemorySegment.copy(put.key().toByteArray(), 0, seg, ValueLayout.JAVA_BYTE, offset, put.key().size());
-                offset += put.key().size();
-                seg.set(ValueLayout.JAVA_INT, offset, put.value().size());
-                offset += 4;
-                MemorySegment.copy(put.value().toByteArray(), 0, seg, ValueLayout.JAVA_BYTE, offset, put.value().size());
-                offset += put.value().size();
-                seg.set(ValueLayout.JAVA_LONG, offset, put.leaseId());
-
-                yield seg;
+                int size = 8 + 1 + 4 + put.key().size() + 4 + put.value().size() + 8;
+                ByteBuffer buf = ByteBuffer.allocate(size);
+                buf.putLong(entry.term());
+                buf.put((byte) 1);
+                buf.putInt(put.key().size());
+                buf.put(put.key().toByteArray());
+                buf.putInt(put.value().size());
+                buf.put(put.value().toByteArray());
+                buf.putLong(put.leaseId());
+                yield buf.array();
             }
             case Delete delete -> {
-                long size = 8 + 1 + 4 + delete.key().size();
-                MemorySegment seg = arena.allocate(size);
-                long offset = 0;
-
-                seg.set(ValueLayout.JAVA_LONG, offset, entry.term());
-                offset += 8;
-                seg.set(ValueLayout.JAVA_BYTE, offset, (byte) 2);
-                offset += 1;
-                seg.set(ValueLayout.JAVA_INT, offset, delete.key().size());
-                offset += 4;
-                MemorySegment.copy(delete.key().toByteArray(), 0, seg, ValueLayout.JAVA_BYTE, offset, delete.key().size());
-
-                yield seg;
+                int size = 8 + 1 + 4 + delete.key().size();
+                ByteBuffer buf = ByteBuffer.allocate(size);
+                buf.putLong(entry.term());
+                buf.put((byte) 2);
+                buf.putInt(delete.key().size());
+                buf.put(delete.key().toByteArray());
+                yield buf.array();
             }
             case GrantLease grantLease -> {
-                long size = 8 + 1 + 8 + 8 + 8;
-                MemorySegment seg = arena.allocate(size);
-                long offset = 0;
-
-                seg.set(ValueLayout.JAVA_LONG, offset, entry.term());
-                offset += 8;
-                seg.set(ValueLayout.JAVA_BYTE, offset, (byte) 3);
-                offset += 1;
-                seg.set(ValueLayout.JAVA_LONG, offset, grantLease.leaseId());
-                offset += 8;
-                seg.set(ValueLayout.JAVA_LONG, offset, grantLease.ttlMillis());
-                offset += 8;
-                seg.set(ValueLayout.JAVA_LONG, offset, grantLease.grantedAtMillis());
-
-                yield seg;
+                ByteBuffer buf = ByteBuffer.allocate(8 + 1 + 8 + 8 + 8);
+                buf.putLong(entry.term());
+                buf.put((byte) 3);
+                buf.putLong(grantLease.leaseId());
+                buf.putLong(grantLease.ttlMillis());
+                buf.putLong(grantLease.grantedAtMillis());
+                yield buf.array();
             }
             case RevokeLease revokeLease -> {
-                long size = 8 + 1 + 8;
-                MemorySegment seg = arena.allocate(size);
-                long offset = 0;
-
-                seg.set(ValueLayout.JAVA_LONG, offset, entry.term());
-                offset += 8;
-                seg.set(ValueLayout.JAVA_BYTE, offset, (byte) 4);
-                offset += 1;
-                seg.set(ValueLayout.JAVA_LONG, offset, revokeLease.leaseId());
-
-                yield seg;
+                ByteBuffer buf = ByteBuffer.allocate(8 + 1 + 8);
+                buf.putLong(entry.term());
+                buf.put((byte) 4);
+                buf.putLong(revokeLease.leaseId());
+                yield buf.array();
             }
             case KeepAliveLease keepAliveLease -> {
-                long size = 8 + 1 + 8;
-                MemorySegment seg = arena.allocate(size);
-                long offset = 0;
-
-                seg.set(ValueLayout.JAVA_LONG, offset, entry.term());
-                offset += 8;
-                seg.set(ValueLayout.JAVA_BYTE, offset, (byte) 5);
-                offset += 1;
-                seg.set(ValueLayout.JAVA_LONG, offset, keepAliveLease.leaseId());
-
-                yield seg;
+                ByteBuffer buf = ByteBuffer.allocate(8 + 1 + 8);
+                buf.putLong(entry.term());
+                buf.put((byte) 5);
+                buf.putLong(keepAliveLease.leaseId());
+                yield buf.array();
             }
         };
     }

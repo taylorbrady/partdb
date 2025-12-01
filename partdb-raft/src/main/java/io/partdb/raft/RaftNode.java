@@ -106,7 +106,7 @@ public final class RaftNode implements AutoCloseable {
 
         this.logReplicator = new LogReplicator(
             nodeId,
-            config.peers(),
+            config.cluster(),
             log,
             transport,
             config,
@@ -441,6 +441,14 @@ public final class RaftNode implements AutoCloseable {
         currentState = state.get();
         AtomicLong votesReceived = new AtomicLong(1);
 
+        logger.info("Election started: votes={}, quorum={}", votesReceived.get(), config.cluster().quorum());
+
+        if (votesReceived.get() >= config.cluster().quorum()) {
+            logger.info("Single-node quorum reached, becoming leader");
+            becomeLeader();
+            return;
+        }
+
         long lastLogIndex = log.lastIndex();
         long lastLogTerm = log.lastTerm();
 
@@ -451,7 +459,7 @@ public final class RaftNode implements AutoCloseable {
             lastLogTerm
         );
 
-        for (String peerId : config.peers()) {
+        for (String peerId : config.peerNodeIds()) {
             transport.requestVote(peerId, request).thenAccept(response -> {
                 if (response.term() > state.get().currentTerm()) {
                     stepDown(response.term());
@@ -461,7 +469,7 @@ public final class RaftNode implements AutoCloseable {
                 if (response.voteGranted() && state.get().isCandidate()) {
                     long votes = votesReceived.incrementAndGet();
 
-                    if (votes > (config.peers().size() + 1) / 2) {
+                    if (votes >= config.cluster().quorum()) {
                         becomeLeader();
                     }
                 }
@@ -475,13 +483,16 @@ public final class RaftNode implements AutoCloseable {
         synchronized (stateLock) {
             RaftNodeState currentState = state.get();
             if (!currentState.isCandidate()) {
+                logger.warn("becomeLeader: not a candidate, role={}", currentState.role());
                 return;
             }
 
             RaftNodeState newState = currentState.becomeLeader(currentState.currentTerm(), nodeId);
             if (!state.compareAndSet(currentState, newState)) {
+                logger.warn("becomeLeader: CAS failed");
                 return;
             }
+            logger.info("Became leader for term {}", newState.currentTerm());
             persistCurrentState();
 
             logReplicator.resetPeerStates(log.lastIndex());
@@ -506,7 +517,7 @@ public final class RaftNode implements AutoCloseable {
 
         List<CompletableFuture<Boolean>> acks = new ArrayList<>();
 
-        for (String peerId : config.peers()) {
+        for (String peerId : config.peerNodeIds()) {
             PeerReplicationState peerState = logReplicator.getPeerState(peerId);
             if (peerState == null) {
                 continue;
@@ -536,7 +547,7 @@ public final class RaftNode implements AutoCloseable {
         return CompletableFuture.allOf(acks.toArray(new CompletableFuture[0]))
             .thenApply(v -> {
                 long ackCount = acks.stream().filter(CompletableFuture::join).count();
-                if (ackCount + 1 > (config.peers().size() + 1) / 2) {
+                if (ackCount + 1 >= config.cluster().quorum()) {
                     return readIndex;
                 } else {
                     throw new NotLeaderException(Optional.empty());

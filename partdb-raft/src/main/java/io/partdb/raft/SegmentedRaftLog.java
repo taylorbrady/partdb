@@ -65,6 +65,7 @@ public final class SegmentedRaftLog implements RaftLog {
                 long firstIndex = 1;
                 Path segmentPath = config.logDirectory().resolve(String.format(SEGMENT_FORMAT, nextSegmentId));
                 activeSegment = RaftLogSegment.create(segmentPath, nextSegmentId, firstIndex);
+                segments.put(firstIndex, activeSegment);
                 nextSegmentId++;
             } else {
                 activeSegment = segments.lastEntry().getValue();

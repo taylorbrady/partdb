@@ -160,7 +160,7 @@ public final class GrpcRaftTransport implements RaftTransport, AutoCloseable {
 
     private RaftServiceGrpc.RaftServiceStub getStub(String nodeId) {
         ManagedChannel channel = channels.computeIfAbsent(nodeId, id -> {
-            String address = config.peerAddresses().get(id);
+            String address = config.peerAddressMap().get(id);
             if (address == null) {
                 throw new IllegalArgumentException("Unknown peer: " + id);
             }

@@ -1,17 +1,21 @@
 package io.partdb.raft.transport;
 
+import io.partdb.raft.Peer;
+
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 public record RaftTransportConfig(
     String bindHost,
     int bindPort,
     String advertisedHost,
     int advertisedPort,
-    Map<String, String> peerAddresses,
+    List<Peer> peers,
     Duration requestVoteTimeout,
     Duration appendEntriesTimeout,
     Duration installSnapshotTimeout,
@@ -30,7 +34,7 @@ public record RaftTransportConfig(
         if (advertisedPort <= 0 || advertisedPort > 65535) {
             throw new IllegalArgumentException("advertisedPort must be between 1 and 65535");
         }
-        Objects.requireNonNull(peerAddresses, "peerAddresses must not be null");
+        Objects.requireNonNull(peers, "peers must not be null");
         Objects.requireNonNull(requestVoteTimeout, "requestVoteTimeout must not be null");
         Objects.requireNonNull(appendEntriesTimeout, "appendEntriesTimeout must not be null");
         Objects.requireNonNull(installSnapshotTimeout, "installSnapshotTimeout must not be null");
@@ -40,15 +44,22 @@ public record RaftTransportConfig(
         Objects.requireNonNull(certChainFile, "certChainFile must not be null");
         Objects.requireNonNull(privateKeyFile, "privateKeyFile must not be null");
         Objects.requireNonNull(trustCertFile, "trustCertFile must not be null");
+
+        peers = List.copyOf(peers);
     }
 
-    public static RaftTransportConfig defaultConfig(String bindHost, int port, Map<String, String> peerAddresses) {
+    public Map<String, String> peerAddressMap() {
+        return peers.stream()
+            .collect(Collectors.toMap(Peer::nodeId, Peer::address));
+    }
+
+    public static RaftTransportConfig defaultConfig(String bindHost, int port, List<Peer> peers) {
         return new RaftTransportConfig(
             bindHost,
             port,
             bindHost,
             port,
-            peerAddresses,
+            peers,
             Duration.ofSeconds(1),
             Duration.ofSeconds(1),
             Duration.ofSeconds(30),

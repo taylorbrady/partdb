@@ -15,6 +15,7 @@ public final class LogReplicator {
     private static final Logger logger = LoggerFactory.getLogger(LogReplicator.class);
 
     private final String nodeId;
+    private final ClusterConfig cluster;
     private final RaftLog log;
     private final RaftTransport transport;
     private final RaftConfig config;
@@ -23,20 +24,21 @@ public final class LogReplicator {
 
     public LogReplicator(
         String nodeId,
-        List<String> peers,
+        ClusterConfig cluster,
         RaftLog log,
         RaftTransport transport,
         RaftConfig config,
         ExecutorService executor
     ) {
         this.nodeId = nodeId;
+        this.cluster = cluster;
         this.log = log;
         this.transport = transport;
         this.config = config;
         this.executor = executor;
         this.peerStates = new ConcurrentHashMap<>();
 
-        for (String peer : peers) {
+        for (String peer : cluster.peerNodeIds()) {
             peerStates.put(peer, new PeerReplicationState());
         }
     }
@@ -127,7 +129,7 @@ public final class LogReplicator {
                 }
             }
 
-            if (replicationCount > (peerStates.size() + 1) / 2) {
+            if (replicationCount >= cluster.quorum()) {
                 return n;
             }
         }

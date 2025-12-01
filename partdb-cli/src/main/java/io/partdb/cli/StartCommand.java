@@ -1,14 +1,14 @@
 package io.partdb.cli;
 
+import io.partdb.raft.ClusterConfig;
+import io.partdb.raft.Peer;
 import io.partdb.server.PartDb;
 import io.partdb.server.PartDbConfig;
 
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 
 final class StartCommand {
@@ -39,10 +39,9 @@ final class StartCommand {
             return 1;
         }
 
+        ClusterConfig cluster = new ClusterConfig(options.nodeId, options.peers);
         PartDbConfig config = PartDbConfig.create(
-            options.nodeId,
-            options.peers,
-            options.peerAddresses,
+            cluster,
             options.dataDir,
             options.raftPort,
             options.kvPort
@@ -61,6 +60,11 @@ final class StartCommand {
             out.println("  Raft port: " + options.raftPort);
             out.println("  KV port:   " + options.kvPort);
             out.println("  Data dir:  " + options.dataDir.toAbsolutePath());
+            if (options.peers.isEmpty()) {
+                out.println("  Mode:      single-node");
+            } else {
+                out.println("  Peers:     " + options.peers.size());
+            }
             out.println();
             out.println("Press Ctrl+C to stop");
 
@@ -88,29 +92,18 @@ final class StartCommand {
                 case "--node-id", "-n" -> {
                     options.nodeId = requireValue(args, ++i, "--node-id");
                 }
-                case "--peers", "-p" -> {
-                    String peersStr = requireValue(args, ++i, "--peers");
-                    options.peers = List.of(peersStr.split(","));
-                }
-                case "--peer-address" -> {
-                    String peerAddr = requireValue(args, ++i, "--peer-address");
-                    int eq = peerAddr.indexOf('=');
-                    if (eq <= 0) {
-                        throw new IllegalArgumentException(
-                            "--peer-address must be in format nodeId=host:port, got: " + peerAddr);
-                    }
-                    String peerId = peerAddr.substring(0, eq);
-                    String address = peerAddr.substring(eq + 1);
-                    options.peerAddresses.put(peerId, address);
+                case "--peer", "-p" -> {
+                    String peerSpec = requireValue(args, ++i, "--peer");
+                    options.peers.add(Peer.parse(peerSpec));
                 }
                 case "--data-dir", "-d" -> {
                     options.dataDir = Path.of(requireValue(args, ++i, "--data-dir"));
                 }
                 case "--raft-port" -> {
-                    options.raftPort = Integer.parseInt(requireValue(args, ++i, "--raft-port"));
+                    options.raftPort = requireIntValue(args, ++i, "--raft-port");
                 }
                 case "--kv-port" -> {
-                    options.kvPort = Integer.parseInt(requireValue(args, ++i, "--kv-port"));
+                    options.kvPort = requireIntValue(args, ++i, "--kv-port");
                 }
                 default -> throw new IllegalArgumentException("Unknown option: " + arg);
             }
@@ -126,6 +119,15 @@ final class StartCommand {
         return args[index];
     }
 
+    private static int requireIntValue(String[] args, int index, String optionName) {
+        String value = requireValue(args, index, optionName);
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(optionName + " must be a valid integer, got: " + value);
+        }
+    }
+
     private static void printUsage(PrintStream out) {
         out.println("Usage: partdb start [options]");
         out.println();
@@ -133,29 +135,28 @@ final class StartCommand {
         out.println();
         out.println("Options:");
         out.println("  -n, --node-id <id>              Node identifier (required)");
-        out.println("  -p, --peers <id1,id2,...>       Comma-separated list of all node IDs in the cluster (required)");
-        out.println("      --peer-address <id=host:port>  Address for a peer node (repeatable, required for each peer)");
+        out.println("  -p, --peer <id=host:port>       Peer node (repeatable, omit for single-node)");
         out.println("  -d, --data-dir <path>           Directory for data storage (required)");
         out.println("      --raft-port <port>          Port for Raft communication (default: " + DEFAULT_RAFT_PORT + ")");
         out.println("      --kv-port <port>            Port for KV service (default: " + DEFAULT_KV_PORT + ")");
         out.println("  -h, --help                      Show this help message");
         out.println();
-        out.println("Example:");
-        out.println("  partdb start --node-id node1 \\");
-        out.println("               --peers node1,node2,node3 \\");
-        out.println("               --peer-address node1=localhost:8100 \\");
-        out.println("               --peer-address node2=localhost:8200 \\");
-        out.println("               --peer-address node3=localhost:8300 \\");
-        out.println("               --data-dir ./data/node1 \\");
-        out.println("               --raft-port 8100 \\");
-        out.println("               --kv-port 8101");
+        out.println("Examples:");
+        out.println();
+        out.println("  Single-node cluster:");
+        out.println("    partdb start --node-id node1 --data-dir ./data");
+        out.println();
+        out.println("  Three-node cluster (run on node1):");
+        out.println("    partdb start --node-id node1 \\");
+        out.println("                 --peer node2=192.168.1.2:8100 \\");
+        out.println("                 --peer node3=192.168.1.3:8100 \\");
+        out.println("                 --data-dir ./data/node1");
     }
 
     private static final class Options {
         boolean help;
         String nodeId;
-        List<String> peers = new ArrayList<>();
-        Map<String, String> peerAddresses = new HashMap<>();
+        List<Peer> peers = new ArrayList<>();
         Path dataDir;
         int raftPort = DEFAULT_RAFT_PORT;
         int kvPort = DEFAULT_KV_PORT;
@@ -164,15 +165,12 @@ final class StartCommand {
             if (nodeId == null || nodeId.isBlank()) {
                 return "--node-id is required";
             }
-            if (peers.isEmpty()) {
-                return "--peers is required";
-            }
             if (dataDir == null) {
                 return "--data-dir is required";
             }
-            for (String peer : peers) {
-                if (!peerAddresses.containsKey(peer)) {
-                    return "--peer-address required for peer: " + peer;
+            for (Peer peer : peers) {
+                if (peer.nodeId().equals(nodeId)) {
+                    return "--peer must not include self (nodeId: " + nodeId + ")";
                 }
             }
             return null;

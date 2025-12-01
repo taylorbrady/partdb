@@ -7,5 +7,6 @@ include(
     "partdb-protocol",
     "partdb-server",
     "partdb-client",
-    "partdb-cli"
+    "partdb-cli",
+    "partdb-ctl"
 )

@@ -6,8 +6,7 @@ import java.util.List;
 import java.util.Objects;
 
 public record RaftConfig(
-    String nodeId,
-    List<String> peers,
+    ClusterConfig cluster,
     Path dataDirectory,
     long electionTimeoutMinMs,
     long electionTimeoutMaxMs,
@@ -18,8 +17,7 @@ public record RaftConfig(
     Duration minSnapshotInterval
 ) {
     public RaftConfig {
-        Objects.requireNonNull(nodeId, "nodeId must not be null");
-        Objects.requireNonNull(peers, "peers must not be null");
+        Objects.requireNonNull(cluster, "cluster must not be null");
         Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
         Objects.requireNonNull(minSnapshotInterval, "minSnapshotInterval must not be null");
 
@@ -44,14 +42,19 @@ public record RaftConfig(
         if (minSnapshotInterval.isNegative() || minSnapshotInterval.isZero()) {
             throw new IllegalArgumentException("minSnapshotInterval must be positive");
         }
-
-        peers = List.copyOf(peers);
     }
 
-    public static RaftConfig create(String nodeId, List<String> peers, Path dataDirectory) {
+    public String nodeId() {
+        return cluster.nodeId();
+    }
+
+    public List<String> peerNodeIds() {
+        return cluster.peerNodeIds();
+    }
+
+    public static RaftConfig create(ClusterConfig cluster, Path dataDirectory) {
         return new RaftConfig(
-            nodeId,
-            peers,
+            cluster,
             dataDirectory,
             150,
             300,

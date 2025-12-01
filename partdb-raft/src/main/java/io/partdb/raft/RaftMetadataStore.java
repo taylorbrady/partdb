@@ -1,9 +1,6 @@
 package io.partdb.raft;
 
 import java.io.IOException;
-import java.lang.foreign.Arena;
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -20,13 +17,11 @@ public final class RaftMetadataStore implements AutoCloseable {
 
     private final Path metadataPath;
     private final ReentrantLock lock;
-    private final Arena arena;
     private volatile RaftMetadata cached;
 
     private RaftMetadataStore(Path dataDirectory) throws IOException {
         this.metadataPath = dataDirectory.resolve("raft-metadata.dat");
         this.lock = new ReentrantLock();
-        this.arena = Arena.ofConfined();
         this.cached = load();
     }
 
@@ -86,7 +81,6 @@ public final class RaftMetadataStore implements AutoCloseable {
 
     @Override
     public void close() {
-        arena.close();
     }
 
     private byte[] serialize(RaftMetadata metadata) {
@@ -94,31 +88,23 @@ public final class RaftMetadataStore implements AutoCloseable {
             ? metadata.votedFor().getBytes(StandardCharsets.UTF_8)
             : new byte[0];
 
-        long size = 4 + 4 + 8 + 4 + votedForBytes.length + 4;
-        MemorySegment buffer = arena.allocate(size);
-        long offset = 0;
+        int size = 4 + 4 + 8 + 4 + votedForBytes.length + 4;
+        ByteBuffer buffer = ByteBuffer.allocate(size);
 
-        buffer.set(ValueLayout.JAVA_INT, offset, MAGIC);
-        offset += 4;
-        buffer.set(ValueLayout.JAVA_INT, offset, VERSION);
-        offset += 4;
-        buffer.set(ValueLayout.JAVA_LONG, offset, metadata.currentTerm());
-        offset += 8;
-        buffer.set(ValueLayout.JAVA_INT, offset, votedForBytes.length);
-        offset += 4;
+        buffer.putInt(MAGIC);
+        buffer.putInt(VERSION);
+        buffer.putLong(metadata.currentTerm());
+        buffer.putInt(votedForBytes.length);
 
         if (votedForBytes.length > 0) {
-            MemorySegment.copy(votedForBytes, 0, buffer, ValueLayout.JAVA_BYTE, offset, votedForBytes.length);
-            offset += votedForBytes.length;
+            buffer.put(votedForBytes);
         }
 
         CRC32C crc = new CRC32C();
-        for (long i = 0; i < offset; i++) {
-            crc.update(buffer.get(ValueLayout.JAVA_BYTE, i));
-        }
-        buffer.set(ValueLayout.JAVA_INT, offset, (int) crc.getValue());
+        crc.update(buffer.array(), 0, buffer.position());
+        buffer.putInt((int) crc.getValue());
 
-        return buffer.toArray(ValueLayout.JAVA_BYTE);
+        return buffer.array();
     }
 
     private RaftMetadata deserialize(byte[] bytes) {

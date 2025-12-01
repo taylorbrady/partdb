@@ -6,7 +6,7 @@ import java.util.Arrays;
 public final class PartDbCli {
     private static final String VERSION = "0.1.0-SNAPSHOT";
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         int exitCode = run(args, System.out, System.err);
         if (exitCode != 0) {
             System.exit(exitCode);
