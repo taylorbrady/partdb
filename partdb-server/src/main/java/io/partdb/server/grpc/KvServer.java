@@ -2,9 +2,9 @@ package io.partdb.server.grpc;
 
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
-import io.partdb.raft.RaftNode;
-import io.partdb.server.Database;
+import io.partdb.server.KvStore;
 import io.partdb.server.Lessor;
+import io.partdb.server.Proposer;
 
 import java.io.IOException;
 import java.util.concurrent.Executors;
@@ -14,20 +14,16 @@ public final class KvServer implements AutoCloseable {
     private final Server server;
     private final KvServerConfig config;
 
-    public KvServer(RaftNode raftNode, Database database, Lessor lessor, KvServerConfig config) {
+    public KvServer(Proposer proposer, Lessor lessor, KvStore kvStore, KvServerConfig config) {
         this.config = config;
         this.server = ServerBuilder.forPort(config.port())
-            .addService(new KvServiceImpl(raftNode, database, lessor, config))
+            .addService(new KvServiceImpl(proposer, lessor, kvStore, config))
             .executor(Executors.newVirtualThreadPerTaskExecutor())
             .build();
     }
 
     public void start() throws IOException {
         server.start();
-    }
-
-    public int getPort() {
-        return server.getPort();
     }
 
     @Override

@@ -4,13 +4,11 @@ import java.time.Duration;
 import java.util.Objects;
 
 public record KvServerConfig(
-    String bindHost,
     int port,
     Duration defaultTimeout,
     Duration shutdownGracePeriod
 ) {
     public KvServerConfig {
-        Objects.requireNonNull(bindHost, "bindHost must not be null");
         if (port <= 0 || port > 65535) {
             throw new IllegalArgumentException("port must be between 1 and 65535");
         }
@@ -26,7 +24,6 @@ public record KvServerConfig(
 
     public static KvServerConfig defaultConfig(int port) {
         return new KvServerConfig(
-            "0.0.0.0",
             port,
             Duration.ofSeconds(30),
             Duration.ofSeconds(5)

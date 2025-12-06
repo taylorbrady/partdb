@@ -1,108 +1,117 @@
 package io.partdb.server;
 
 import io.partdb.common.Leases;
-import io.partdb.common.statemachine.GrantLease;
-import io.partdb.common.statemachine.KeepAliveLease;
-import io.partdb.common.statemachine.RevokeLease;
 import io.partdb.raft.RaftNode;
+import io.partdb.server.command.proto.CommandProto.Command;
+import io.partdb.server.command.proto.CommandProto.GrantLease;
+import io.partdb.server.command.proto.CommandProto.KeepAliveLease;
+import io.partdb.server.command.proto.CommandProto.RevokeLease;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.List;
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class Lessor implements AutoCloseable {
-    private static final Logger logger = LoggerFactory.getLogger(Lessor.class);
-    private static final long CHECK_INTERVAL_MILLIS = 100;
+    private static final Logger log = LoggerFactory.getLogger(Lessor.class);
+    private static final int MAX_REVOCATIONS_PER_BATCH = 500;
 
     private final RaftNode raftNode;
+    private final PendingRequests pending;
     private final Leases leases;
-    private final AtomicLong nextLeaseId;
-    private final ScheduledExecutorService scheduler;
-    private volatile ScheduledFuture<?> expirationTask;
+    private final AtomicLong nextLeaseId = new AtomicLong(1);
+    private final Thread expirerThread;
+    private volatile boolean running = true;
 
-    public Lessor(RaftNode raftNode, Leases leases) {
+    public Lessor(RaftNode raftNode, PendingRequests pending, Leases leases) {
         this.raftNode = raftNode;
+        this.pending = pending;
         this.leases = leases;
-        this.nextLeaseId = new AtomicLong(1);
-        this.scheduler = Executors.newScheduledThreadPool(1, Thread.ofVirtual().factory());
+        this.expirerThread = Thread.ofVirtual()
+            .name("lease-expirer")
+            .start(this::runExpirer);
     }
 
-    public CompletableFuture<Long> grant(long ttlMillis) {
+    public CompletableFuture<Long> grant(long ttlNanos) {
         long leaseId = nextLeaseId.getAndIncrement();
-        long grantedAtMillis = System.currentTimeMillis();
-        GrantLease grantLease = new GrantLease(leaseId, ttlMillis, grantedAtMillis);
-        return raftNode.propose(grantLease).thenApply(v -> leaseId);
+        var tracked = pending.track();
+        var command = Command.newBuilder()
+            .setRequestId(tracked.requestId())
+            .setGrantLease(GrantLease.newBuilder()
+                .setLeaseId(leaseId)
+                .setTtlNanos(ttlNanos))
+            .build();
+        return propose(tracked, command).thenApply(_ -> leaseId);
     }
 
     public CompletableFuture<Void> revoke(long leaseId) {
-        RevokeLease revokeLease = new RevokeLease(leaseId);
-        return raftNode.propose(revokeLease);
+        var tracked = pending.track();
+        var command = Command.newBuilder()
+            .setRequestId(tracked.requestId())
+            .setRevokeLease(RevokeLease.newBuilder()
+                .setLeaseId(leaseId))
+            .build();
+        return propose(tracked, command);
     }
 
     public CompletableFuture<Void> keepAlive(long leaseId) {
-        KeepAliveLease keepAliveLease = new KeepAliveLease(leaseId);
-        return raftNode.propose(keepAliveLease);
+        var tracked = pending.track();
+        var command = Command.newBuilder()
+            .setRequestId(tracked.requestId())
+            .setKeepAliveLease(KeepAliveLease.newBuilder()
+                .setLeaseId(leaseId))
+            .build();
+        return propose(tracked, command);
     }
 
-    public void start() {
-        if (expirationTask != null) {
-            logger.warn("Lease expiration task already running");
-            return;
+    private CompletableFuture<Void> propose(PendingRequests.Tracked tracked, Command command) {
+        if (!raftNode.isLeader()) {
+            pending.cancel(tracked.requestId());
+            return CompletableFuture.failedFuture(
+                new NotLeaderException(raftNode.leaderId().orElse(null))
+            );
         }
-        expirationTask = scheduler.scheduleAtFixedRate(
-            this::checkAndRevokeExpiredLeases,
-            CHECK_INTERVAL_MILLIS,
-            CHECK_INTERVAL_MILLIS,
-            TimeUnit.MILLISECONDS
-        );
-        logger.info("Lease expiration task started");
+        raftNode.propose(command.toByteArray());
+        return tracked.future();
     }
 
-    public void stop() {
-        if (expirationTask != null) {
-            expirationTask.cancel(false);
-            expirationTask = null;
-            logger.info("Lease expiration task stopped");
+    private void runExpirer() {
+        while (running) {
+            try {
+                if (!raftNode.isLeader()) {
+                    Thread.sleep(Duration.ofMillis(500));
+                    continue;
+                }
+
+                var entry = leases.pollExpired(Duration.ofMillis(500));
+                if (entry == null) {
+                    continue;
+                }
+
+                int count = 0;
+                while (entry != null && count < MAX_REVOCATIONS_PER_BATCH) {
+                    if (!leases.isStale(entry)) {
+                        long leaseId = entry.leaseId();
+                        revoke(leaseId)
+                            .exceptionally(ex -> {
+                                log.warn("Failed to revoke lease {}", leaseId, ex);
+                                return null;
+                            });
+                        count++;
+                    }
+                    entry = leases.pollExpiredNow();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
         }
     }
 
     @Override
     public void close() {
-        stop();
-        scheduler.shutdown();
-        try {
-            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                scheduler.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            scheduler.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    private void checkAndRevokeExpiredLeases() {
-        if (!raftNode.isLeader()) {
-            return;
-        }
-
-        try {
-            long now = System.currentTimeMillis();
-            List<Long> expiredLeases = leases.getExpired(now);
-
-            for (long leaseId : expiredLeases) {
-                revoke(leaseId).exceptionally(ex -> {
-                    logger.error("Failed to revoke expired lease {}", leaseId, ex);
-                    return null;
-                });
-            }
-        } catch (Exception e) {
-            logger.error("Failed to check/revoke expired leases", e);
-        }
+        running = false;
+        expirerThread.interrupt();
     }
 }

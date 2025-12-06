@@ -1,18 +1,17 @@
 package io.partdb.raft;
 
-import io.partdb.raft.rpc.AppendEntriesRequest;
-import io.partdb.raft.rpc.AppendEntriesResponse;
-import io.partdb.raft.rpc.InstallSnapshotRequest;
-import io.partdb.raft.rpc.InstallSnapshotResponse;
-import io.partdb.raft.rpc.RequestVoteRequest;
-import io.partdb.raft.rpc.RequestVoteResponse;
-
 import java.util.concurrent.CompletableFuture;
 
-public interface RaftTransport {
-    CompletableFuture<RequestVoteResponse> requestVote(String nodeId, RequestVoteRequest request);
+public interface RaftTransport extends AutoCloseable {
+    void start(RpcHandler handler);
 
-    CompletableFuture<AppendEntriesResponse> appendEntries(String nodeId, AppendEntriesRequest request);
+    CompletableFuture<RaftMessage.Response> send(String to, RaftMessage.Request request);
 
-    CompletableFuture<InstallSnapshotResponse> installSnapshot(String nodeId, InstallSnapshotRequest request);
+    @Override
+    void close();
+
+    @FunctionalInterface
+    interface RpcHandler {
+        CompletableFuture<RaftMessage.Response> handle(String from, RaftMessage.Request request);
+    }
 }

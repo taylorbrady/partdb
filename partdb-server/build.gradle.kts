@@ -1,3 +1,7 @@
+plugins {
+    id("com.google.protobuf")
+}
+
 dependencies {
     implementation(project(":partdb-common"))
     implementation(project(":partdb-storage"))
@@ -11,4 +15,10 @@ dependencies {
     implementation("io.grpc:grpc-protobuf:$grpcVersion")
     implementation("io.grpc:grpc-stub:$grpcVersion")
     implementation("com.google.protobuf:protobuf-java:$protobufVersion")
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.33.1"
+    }
 }

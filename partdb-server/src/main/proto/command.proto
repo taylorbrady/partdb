@@ -1,0 +1,39 @@
+syntax = "proto3";
+package io.partdb.server.command;
+
+option java_package = "io.partdb.server.command.proto";
+option java_outer_classname = "CommandProto";
+
+message Command {
+  int64 request_id = 10;
+  oneof op {
+    Put put = 1;
+    Delete delete = 2;
+    GrantLease grant_lease = 3;
+    RevokeLease revoke_lease = 4;
+    KeepAliveLease keep_alive_lease = 5;
+  }
+}
+
+message Put {
+  bytes key = 1;
+  bytes value = 2;
+  int64 lease_id = 3;
+}
+
+message Delete {
+  bytes key = 1;
+}
+
+message GrantLease {
+  int64 lease_id = 1;
+  int64 ttl_nanos = 2;
+}
+
+message RevokeLease {
+  int64 lease_id = 1;
+}
+
+message KeepAliveLease {
+  int64 lease_id = 1;
+}

@@ -1,7 +1,7 @@
 package io.partdb.cli;
 
-import io.partdb.server.PartDb;
-import io.partdb.server.PartDbConfig;
+import io.partdb.server.PartDbServerConfig;
+import io.partdb.server.PartDbServer;
 
 import java.io.PrintStream;
 import java.nio.file.Path;
@@ -37,9 +37,9 @@ final class StartCommand {
             return 1;
         }
 
-        PartDbConfig config;
+        PartDbServerConfig config;
         try {
-            config = PartDbConfig.create(
+            config = PartDbServerConfig.create(
                 options.nodeId,
                 options.peers,
                 options.dataDir,
@@ -53,7 +53,7 @@ final class StartCommand {
 
         CountDownLatch shutdownLatch = new CountDownLatch(1);
 
-        try (PartDb server = new PartDb(config)) {
+        try (var server = new PartDbServer(config)) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 out.println("Received shutdown signal");
                 shutdownLatch.countDown();

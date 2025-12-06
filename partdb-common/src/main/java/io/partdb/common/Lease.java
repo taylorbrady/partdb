@@ -1,31 +1,57 @@
 package io.partdb.common;
 
-public record Lease(
-    long id,
-    long ttlMillis,
-    long grantedAtMillis
-) {
-    public Lease {
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+public final class Lease {
+    private final long id;
+    private final long ttlNanos;
+    private final Set<ByteArray> keys = ConcurrentHashMap.newKeySet();
+    private volatile long expiresAtNanos;
+
+    public Lease(long id, long ttlNanos) {
         if (id <= 0) {
             throw new IllegalArgumentException("id must be positive");
         }
-        if (ttlMillis <= 0) {
-            throw new IllegalArgumentException("ttlMillis must be positive");
+        if (ttlNanos <= 0) {
+            throw new IllegalArgumentException("ttlNanos must be positive");
         }
-        if (grantedAtMillis < 0) {
-            throw new IllegalArgumentException("grantedAtMillis must be non-negative");
-        }
+        this.id = id;
+        this.ttlNanos = ttlNanos;
+        this.expiresAtNanos = System.nanoTime() + ttlNanos;
     }
 
-    public boolean isExpired(long currentTimeMillis) {
-        return currentTimeMillis >= grantedAtMillis + ttlMillis;
+    Lease(long id, long ttlNanos, long expiresAtNanos) {
+        this.id = id;
+        this.ttlNanos = ttlNanos;
+        this.expiresAtNanos = expiresAtNanos;
     }
 
-    public Lease renew(long currentTimeMillis) {
-        return new Lease(id, ttlMillis, currentTimeMillis);
+    public long id() {
+        return id;
     }
 
-    public long expiresAtMillis() {
-        return grantedAtMillis + ttlMillis;
+    public long ttlNanos() {
+        return ttlNanos;
+    }
+
+    public long expiresAtNanos() {
+        return expiresAtNanos;
+    }
+
+    public Set<ByteArray> keys() {
+        return keys;
+    }
+
+    public boolean isExpired() {
+        return System.nanoTime() >= expiresAtNanos;
+    }
+
+    public void refresh() {
+        this.expiresAtNanos = System.nanoTime() + ttlNanos;
+    }
+
+    public long remainingNanos() {
+        return Math.max(0, expiresAtNanos - System.nanoTime());
     }
 }

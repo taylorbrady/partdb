@@ -4,10 +4,7 @@ import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
 import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
-import io.partdb.common.exception.NotLeaderException;
-import io.partdb.common.exception.TooManyRequestsException;
-import io.partdb.common.statemachine.Delete;
-import io.partdb.common.statemachine.Put;
+import io.partdb.server.NotLeaderException;
 import io.partdb.protocol.kv.proto.KvProto;
 import io.partdb.protocol.kv.proto.KvProto.BatchGetRequest;
 import io.partdb.protocol.kv.proto.KvProto.BatchGetResponse;
@@ -33,11 +30,9 @@ import io.partdb.protocol.kv.proto.KvProto.RevokeLeaseResponse;
 import io.partdb.protocol.kv.proto.KvProto.ScanRequest;
 import io.partdb.protocol.kv.proto.KvProto.ScanResponse;
 import io.partdb.protocol.kv.proto.KvServiceGrpc;
-import io.partdb.raft.RaftNode;
-import io.partdb.server.Database;
+import io.partdb.server.KvStore;
 import io.partdb.server.Lessor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import io.partdb.server.Proposer;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -51,17 +46,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
-    private static final Logger logger = LoggerFactory.getLogger(KvServiceImpl.class);
 
-    private final RaftNode raftNode;
-    private final Database database;
+    private final Proposer proposer;
     private final Lessor lessor;
+    private final KvStore kvStore;
     private final KvServerConfig config;
 
-    public KvServiceImpl(RaftNode raftNode, Database database, Lessor lessor, KvServerConfig config) {
-        this.raftNode = raftNode;
-        this.database = database;
+    public KvServiceImpl(Proposer proposer, Lessor lessor, KvStore kvStore, KvServerConfig config) {
+        this.proposer = proposer;
         this.lessor = lessor;
+        this.kvStore = kvStore;
         this.config = config;
     }
 
@@ -72,9 +66,9 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
 
         CompletableFuture<Optional<ByteArray>> future;
         if (request.getConsistency() == ReadConsistency.STALE) {
-            future = CompletableFuture.completedFuture(database.get(key));
+            future = CompletableFuture.completedFuture(kvStore.get(key));
         } else {
-            future = raftNode.get(key);
+            future = CompletableFuture.completedFuture(kvStore.get(key));
         }
 
         future
@@ -108,11 +102,9 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         ByteArray value = toByteArray(request.getValue());
         long leaseId = request.getLeaseId();
 
-        Put operation = new Put(key, value, leaseId);
-
-        raftNode.propose(operation)
+        proposer.put(key, value, leaseId)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((__, ex) -> {
+            .whenComplete((_, ex) -> {
                 if (ex != null) {
                     responseObserver.onNext(PutResponse.newBuilder()
                         .setError(toProtoError(ex))
@@ -131,11 +123,9 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         Duration timeout = resolveTimeout(request.getHeader());
         ByteArray key = toByteArray(request.getKey());
 
-        Delete operation = new Delete(key);
-
-        raftNode.propose(operation)
+        proposer.delete(key)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((__, ex) -> {
+            .whenComplete((_, ex) -> {
                 if (ex != null) {
                     responseObserver.onNext(DeleteResponse.newBuilder()
                         .setError(toProtoError(ex))
@@ -159,9 +149,9 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
 
         CompletableFuture<Iterator<Entry>> future;
         if (request.getConsistency() == ReadConsistency.STALE) {
-            future = CompletableFuture.completedFuture(database.scan(startKey, endKey));
+            future = CompletableFuture.completedFuture(kvStore.scan(startKey, endKey));
         } else {
-            future = raftNode.scan(startKey, endKey);
+            future = CompletableFuture.completedFuture(kvStore.scan(startKey, endKey));
         }
 
         future
@@ -192,7 +182,6 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                         closeable.close();
                     }
                 } catch (Exception e) {
-                    logger.error("Error during scan iteration", e);
                     responseObserver.onNext(ScanResponse.newBuilder()
                         .setError(toProtoError(e))
                         .build());
@@ -204,27 +193,19 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void batchGet(BatchGetRequest request, StreamObserver<BatchGetResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
-        boolean stale = request.getConsistency() == ReadConsistency.STALE;
 
         List<CompletableFuture<KeyValue>> futures = new ArrayList<>();
 
         for (ByteString keyBytes : request.getKeysList()) {
             ByteArray key = toByteArray(keyBytes);
-
-            CompletableFuture<KeyValue> kvFuture;
-            if (stale) {
-                Optional<ByteArray> value = database.get(key);
-                kvFuture = CompletableFuture.completedFuture(buildKeyValue(keyBytes, value));
-            } else {
-                kvFuture = raftNode.get(key)
-                    .thenApply(value -> buildKeyValue(keyBytes, value));
-            }
+            Optional<ByteArray> value = kvStore.get(key);
+            CompletableFuture<KeyValue> kvFuture = CompletableFuture.completedFuture(buildKeyValue(keyBytes, value));
             futures.add(kvFuture);
         }
 
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((__, ex) -> {
+            .whenComplete((_, ex) -> {
                 if (ex != null) {
                     responseObserver.onNext(BatchGetResponse.newBuilder()
                         .setError(toProtoError(ex))
@@ -251,15 +232,15 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
             CompletableFuture<Void> opFuture = switch (writeOp.getOpCase()) {
                 case PUT -> {
                     KvProto.PutOp put = writeOp.getPut();
-                    yield raftNode.propose(new Put(
+                    yield proposer.put(
                         toByteArray(put.getKey()),
                         toByteArray(put.getValue()),
                         put.getLeaseId()
-                    ));
+                    );
                 }
                 case DELETE -> {
                     KvProto.DeleteOp del = writeOp.getDelete();
-                    yield raftNode.propose(new Delete(toByteArray(del.getKey())));
+                    yield proposer.delete(toByteArray(del.getKey()));
                 }
                 case OP_NOT_SET -> CompletableFuture.failedFuture(
                     new IllegalArgumentException("WriteOp type not set"));
@@ -269,7 +250,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
 
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((__, ex) -> {
+            .whenComplete((_, ex) -> {
                 if (ex != null) {
                     responseObserver.onNext(BatchWriteResponse.newBuilder()
                         .setError(toProtoError(ex))
@@ -286,9 +267,9 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void grantLease(GrantLeaseRequest request, StreamObserver<GrantLeaseResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
-        long ttlMillis = request.getTtlMillis();
+        long ttlNanos = TimeUnit.MILLISECONDS.toNanos(request.getTtlMillis());
 
-        lessor.grant(ttlMillis)
+        lessor.grant(ttlNanos)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
             .whenComplete((leaseId, ex) -> {
                 if (ex != null) {
@@ -299,7 +280,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                     responseObserver.onNext(GrantLeaseResponse.newBuilder()
                         .setError(okError())
                         .setLeaseId(leaseId)
-                        .setTtlMillis(ttlMillis)
+                        .setTtlMillis(request.getTtlMillis())
                         .build());
                 }
                 responseObserver.onCompleted();
@@ -313,7 +294,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
 
         lessor.revoke(leaseId)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((__, ex) -> {
+            .whenComplete((_, ex) -> {
                 if (ex != null) {
                     responseObserver.onNext(RevokeLeaseResponse.newBuilder()
                         .setError(toProtoError(ex))
@@ -334,7 +315,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
 
         lessor.keepAlive(leaseId)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((__, ex) -> {
+            .whenComplete((_, ex) -> {
                 if (ex != null) {
                     responseObserver.onNext(KeepAliveLeaseResponse.newBuilder()
                         .setError(toProtoError(ex))
@@ -384,11 +365,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
             case NotLeaderException e -> Error.newBuilder()
                 .setCode(ErrorCode.NOT_LEADER)
                 .setMessage("Not the leader")
-                .setLeaderHint(e.leaderHint().orElse(""))
-                .build();
-            case TooManyRequestsException e -> Error.newBuilder()
-                .setCode(ErrorCode.INTERNAL_ERROR)
-                .setMessage("Too many requests, queue size: " + e.queueSize())
+                .setLeaderHint(e.leaderId().orElse(""))
                 .build();
             case TimeoutException _ -> Error.newBuilder()
                 .setCode(ErrorCode.INTERNAL_ERROR)
