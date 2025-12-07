@@ -20,7 +20,7 @@ public final class LeveledCompactionStrategy implements CompactionStrategy {
     }
 
     @Override
-    public Optional<CompactionTask> selectCompaction(ManifestData manifest) {
+    public Optional<CompactionTask> selectCompaction(Manifest manifest) {
         Optional<CompactionTask> l0Task = selectL0Compaction(manifest);
         if (l0Task.isPresent()) {
             return l0Task;
@@ -36,7 +36,7 @@ public final class LeveledCompactionStrategy implements CompactionStrategy {
         return Optional.empty();
     }
 
-    private Optional<CompactionTask> selectL0Compaction(ManifestData manifest) {
+    private Optional<CompactionTask> selectL0Compaction(Manifest manifest) {
         List<SSTableMetadata> l0Files = manifest.level(0);
 
         if (l0Files.size() < config.l0CompactionTrigger()) {
@@ -54,7 +54,7 @@ public final class LeveledCompactionStrategy implements CompactionStrategy {
         return Optional.of(new CompactionTask(allInputs, 1, isBottomLevel));
     }
 
-    private Optional<CompactionTask> selectLevelCompaction(ManifestData manifest, int level) {
+    private Optional<CompactionTask> selectLevelCompaction(Manifest manifest, int level) {
         long currentSize = manifest.levelSize(level);
         long maxSize = config.maxBytesForLevel(level);
 

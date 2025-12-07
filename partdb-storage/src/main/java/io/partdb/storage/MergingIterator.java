@@ -5,21 +5,21 @@ import io.partdb.common.CloseableIterator;
 
 import java.util.*;
 
-public final class MergingIterator implements CloseableIterator<StoreEntry> {
+public final class MergingIterator implements CloseableIterator<Entry> {
 
     private final PriorityQueue<IteratorEntry> heap;
-    private final List<CloseableIterator<StoreEntry>> iterators;
+    private final List<CloseableIterator<Entry>> iterators;
     private ByteArray lastKey;
-    private StoreEntry nextEntry;
+    private Entry nextEntry;
 
-    public MergingIterator(List<CloseableIterator<StoreEntry>> iterators) {
+    public MergingIterator(List<CloseableIterator<Entry>> iterators) {
         this.iterators = iterators;
         this.heap = new PriorityQueue<>(Comparator
             .comparing((IteratorEntry e) -> e.entry.key())
             .thenComparingInt(e -> e.iteratorIndex));
 
         for (int i = 0; i < iterators.size(); i++) {
-            CloseableIterator<StoreEntry> it = iterators.get(i);
+            CloseableIterator<Entry> it = iterators.get(i);
             if (it.hasNext()) {
                 heap.offer(new IteratorEntry(it.next(), i));
             }
@@ -34,7 +34,7 @@ public final class MergingIterator implements CloseableIterator<StoreEntry> {
             IteratorEntry current = heap.poll();
 
             if (iterators.get(current.iteratorIndex).hasNext()) {
-                StoreEntry next = iterators.get(current.iteratorIndex).next();
+                Entry next = iterators.get(current.iteratorIndex).next();
                 heap.offer(new IteratorEntry(next, current.iteratorIndex));
             }
 
@@ -56,21 +56,21 @@ public final class MergingIterator implements CloseableIterator<StoreEntry> {
     }
 
     @Override
-    public StoreEntry next() {
+    public Entry next() {
         if (nextEntry == null) {
             throw new NoSuchElementException();
         }
-        StoreEntry result = nextEntry;
+        Entry result = nextEntry;
         advance();
         return result;
     }
 
     @Override
     public void close() {
-        for (CloseableIterator<StoreEntry> it : iterators) {
+        for (CloseableIterator<Entry> it : iterators) {
             it.close();
         }
     }
 
-    private record IteratorEntry(StoreEntry entry, int iteratorIndex) {}
+    private record IteratorEntry(Entry entry, int iteratorIndex) {}
 }

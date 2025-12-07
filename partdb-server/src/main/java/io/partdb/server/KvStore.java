@@ -8,8 +8,8 @@ import io.partdb.common.Leases;
 import io.partdb.common.CloseableIterator;
 import io.partdb.raft.StateMachine;
 import io.partdb.server.command.proto.CommandProto.Command;
-import io.partdb.storage.Store;
-import io.partdb.storage.StoreConfig;
+import io.partdb.storage.LSMConfig;
+import io.partdb.storage.LSMTree;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -21,19 +21,19 @@ import java.util.Set;
 
 public final class KvStore implements StateMachine, AutoCloseable {
 
-    private final Store store;
+    private final LSMTree store;
     private final Leases leases;
     private PendingRequests pending;
     private volatile long lastApplied;
 
-    private KvStore(Store store, Leases leases) {
+    private KvStore(LSMTree store, Leases leases) {
         this.store = store;
         this.leases = leases;
         this.lastApplied = 0;
     }
 
-    public static KvStore open(Path dataDirectory, StoreConfig config) {
-        Store store = Store.open(dataDirectory, config);
+    public static KvStore open(Path dataDirectory, LSMConfig config) {
+        LSMTree store = LSMTree.open(dataDirectory, config);
         Leases leases = new Leases();
         return new KvStore(store, leases);
     }

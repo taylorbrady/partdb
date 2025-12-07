@@ -1,7 +1,7 @@
 package io.partdb.storage.sstable;
 
 import io.partdb.common.ByteArray;
-import io.partdb.storage.StoreEntry;
+import io.partdb.storage.Entry;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -20,7 +20,7 @@ public final class SSTableWriter implements AutoCloseable {
     private final SSTableConfig config;
     private final FileChannel channel;
     private final List<BlockIndex.IndexEntry> indexEntries;
-    private final List<StoreEntry> currentBlock;
+    private final List<Entry> currentBlock;
     private final BloomFilter bloomFilter;
 
     private ByteArray lastKey;
@@ -74,7 +74,7 @@ public final class SSTableWriter implements AutoCloseable {
         }
     }
 
-    public void append(StoreEntry entry) {
+    public void append(Entry entry) {
         if (closed) {
             throw new SSTableException("Cannot append to closed writer");
         }
@@ -188,12 +188,11 @@ public final class SSTableWriter implements AutoCloseable {
         }
     }
 
-    private int estimateEntrySize(StoreEntry entry) {
-        int size = 1 + 4 + entry.key().size() + 4;
-        if (entry.value() != null) {
-            size += entry.value().size();
-        }
-        return size;
+    private int estimateEntrySize(Entry entry) {
+        return switch (entry) {
+            case Entry.Data data -> 1 + 4 + entry.key().size() + 4 + data.value().size();
+            case Entry.Tombstone _ -> 1 + 4 + entry.key().size() + 4;
+        };
     }
 
     public Path path() {

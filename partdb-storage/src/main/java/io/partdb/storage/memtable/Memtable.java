@@ -2,17 +2,17 @@ package io.partdb.storage.memtable;
 
 import io.partdb.common.ByteArray;
 import io.partdb.common.CloseableIterator;
-import io.partdb.storage.StoreEntry;
+import io.partdb.storage.Entry;
 
 import java.util.Optional;
 
 public interface Memtable {
 
-    void put(StoreEntry entry);
+    void put(Entry entry);
 
-    Optional<StoreEntry> get(ByteArray key);
+    Optional<Entry> get(ByteArray key);
 
-    CloseableIterator<StoreEntry> scan(ByteArray startKey, ByteArray endKey);
+    CloseableIterator<Entry> scan(ByteArray startKey, ByteArray endKey);
 
     long sizeInBytes();
 

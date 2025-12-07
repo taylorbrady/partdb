@@ -2,7 +2,7 @@ package io.partdb.storage.sstable;
 
 import io.partdb.common.ByteArray;
 import io.partdb.common.CloseableIterator;
-import io.partdb.storage.StoreEntry;
+import io.partdb.storage.Entry;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
@@ -90,7 +90,7 @@ public final class SSTableReader implements AutoCloseable {
         return BlockIndex.deserialize(indexSegment, footer.blockCount());
     }
 
-    public Optional<StoreEntry> get(ByteArray key) {
+    public Optional<Entry> get(ByteArray key) {
         if (!bloomFilter.mightContain(key)) {
             return Optional.empty();
         }
@@ -100,8 +100,8 @@ public final class SSTableReader implements AutoCloseable {
             return Optional.empty();
         }
 
-        List<StoreEntry> entries = readBlock(blockEntry.get());
-        for (StoreEntry entry : entries) {
+        List<Entry> entries = readBlock(blockEntry.get());
+        for (Entry entry : entries) {
             if (entry.key().equals(key)) {
                 return Optional.of(entry);
             }
@@ -110,11 +110,11 @@ public final class SSTableReader implements AutoCloseable {
         return Optional.empty();
     }
 
-    public CloseableIterator<StoreEntry> scan(ByteArray startKey, ByteArray endKey) {
+    public CloseableIterator<Entry> scan(ByteArray startKey, ByteArray endKey) {
         return new ScanIterator(startKey, endKey);
     }
 
-    private List<StoreEntry> readBlock(BlockIndex.IndexEntry blockEntry) {
+    private List<Entry> readBlock(BlockIndex.IndexEntry blockEntry) {
         MemorySegment blockSegment = segment.asSlice(blockEntry.offset(), blockEntry.size());
         return DataBlock.deserialize(blockSegment);
     }
@@ -140,14 +140,14 @@ public final class SSTableReader implements AutoCloseable {
         arena.close();
     }
 
-    private class ScanIterator implements CloseableIterator<StoreEntry> {
+    private class ScanIterator implements CloseableIterator<Entry> {
 
         private final ByteArray startKey;
         private final ByteArray endKey;
         private final List<BlockIndex.IndexEntry> blocks;
         private int currentBlockIndex;
-        private Iterator<StoreEntry> currentBlockIterator;
-        private StoreEntry nextEntry;
+        private Iterator<Entry> currentBlockIterator;
+        private Entry nextEntry;
 
         ScanIterator(ByteArray startKey, ByteArray endKey) {
             this.startKey = startKey;
@@ -167,7 +167,7 @@ public final class SSTableReader implements AutoCloseable {
         private void advance() {
             while (true) {
                 if (currentBlockIterator != null && currentBlockIterator.hasNext()) {
-                    StoreEntry entry = currentBlockIterator.next();
+                    Entry entry = currentBlockIterator.next();
 
                     boolean afterStart = startKey == null || entry.key().compareTo(startKey) >= 0;
                     boolean beforeEnd = endKey == null || entry.key().compareTo(endKey) < 0;
@@ -181,7 +181,7 @@ public final class SSTableReader implements AutoCloseable {
                     }
                 } else if (currentBlockIndex < blocks.size()) {
                     BlockIndex.IndexEntry blockEntry = blocks.get(currentBlockIndex);
-                    List<StoreEntry> entries = readBlock(blockEntry);
+                    List<Entry> entries = readBlock(blockEntry);
                     currentBlockIterator = entries.iterator();
                     currentBlockIndex++;
                 } else {
@@ -197,11 +197,11 @@ public final class SSTableReader implements AutoCloseable {
         }
 
         @Override
-        public StoreEntry next() {
+        public Entry next() {
             if (nextEntry == null) {
                 throw new NoSuchElementException();
             }
-            StoreEntry result = nextEntry;
+            Entry result = nextEntry;
             advance();
             return result;
         }

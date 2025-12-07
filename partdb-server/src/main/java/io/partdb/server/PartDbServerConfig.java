@@ -1,10 +1,8 @@
 package io.partdb.server;
 
-import io.partdb.common.ClusterConfig;
-import io.partdb.common.Peer;
 import io.partdb.raft.RaftConfig;
 import io.partdb.server.grpc.KvServerConfig;
-import io.partdb.storage.StoreConfig;
+import io.partdb.storage.LSMConfig;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -15,7 +13,7 @@ public record PartDbServerConfig(
     String nodeId,
     List<String> peers,
     Path dataDirectory,
-    StoreConfig storeConfig,
+    LSMConfig storeConfig,
     RaftConfig raftConfig,
     Duration tickInterval,
     int raftPort,
@@ -42,7 +40,7 @@ public record PartDbServerConfig(
             nodeId,
             peerSpecs,
             dataDirectory,
-            StoreConfig.create(),
+            LSMConfig.create(),
             RaftConfig.defaults(),
             Duration.ofMillis(10),
             raftPort,

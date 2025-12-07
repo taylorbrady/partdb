@@ -1,7 +1,7 @@
 package io.partdb.storage.sstable;
 
 import io.partdb.common.ByteArray;
-import io.partdb.storage.StoreEntry;
+import io.partdb.storage.Entry;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -15,15 +15,15 @@ final class DataBlock {
 
     private static final int TRAILER_SIZE = 8;
 
-    static byte[] serialize(List<StoreEntry> entries) {
+    static byte[] serialize(List<Entry> entries) {
         int dataSize = 0;
-        for (StoreEntry entry : entries) {
+        for (Entry entry : entries) {
             dataSize += estimateEntrySize(entry);
         }
 
         ByteBuffer buffer = ByteBuffer.allocate(dataSize + TRAILER_SIZE).order(ByteOrder.nativeOrder());
 
-        for (StoreEntry entry : entries) {
+        for (Entry entry : entries) {
             serializeEntry(buffer, entry);
         }
 
@@ -38,7 +38,7 @@ final class DataBlock {
         return buffer.array();
     }
 
-    static List<StoreEntry> deserialize(MemorySegment segment) {
+    static List<Entry> deserialize(MemorySegment segment) {
         long totalSize = segment.byteSize();
         if (totalSize < TRAILER_SIZE) {
             throw new SSTableException("Block too small");
@@ -59,7 +59,7 @@ final class DataBlock {
         }
 
         MemorySegment dataSegment = MemorySegment.ofArray(data);
-        List<StoreEntry> entries = new ArrayList<>(entryCount);
+        List<Entry> entries = new ArrayList<>(entryCount);
         long offset = 0;
 
         for (int i = 0; i < entryCount; i++) {
@@ -73,42 +73,42 @@ final class DataBlock {
             offset += 5 + keyLength + 4;
 
             if (tombstone) {
-                entries.add(StoreEntry.tombstone(key));
+                entries.add(new Entry.Tombstone(key));
             } else {
                 byte[] valueBytes = dataSegment.asSlice(offset, valueLength).toArray(ValueLayout.JAVA_BYTE);
                 offset += valueLength;
-                entries.add(StoreEntry.of(key, ByteArray.wrap(valueBytes)));
+                entries.add(new Entry.Data(key, ByteArray.wrap(valueBytes)));
             }
         }
 
         return entries;
     }
 
-    private static int estimateEntrySize(StoreEntry entry) {
-        int size = 1 + 4 + entry.key().size() + 4;
-        if (entry.value() != null) {
-            size += entry.value().size();
-        }
-        return size;
+    private static int estimateEntrySize(Entry entry) {
+        return switch (entry) {
+            case Entry.Data data -> 1 + 4 + entry.key().size() + 4 + data.value().size();
+            case Entry.Tombstone _ -> 1 + 4 + entry.key().size() + 4;
+        };
     }
 
-    private static void serializeEntry(ByteBuffer buffer, StoreEntry entry) {
-        byte flags = 0;
-        if (entry.tombstone()) {
-            flags |= 0x01;
-        }
-        buffer.put(flags);
-
+    private static void serializeEntry(ByteBuffer buffer, Entry entry) {
         byte[] keyBytes = entry.key().toByteArray();
-        buffer.putInt(keyBytes.length);
-        buffer.put(keyBytes);
 
-        if (entry.tombstone()) {
-            buffer.putInt(0);
-        } else {
-            byte[] valueBytes = entry.value().toByteArray();
-            buffer.putInt(valueBytes.length);
-            buffer.put(valueBytes);
+        switch (entry) {
+            case Entry.Tombstone _ -> {
+                buffer.put((byte) 0x01);
+                buffer.putInt(keyBytes.length);
+                buffer.put(keyBytes);
+                buffer.putInt(0);
+            }
+            case Entry.Data data -> {
+                buffer.put((byte) 0x00);
+                buffer.putInt(keyBytes.length);
+                buffer.put(keyBytes);
+                byte[] valueBytes = data.value().toByteArray();
+                buffer.putInt(valueBytes.length);
+                buffer.put(valueBytes);
+            }
         }
     }
 }
