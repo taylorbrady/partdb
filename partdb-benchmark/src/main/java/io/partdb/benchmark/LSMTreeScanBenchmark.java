@@ -5,28 +5,25 @@ import io.partdb.storage.KeyValue;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
 import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
-import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
-@BenchmarkMode({Mode.Throughput, Mode.SampleTime})
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Benchmark)
 @Fork(1)
 @Warmup(iterations = 3, time = 3)
 @Measurement(iterations = 5, time = 5)
-public class LSMTreeReadBenchmark {
+public class LSMTreeScanBenchmark {
 
+    private static final int KEY_COUNT = 100_000;
     private static final int VALUE_SIZE = 100;
-
-    @Param({"10000", "100000"})
-    private int keyCount;
 
     private Path tempDir;
     private LSMTree tree;
@@ -36,21 +33,21 @@ public class LSMTreeReadBenchmark {
 
     @Setup(Level.Trial)
     public void setup() throws IOException {
-        tempDir = Files.createTempDirectory("lsm-read-bench");
+        tempDir = Files.createTempDirectory("lsm-scan-bench");
         tree = LSMTree.open(tempDir, LSMConfig.defaults());
-        existingKeys = new byte[keyCount][];
+        existingKeys = new byte[KEY_COUNT][];
 
         byte[] value = new byte[VALUE_SIZE];
         ThreadLocalRandom.current().nextBytes(value);
 
-        for (int i = 0; i < keyCount; i++) {
+        for (int i = 0; i < KEY_COUNT; i++) {
             byte[] key = formatKey(i);
             existingKeys[i] = key;
             tree.put(key, value, Timestamp.of(i, 0));
         }
 
         tree.flush();
-        readTimestamp = Timestamp.of(keyCount, 0);
+        readTimestamp = Timestamp.of(KEY_COUNT, 0);
         snapshot = tree.snapshot(readTimestamp);
     }
 
@@ -62,31 +59,42 @@ public class LSMTreeReadBenchmark {
     }
 
     @Benchmark
-    public Optional<KeyValue> pointGet() {
-        int index = ThreadLocalRandom.current().nextInt(existingKeys.length);
-        return snapshot.get(existingKeys[index]);
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public long scanFull() {
+        try (Stream<KeyValue> stream = snapshot.scan(null, null)) {
+            return stream.count();
+        }
     }
 
     @Benchmark
-    public Optional<KeyValue> pointGetMissing() {
-        byte[] key = formatMissingKey(ThreadLocalRandom.current().nextInt());
-        return snapshot.get(key);
+    @BenchmarkMode({Mode.Throughput, Mode.SampleTime})
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    @OperationsPerInvocation(100)
+    public void scanRange100(Blackhole bh) {
+        int start = ThreadLocalRandom.current().nextInt(KEY_COUNT - 100);
+        byte[] startKey = existingKeys[start];
+        byte[] endKey = existingKeys[start + 100];
+        try (Stream<KeyValue> stream = snapshot.scan(startKey, endKey)) {
+            stream.forEach(bh::consume);
+        }
     }
 
     @Benchmark
-    public Optional<KeyValue> pointGetWithSnapshotOverhead() {
-        int index = ThreadLocalRandom.current().nextInt(existingKeys.length);
-        try (var snap = tree.snapshot(readTimestamp)) {
-            return snap.get(existingKeys[index]);
+    @BenchmarkMode({Mode.Throughput, Mode.SampleTime})
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    @OperationsPerInvocation(1000)
+    public void scanRange1000(Blackhole bh) {
+        int start = ThreadLocalRandom.current().nextInt(KEY_COUNT - 1000);
+        byte[] startKey = existingKeys[start];
+        byte[] endKey = existingKeys[start + 1000];
+        try (Stream<KeyValue> stream = snapshot.scan(startKey, endKey)) {
+            stream.forEach(bh::consume);
         }
     }
 
     private static byte[] formatKey(long keyNum) {
         return ("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8);
-    }
-
-    private static byte[] formatMissingKey(int keyNum) {
-        return ("missing" + String.format("%012d", keyNum)).getBytes(StandardCharsets.UTF_8);
     }
 
     private static void deleteDirectory(Path dir) throws IOException {

@@ -1,9 +1,8 @@
 package io.partdb.storage;
 
-import io.partdb.common.ByteArray;
 import io.partdb.common.Timestamp;
 
-public record VersionedKey(ByteArray key, Timestamp timestamp) implements Comparable<VersionedKey> {
+public record VersionedKey(Slice key, Timestamp timestamp) implements Comparable<VersionedKey> {
 
     @Override
     public int compareTo(VersionedKey other) {

@@ -1,12 +1,13 @@
 package io.partdb.storage;
 
-import io.partdb.common.ByteArray;
 import io.partdb.common.Timestamp;
+
 import io.partdb.storage.compaction.CompactionConfig;
 import io.partdb.storage.compaction.LeveledCompactionConfig;
 import io.partdb.storage.manifest.Manifest;
 import io.partdb.storage.manifest.SSTableInfo;
 import io.partdb.storage.memtable.MemtableConfig;
+import io.partdb.storage.sstable.BlockCacheConfig;
 import io.partdb.storage.sstable.SSTableConfig;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
@@ -31,24 +33,24 @@ class LSMTreeTest {
     @TempDir
     Path tempDir;
 
-    private static ByteArray key(int i) {
-        return ByteArray.of((byte) i);
+    private static byte[] key(int i) {
+        return new byte[]{(byte) i};
     }
 
-    private static ByteArray key(String s) {
-        return ByteArray.copyOf(s.getBytes(StandardCharsets.UTF_8));
+    private static byte[] key(String s) {
+        return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    private static ByteArray value(int i) {
-        return ByteArray.of((byte) i);
+    private static byte[] value(int i) {
+        return new byte[]{(byte) i};
     }
 
-    private static ByteArray value(String s) {
-        return ByteArray.copyOf(s.getBytes(StandardCharsets.UTF_8));
+    private static byte[] value(String s) {
+        return s.getBytes(StandardCharsets.UTF_8);
     }
 
-    private static ByteArray largeValue(int size) {
-        return ByteArray.copyOf(new byte[size]);
+    private static byte[] largeValue(int size) {
+        return new byte[size];
     }
 
     private static LSMConfig smallMemtableConfig(int sizeBytes) {
@@ -56,7 +58,8 @@ class LSMTreeTest {
             new MemtableConfig(sizeBytes),
             SSTableConfig.defaults(),
             CompactionConfig.defaults(),
-            LeveledCompactionConfig.defaults()
+            LeveledCompactionConfig.defaults(),
+            BlockCacheConfig.defaults()
         );
     }
 
@@ -78,7 +81,7 @@ class LSMTreeTest {
                     Optional<KeyValue> result = snap.get(key(1));
 
                     assertTrue(result.isPresent());
-                    assertEquals(value(10), result.get().value());
+                    assertArrayEquals(value(10), result.get().value());
                 }
             }
         }
@@ -128,7 +131,7 @@ class LSMTreeTest {
                     Optional<KeyValue> result = snap.get(key(1));
 
                     assertTrue(result.isPresent());
-                    assertEquals(value(20), result.get().value());
+                    assertArrayEquals(value(20), result.get().value());
                 }
             }
         }
@@ -149,9 +152,9 @@ class LSMTreeTest {
                     List<KeyValue> entries = stream.toList();
 
                     assertEquals(3, entries.size());
-                    assertEquals(key(1), entries.get(0).key());
-                    assertEquals(key(2), entries.get(1).key());
-                    assertEquals(key(3), entries.get(2).key());
+                    assertArrayEquals(key(1), entries.get(0).key());
+                    assertArrayEquals(key(2), entries.get(1).key());
+                    assertArrayEquals(key(3), entries.get(2).key());
                 }
             }
         }
@@ -169,8 +172,8 @@ class LSMTreeTest {
                     List<KeyValue> entries = stream.toList();
 
                     assertEquals(2, entries.size());
-                    assertEquals(key(2), entries.get(0).key());
-                    assertEquals(key(3), entries.get(1).key());
+                    assertArrayEquals(key(2), entries.get(0).key());
+                    assertArrayEquals(key(3), entries.get(1).key());
                 }
             }
         }
@@ -188,8 +191,8 @@ class LSMTreeTest {
                     List<KeyValue> entries = stream.toList();
 
                     assertEquals(2, entries.size());
-                    assertEquals(key(1), entries.get(0).key());
-                    assertEquals(key(3), entries.get(1).key());
+                    assertArrayEquals(key(1), entries.get(0).key());
+                    assertArrayEquals(key(3), entries.get(1).key());
                 }
             }
         }
@@ -209,7 +212,7 @@ class LSMTreeTest {
 
                     assertEquals(20, entries.size());
                     for (int i = 0; i < 20; i++) {
-                        assertEquals(key(i), entries.get(i).key());
+                        assertArrayEquals(key(i), entries.get(i).key());
                     }
                 }
             }
@@ -229,11 +232,11 @@ class LSMTreeTest {
                     List<KeyValue> entries = stream.toList();
 
                     Optional<KeyValue> keyEntry = entries.stream()
-                        .filter(e -> e.key().equals(key(1)))
+                        .filter(e -> Arrays.equals(e.key(), key(1)))
                         .findFirst();
 
                     assertTrue(keyEntry.isPresent());
-                    assertEquals(value(20), keyEntry.get().value());
+                    assertArrayEquals(value(20), keyEntry.get().value());
                 }
             }
         }
@@ -294,10 +297,10 @@ class LSMTreeTest {
                     Optional<KeyValue> result2 = snap.get(key(2));
 
                     assertTrue(result1.isPresent());
-                    assertEquals(value(10), result1.get().value());
+                    assertArrayEquals(value(10), result1.get().value());
 
                     assertTrue(result2.isPresent());
-                    assertEquals(value(20), result2.get().value());
+                    assertArrayEquals(value(20), result2.get().value());
                 }
             }
         }
@@ -313,7 +316,7 @@ class LSMTreeTest {
                     Optional<KeyValue> result = snap.get(key(1));
 
                     assertTrue(result.isPresent());
-                    assertEquals(value(20), result.get().value());
+                    assertArrayEquals(value(20), result.get().value());
                 }
             }
         }
@@ -380,7 +383,7 @@ class LSMTreeTest {
                     for (int i = 0; i < 20; i++) {
                         Optional<KeyValue> result = snap.get(key(String.format("key-%02d", i)));
                         assertTrue(result.isPresent());
-                        assertTrue(new String(result.get().value().toByteArray()).startsWith("v4"));
+                        assertTrue(new String(result.get().value(), StandardCharsets.UTF_8).startsWith("v4"));
                     }
                 }
             }
@@ -460,7 +463,7 @@ class LSMTreeTest {
                     for (int i = 0; i < 30; i++) {
                         Optional<KeyValue> result = snap.get(key(String.format("key-%02d", i)));
                         assertTrue(result.isPresent());
-                        assertEquals(expectedValues.get(i), new String(result.get().value().toByteArray()));
+                        assertEquals(expectedValues.get(i), new String(result.get().value(), StandardCharsets.UTF_8));
                     }
                 }
             }
@@ -498,13 +501,13 @@ class LSMTreeTest {
         void reopenAfterCompaction() throws Exception {
             LSMConfig config = smallMemtableConfig(1024);
 
-            List<ByteArray> keys = new ArrayList<>();
-            List<ByteArray> values = new ArrayList<>();
+            List<byte[]> keys = new ArrayList<>();
+            List<byte[]> values = new ArrayList<>();
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < 60; i++) {
-                    ByteArray k = key(String.format("key-%03d", i));
-                    ByteArray v = value("value-" + i);
+                    byte[] k = key(String.format("key-%03d", i));
+                    byte[] v = value("value-" + i);
                     keys.add(k);
                     values.add(v);
                     tree.put(k, v, nextTimestamp());
@@ -518,7 +521,7 @@ class LSMTreeTest {
                     for (int i = 0; i < keys.size(); i++) {
                         Optional<KeyValue> result = snap.get(keys.get(i));
                         assertTrue(result.isPresent());
-                        assertEquals(values.get(i), result.get().value());
+                        assertArrayEquals(values.get(i), result.get().value());
                     }
                 }
             }
@@ -536,8 +539,8 @@ class LSMTreeTest {
 
                 Thread.sleep(500);
 
-                ByteArray startKey = key("key-020");
-                ByteArray endKey = key("key-030");
+                byte[] startKey = key("key-020");
+                byte[] endKey = key("key-030");
 
                 try (var snap = tree.snapshot(Timestamp.MAX);
                      Stream<KeyValue> stream = snap.scan(startKey, endKey)) {
@@ -545,8 +548,8 @@ class LSMTreeTest {
 
                     assertEquals(10, entries.size());
                     for (KeyValue kv : entries) {
-                        assertTrue(kv.key().compareTo(startKey) >= 0);
-                        assertTrue(kv.key().compareTo(endKey) < 0);
+                        assertTrue(compareBytes(kv.key(), startKey) >= 0);
+                        assertTrue(compareBytes(kv.key(), endKey) < 0);
                     }
                 }
             }
@@ -577,9 +580,9 @@ class LSMTreeTest {
 
                 try (var snap = tree.snapshot(Timestamp.MAX)) {
                     assertTrue(snap.get(key(1)).isPresent());
-                    assertEquals(value(10), snap.get(key(1)).get().value());
+                    assertArrayEquals(value(10), snap.get(key(1)).get().value());
                     assertTrue(snap.get(key(2)).isPresent());
-                    assertEquals(value(20), snap.get(key(2)).get().value());
+                    assertArrayEquals(value(20), snap.get(key(2)).get().value());
                 }
             }
         }
@@ -605,7 +608,7 @@ class LSMTreeTest {
 
                 try (var snap = tree.snapshot(Timestamp.MAX)) {
                     assertTrue(snap.get(key(1)).isPresent());
-                    assertEquals(value(10), snap.get(key(1)).get().value());
+                    assertArrayEquals(value(10), snap.get(key(1)).get().value());
                     assertTrue(snap.get(key(2)).isEmpty());
                     assertTrue(snap.get(key(3)).isEmpty());
                 }
@@ -756,7 +759,7 @@ class LSMTreeTest {
                                 for (int i = 0; i < readsPerThread; i++) {
                                     int keyIndex = i % 100;
                                     Optional<KeyValue> result = snap.get(key(keyIndex));
-                                    if (result.isEmpty() || !result.get().value().equals(value(keyIndex))) {
+                                    if (result.isEmpty() || !Arrays.equals(result.get().value(), value(keyIndex))) {
                                         failed.set(true);
                                     }
                                 }
@@ -1085,7 +1088,7 @@ class LSMTreeTest {
 
                     assertEquals(10, entries.size());
                     for (int i = 0; i < 10; i++) {
-                        assertEquals(key(i), entries.get(i).key());
+                        assertArrayEquals(key(i), entries.get(i).key());
                     }
                 }
             }
@@ -1116,7 +1119,7 @@ class LSMTreeTest {
                 List<KeyValue> entries = stream.toList();
                 assertEquals(30, entries.size());
                 for (KeyValue kv : entries) {
-                    String valueStr = new String(kv.value().toByteArray());
+                    String valueStr = new String(kv.value(), StandardCharsets.UTF_8);
                     assertTrue(valueStr.startsWith("initial-"));
                 }
 
@@ -1160,11 +1163,11 @@ class LSMTreeTest {
 
                 try (var snap = tree.snapshot(Timestamp.MAX)) {
                     assertTrue(snap.get(key(1)).isPresent());
-                    assertEquals(value(10), snap.get(key(1)).get().value());
+                    assertArrayEquals(value(10), snap.get(key(1)).get().value());
                     assertTrue(snap.get(key(2)).isPresent());
-                    assertEquals(value(20), snap.get(key(2)).get().value());
+                    assertArrayEquals(value(20), snap.get(key(2)).get().value());
                     assertTrue(snap.get(key(3)).isPresent());
-                    assertEquals(value(30), snap.get(key(3)).get().value());
+                    assertArrayEquals(value(30), snap.get(key(3)).get().value());
                 }
             }
         }
@@ -1237,7 +1240,7 @@ class LSMTreeTest {
                     tree.put(key(1), value(100), nextTimestamp());
 
                     assertTrue(snap.get(key(1)).isPresent());
-                    assertEquals(value(10), snap.get(key(1)).get().value());
+                    assertArrayEquals(value(10), snap.get(key(1)).get().value());
                     assertTrue(snap.get(key(2)).isPresent());
                     assertTrue(snap.get(key(3)).isEmpty());
                 }
@@ -1286,5 +1289,14 @@ class LSMTreeTest {
                 }
             }
         }
+    }
+
+    private static int compareBytes(byte[] a, byte[] b) {
+        int minLen = Math.min(a.length, b.length);
+        for (int i = 0; i < minLen; i++) {
+            int cmp = Byte.compareUnsigned(a[i], b[i]);
+            if (cmp != 0) return cmp;
+        }
+        return Integer.compare(a.length, b.length);
     }
 }

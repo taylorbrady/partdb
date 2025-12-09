@@ -2,7 +2,6 @@ package io.partdb.ctl;
 
 import io.partdb.client.KvClient;
 import io.partdb.client.KvClientConfig;
-import io.partdb.common.ByteArray;
 
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -52,7 +51,7 @@ final class DeleteCommand {
 
         var config = KvClientConfig.defaultConfig(endpoint);
         try (var client = new KvClient(config)) {
-            ByteArray keyBytes = ByteArray.copyOf(key.getBytes(StandardCharsets.UTF_8));
+            byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
             client.delete(keyBytes).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
             out.println("OK");
             return 0;

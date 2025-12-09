@@ -1,23 +1,27 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.common.ByteArray;
+import io.partdb.storage.Slice;
+
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 
 final class Murmur3Hash {
 
     private static final int C1 = 0xcc9e2d51;
     private static final int C2 = 0x1b873593;
 
-    static int hash(ByteArray key, int seed) {
+    static int hash(Slice key, int seed) {
+        MemorySegment seg = key.segment();
         int length = key.length();
         int h1 = seed;
 
         int roundedEnd = length & ~3;
 
         for (int i = 0; i < roundedEnd; i += 4) {
-            int k1 = (key.get(i) & 0xff) |
-                     ((key.get(i + 1) & 0xff) << 8) |
-                     ((key.get(i + 2) & 0xff) << 16) |
-                     ((key.get(i + 3) & 0xff) << 24);
+            int k1 = (seg.get(ValueLayout.JAVA_BYTE, i) & 0xff) |
+                     ((seg.get(ValueLayout.JAVA_BYTE, i + 1) & 0xff) << 8) |
+                     ((seg.get(ValueLayout.JAVA_BYTE, i + 2) & 0xff) << 16) |
+                     ((seg.get(ValueLayout.JAVA_BYTE, i + 3) & 0xff) << 24);
 
             k1 *= C1;
             k1 = Integer.rotateLeft(k1, 15);
@@ -31,13 +35,13 @@ final class Murmur3Hash {
         int k1 = 0;
         int remaining = length & 3;
         if (remaining >= 3) {
-            k1 = (key.get(roundedEnd + 2) & 0xff) << 16;
+            k1 = (seg.get(ValueLayout.JAVA_BYTE, roundedEnd + 2) & 0xff) << 16;
         }
         if (remaining >= 2) {
-            k1 |= (key.get(roundedEnd + 1) & 0xff) << 8;
+            k1 |= (seg.get(ValueLayout.JAVA_BYTE, roundedEnd + 1) & 0xff) << 8;
         }
         if (remaining >= 1) {
-            k1 |= (key.get(roundedEnd) & 0xff);
+            k1 |= (seg.get(ValueLayout.JAVA_BYTE, roundedEnd) & 0xff);
             k1 *= C1;
             k1 = Integer.rotateLeft(k1, 15);
             k1 *= C2;

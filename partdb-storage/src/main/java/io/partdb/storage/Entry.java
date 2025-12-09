@@ -1,15 +1,14 @@
 package io.partdb.storage;
 
-import io.partdb.common.ByteArray;
 import io.partdb.common.Timestamp;
 
 public sealed interface Entry permits Entry.Put, Entry.Tombstone {
 
-    ByteArray key();
+    Slice key();
 
     Timestamp timestamp();
 
-    record Put(ByteArray key, Timestamp timestamp, ByteArray value) implements Entry {}
+    record Put(Slice key, Timestamp timestamp, Slice value) implements Entry {}
 
-    record Tombstone(ByteArray key, Timestamp timestamp) implements Entry {}
+    record Tombstone(Slice key, Timestamp timestamp) implements Entry {}
 }

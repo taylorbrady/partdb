@@ -14,14 +14,19 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public final class S3FifoBlockCache implements BlockCache {
 
+    private static final double SMALL_QUEUE_RATIO = 0.1;
+    private static final int GHOST_CAPACITY = 10_000;
+
     private record CacheKey(Path sstable, long offset) {}
 
     private static final class CacheEntry {
         final Block block;
+        final long sizeInBytes;
         volatile int frequency;
 
         CacheEntry(Block block) {
             this.block = block;
+            this.sizeInBytes = block.sizeInBytes();
             this.frequency = 0;
         }
 
@@ -32,15 +37,17 @@ public final class S3FifoBlockCache implements BlockCache {
         }
     }
 
-    private final int smallCapacity;
-    private final int mainCapacity;
-    private final int ghostCapacity;
+    private final long maxSmallBytes;
+    private final long maxMainBytes;
+    private final long maxTotalBytes;
 
     private final Deque<CacheKey> smallQueue = new ArrayDeque<>();
     private final Map<CacheKey, CacheEntry> smallMap = new HashMap<>();
+    private long smallBytes = 0;
 
     private final Deque<CacheKey> mainQueue = new ArrayDeque<>();
     private final Map<CacheKey, CacheEntry> mainMap = new HashMap<>();
+    private long mainBytes = 0;
 
     private final Deque<CacheKey> ghostQueue = new ArrayDeque<>();
     private final Set<CacheKey> ghostSet = new HashSet<>();
@@ -51,20 +58,13 @@ public final class S3FifoBlockCache implements BlockCache {
 
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
-    public S3FifoBlockCache(int capacity) {
-        this(capacity, 0.1);
-    }
-
-    public S3FifoBlockCache(int capacity, double smallRatio) {
-        if (capacity < 10) {
-            throw new IllegalArgumentException("capacity must be at least 10");
+    public S3FifoBlockCache(long maxSizeInBytes) {
+        if (maxSizeInBytes < 1024 * 1024) {
+            throw new IllegalArgumentException("maxSizeInBytes must be at least 1MB");
         }
-        if (smallRatio <= 0 || smallRatio >= 1) {
-            throw new IllegalArgumentException("smallRatio must be between 0 and 1");
-        }
-        this.smallCapacity = Math.max(1, (int) (capacity * smallRatio));
-        this.mainCapacity = capacity - smallCapacity;
-        this.ghostCapacity = capacity;
+        this.maxTotalBytes = maxSizeInBytes;
+        this.maxSmallBytes = (long) (maxSizeInBytes * SMALL_QUEUE_RATIO);
+        this.maxMainBytes = maxSizeInBytes - maxSmallBytes;
     }
 
     @Override
@@ -97,6 +97,11 @@ public final class S3FifoBlockCache implements BlockCache {
     @Override
     public void put(Path sstable, BlockHandle handle, Block block) {
         CacheKey key = new CacheKey(sstable, handle.offset());
+        long blockSize = block.sizeInBytes();
+
+        if (blockSize > maxTotalBytes) {
+            return;
+        }
 
         lock.writeLock().lock();
         try {
@@ -119,11 +124,25 @@ public final class S3FifoBlockCache implements BlockCache {
     public void invalidate(Path sstable) {
         lock.writeLock().lock();
         try {
+            var smallIt = smallMap.entrySet().iterator();
+            while (smallIt.hasNext()) {
+                var entry = smallIt.next();
+                if (entry.getKey().sstable().equals(sstable)) {
+                    smallBytes -= entry.getValue().sizeInBytes;
+                    smallIt.remove();
+                }
+            }
             smallQueue.removeIf(k -> k.sstable().equals(sstable));
-            smallMap.keySet().removeIf(k -> k.sstable().equals(sstable));
 
+            var mainIt = mainMap.entrySet().iterator();
+            while (mainIt.hasNext()) {
+                var entry = mainIt.next();
+                if (entry.getKey().sstable().equals(sstable)) {
+                    mainBytes -= entry.getValue().sizeInBytes;
+                    mainIt.remove();
+                }
+            }
             mainQueue.removeIf(k -> k.sstable().equals(sstable));
-            mainMap.keySet().removeIf(k -> k.sstable().equals(sstable));
 
             ghostQueue.removeIf(k -> k.sstable().equals(sstable));
             ghostSet.removeIf(k -> k.sstable().equals(sstable));
@@ -140,8 +159,8 @@ public final class S3FifoBlockCache implements BlockCache {
                 hits.get(),
                 misses.get(),
                 evictions.get(),
-                smallMap.size() + mainMap.size(),
-                smallCapacity + mainCapacity
+                smallBytes + mainBytes,
+                maxTotalBytes
             );
         } finally {
             lock.readLock().unlock();
@@ -149,21 +168,23 @@ public final class S3FifoBlockCache implements BlockCache {
     }
 
     private void insertToSmall(CacheKey key, CacheEntry entry) {
-        while (smallMap.size() >= smallCapacity) {
+        while (smallBytes + entry.sizeInBytes > maxSmallBytes && !smallMap.isEmpty()) {
             evictFromSmall();
         }
 
         smallQueue.addLast(key);
         smallMap.put(key, entry);
+        smallBytes += entry.sizeInBytes;
     }
 
     private void insertToMain(CacheKey key, CacheEntry entry) {
-        while (mainMap.size() >= mainCapacity) {
+        while (mainBytes + entry.sizeInBytes > maxMainBytes && !mainMap.isEmpty()) {
             evictFromMain();
         }
 
         mainQueue.addLast(key);
         mainMap.put(key, entry);
+        mainBytes += entry.sizeInBytes;
     }
 
     private void evictFromSmall() {
@@ -174,6 +195,8 @@ public final class S3FifoBlockCache implements BlockCache {
             if (entry == null) {
                 continue;
             }
+
+            smallBytes -= entry.sizeInBytes;
 
             if (entry.frequency > 0) {
                 entry.frequency = 0;
@@ -200,6 +223,7 @@ public final class S3FifoBlockCache implements BlockCache {
                 mainQueue.addLast(key);
             } else {
                 mainMap.remove(key);
+                mainBytes -= entry.sizeInBytes;
                 evictions.incrementAndGet();
                 return;
             }
@@ -207,7 +231,7 @@ public final class S3FifoBlockCache implements BlockCache {
     }
 
     private void addToGhost(CacheKey key) {
-        while (ghostSet.size() >= ghostCapacity) {
+        while (ghostSet.size() >= GHOST_CAPACITY) {
             CacheKey old = ghostQueue.pollFirst();
             if (old != null) {
                 ghostSet.remove(old);

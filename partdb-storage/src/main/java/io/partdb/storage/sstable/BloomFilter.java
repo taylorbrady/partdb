@@ -1,6 +1,6 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.common.ByteArray;
+import io.partdb.storage.Slice;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -23,12 +23,12 @@ final class BloomFilter {
         this.numHashFunctions = numHashFunctions;
     }
 
-    static BloomFilter build(List<ByteArray> keys, double falsePositiveRate) {
+    static BloomFilter build(List<Slice> keys, double falsePositiveRate) {
         if (keys.isEmpty()) {
             return create(1, falsePositiveRate);
         }
         BloomFilter filter = create(keys.size(), falsePositiveRate);
-        for (ByteArray key : keys) {
+        for (Slice key : keys) {
             filter.add(key);
         }
         return filter;
@@ -47,7 +47,7 @@ final class BloomFilter {
         return new BloomFilter(bits, numBlocks, numHashFunctions);
     }
 
-    boolean mightContain(ByteArray key) {
+    boolean mightContain(Slice key) {
         int hash1 = Murmur3Hash.hash(key, 0);
         int hash2 = Murmur3Hash.hash(key, 1);
 
@@ -97,7 +97,7 @@ final class BloomFilter {
         return new BloomFilter(bits, numBlocks, numHashFunctions);
     }
 
-    private void add(ByteArray key) {
+    private void add(Slice key) {
         int hash1 = Murmur3Hash.hash(key, 0);
         int hash2 = Murmur3Hash.hash(key, 1);
 

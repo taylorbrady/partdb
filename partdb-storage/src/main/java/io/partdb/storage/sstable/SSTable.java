@@ -1,9 +1,9 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.common.ByteArray;
 import io.partdb.common.Timestamp;
 import io.partdb.storage.Entry;
 import io.partdb.storage.ScanMode;
+import io.partdb.storage.Slice;
 import io.partdb.storage.VersionedKey;
 
 import java.io.IOException;
@@ -78,7 +78,7 @@ public final class SSTable implements AutoCloseable {
         }
     }
 
-    public Optional<Entry> get(ByteArray key, Timestamp readTimestamp) {
+    public Optional<Entry> get(Slice key, Timestamp readTimestamp) {
         if (!bloomFilter.mightContain(key)) {
             return Optional.empty();
         }
@@ -100,11 +100,11 @@ public final class SSTable implements AutoCloseable {
         return path;
     }
 
-    public ByteArray smallestKey() {
+    public Slice smallestKey() {
         return footer.smallestKey();
     }
 
-    public ByteArray largestKey() {
+    public Slice largestKey() {
         return footer.largestKey();
     }
 
@@ -174,16 +174,16 @@ public final class SSTable implements AutoCloseable {
 
     public final class Scan implements Iterable<Entry> {
 
-        private ByteArray startKey;
-        private ByteArray endKey;
+        private Slice startKey;
+        private Slice endKey;
         private ScanMode mode = new ScanMode.AllVersions();
 
-        public Scan from(ByteArray startKey) {
+        public Scan from(Slice startKey) {
             this.startKey = startKey;
             return this;
         }
 
-        public Scan until(ByteArray endKey) {
+        public Scan until(Slice endKey) {
             this.endKey = endKey;
             return this;
         }
@@ -210,16 +210,16 @@ public final class SSTable implements AutoCloseable {
 
     private class ScanIterator implements Iterator<Entry> {
 
-        private final ByteArray startKey;
-        private final ByteArray endKey;
+        private final Slice startKey;
+        private final Slice endKey;
         private final ScanMode mode;
         private final List<BlockIndex.Entry> blocks;
         private int currentBlockIndex;
         private Iterator<Entry> currentBlockIterator;
-        private ByteArray lastKey;
+        private Slice lastKey;
         private Entry nextEntry;
 
-        ScanIterator(ScanMode mode, ByteArray startKey, ByteArray endKey) {
+        ScanIterator(ScanMode mode, Slice startKey, Slice endKey) {
             this.mode = mode;
             this.startKey = startKey;
             this.endKey = endKey;
@@ -302,11 +302,11 @@ public final class SSTable implements AutoCloseable {
         private final FileChannel channel;
         private final List<BlockIndex.Entry> indexEntries;
         private final Block.Builder currentBlock;
-        private final List<ByteArray> keys;
+        private final List<Slice> keys;
 
         private VersionedKey lastVersionedKey;
-        private ByteArray firstKey;
-        private ByteArray lastKey;
+        private Slice firstKey;
+        private Slice lastKey;
         private Timestamp smallestTimestamp;
         private Timestamp largestTimestamp;
         private long filePosition;
@@ -437,8 +437,8 @@ public final class SSTable implements AutoCloseable {
                     bloomFilterData.length,
                     indexOffset,
                     indexEntries.size(),
-                    firstKey != null ? firstKey : ByteArray.empty(),
-                    lastKey != null ? lastKey : ByteArray.empty(),
+                    firstKey != null ? firstKey : Slice.empty(),
+                    lastKey != null ? lastKey : Slice.empty(),
                     smallestTimestamp != null ? smallestTimestamp : Timestamp.ZERO,
                     largestTimestamp != null ? largestTimestamp : Timestamp.ZERO,
                     totalEntryCount,
@@ -487,7 +487,7 @@ public final class SSTable implements AutoCloseable {
                 return;
             }
 
-            ByteArray blockFirstKey = currentBlock.firstKey();
+            Slice blockFirstKey = currentBlock.firstKey();
             byte[] blockData = currentBlock.build();
 
             try {

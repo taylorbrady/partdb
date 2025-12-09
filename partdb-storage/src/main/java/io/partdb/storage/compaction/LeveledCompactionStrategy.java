@@ -1,10 +1,10 @@
 package io.partdb.storage.compaction;
 
-import io.partdb.common.ByteArray;
 import io.partdb.storage.manifest.Manifest;
 import io.partdb.storage.manifest.SSTableInfo;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -93,14 +93,14 @@ public final class LeveledCompactionStrategy implements CompactionStrategy {
             return List.of();
         }
 
-        ByteArray minKey = sources.stream()
+        byte[] minKey = sources.stream()
             .map(SSTableInfo::smallestKey)
-            .min(ByteArray::compareTo)
+            .min(Arrays::compareUnsigned)
             .orElseThrow();
 
-        ByteArray maxKey = sources.stream()
+        byte[] maxKey = sources.stream()
             .map(SSTableInfo::largestKey)
-            .max(ByteArray::compareTo)
+            .max(Arrays::compareUnsigned)
             .orElseThrow();
 
         return candidates.stream()

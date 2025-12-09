@@ -3,6 +3,7 @@ package io.partdb.storage;
 import io.partdb.storage.compaction.CompactionConfig;
 import io.partdb.storage.compaction.LeveledCompactionConfig;
 import io.partdb.storage.memtable.MemtableConfig;
+import io.partdb.storage.sstable.BlockCacheConfig;
 import io.partdb.storage.sstable.SSTableConfig;
 
 import java.util.Objects;
@@ -11,7 +12,8 @@ public record LSMConfig(
     MemtableConfig memtableConfig,
     SSTableConfig sstableConfig,
     CompactionConfig compactionConfig,
-    LeveledCompactionConfig leveledCompactionConfig
+    LeveledCompactionConfig leveledCompactionConfig,
+    BlockCacheConfig blockCacheConfig
 ) {
     public LSMConfig {
         Objects.requireNonNull(memtableConfig, "memtableConfig");
@@ -25,7 +27,8 @@ public record LSMConfig(
             MemtableConfig.defaults(),
             SSTableConfig.defaults(),
             CompactionConfig.defaults(),
-            LeveledCompactionConfig.defaults()
+            LeveledCompactionConfig.defaults(),
+            BlockCacheConfig.defaults()
         );
     }
 }

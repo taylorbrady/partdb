@@ -25,10 +25,26 @@ tasks.jar {
     archiveClassifier.set("all")
 }
 
+tasks.register<JavaExec>("benchmarkList") {
+    group = "benchmark"
+    description = "List available JMH benchmarks"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("org.openjdk.jmh.Main")
+    args = listOf("-l")
+}
+
 tasks.register<JavaExec>("benchmark") {
     group = "benchmark"
     description = "Run JMH benchmarks"
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set("org.openjdk.jmh.Main")
-    args = listOf("-l")
+    jvmArgs = listOf("-Xms2g", "-Xmx2g")
+
+    val benchArgs = mutableListOf("-rf", "json", "-rff", "build/benchmark-results.json")
+
+    if (project.hasProperty("bench")) {
+        benchArgs += project.property("bench").toString()
+    }
+
+    args = benchArgs
 }

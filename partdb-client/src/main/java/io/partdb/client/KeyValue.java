@@ -1,5 +1,3 @@
 package io.partdb.client;
 
-import io.partdb.common.ByteArray;
-
-public record KeyValue(ByteArray key, ByteArray value, long revision) {}
+public record KeyValue(byte[] key, byte[] value, long revision) {}

@@ -4,7 +4,6 @@ import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
-import io.partdb.common.ByteArray;
 import io.partdb.protocol.kv.proto.KvProto;
 import io.partdb.protocol.kv.proto.KvServiceGrpc;
 
@@ -42,19 +41,19 @@ public final class KvClient implements AutoCloseable {
         });
     }
 
-    public CompletableFuture<Optional<ByteArray>> get(ByteArray key) {
+    public CompletableFuture<Optional<byte[]>> get(byte[] key) {
         return get(key, ReadConsistency.LINEARIZABLE);
     }
 
-    public CompletableFuture<Optional<ByteArray>> get(ByteArray key, ReadConsistency consistency) {
+    public CompletableFuture<Optional<byte[]>> get(byte[] key, ReadConsistency consistency) {
         KvProto.GetRequest request = KvProto.GetRequest.newBuilder()
             .setHeader(buildHeader())
-            .setKey(ByteString.copyFrom(key.toByteArray()))
+            .setKey(toByteString(key))
             .setConsistency(toProtoConsistency(consistency))
             .build();
 
         return executeWithRetry(() -> {
-            CompletableFuture<Optional<ByteArray>> future = new CompletableFuture<>();
+            CompletableFuture<Optional<byte[]>> future = new CompletableFuture<>();
             getStub().get(request, new StreamObserver<>() {
                 @Override
                 public void onNext(KvProto.GetResponse response) {
@@ -63,7 +62,7 @@ public final class KvClient implements AutoCloseable {
                     } else if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
                         handleError(response.getError(), future);
                     } else {
-                        future.complete(Optional.of(ByteArray.copyOf(response.getValue().toByteArray())));
+                        future.complete(Optional.of(response.getValue().toByteArray()));
                     }
                 }
 
@@ -80,15 +79,15 @@ public final class KvClient implements AutoCloseable {
         });
     }
 
-    public CompletableFuture<Void> put(ByteArray key, ByteArray value) {
+    public CompletableFuture<Void> put(byte[] key, byte[] value) {
         return put(key, value, 0);
     }
 
-    public CompletableFuture<Void> put(ByteArray key, ByteArray value, long leaseId) {
+    public CompletableFuture<Void> put(byte[] key, byte[] value, long leaseId) {
         KvProto.PutRequest request = KvProto.PutRequest.newBuilder()
             .setHeader(buildHeader())
-            .setKey(ByteString.copyFrom(key.toByteArray()))
-            .setValue(ByteString.copyFrom(value.toByteArray()))
+            .setKey(toByteString(key))
+            .setValue(toByteString(value))
             .setLeaseId(leaseId)
             .build();
 
@@ -117,10 +116,10 @@ public final class KvClient implements AutoCloseable {
         });
     }
 
-    public CompletableFuture<Void> delete(ByteArray key) {
+    public CompletableFuture<Void> delete(byte[] key) {
         KvProto.DeleteRequest request = KvProto.DeleteRequest.newBuilder()
             .setHeader(buildHeader())
-            .setKey(ByteString.copyFrom(key.toByteArray()))
+            .setKey(toByteString(key))
             .build();
 
         return executeWithRetry(() -> {
@@ -148,20 +147,20 @@ public final class KvClient implements AutoCloseable {
         });
     }
 
-    public CompletableFuture<Stream<KeyValue>> scan(ByteArray startKey, ByteArray endKey) {
+    public CompletableFuture<Stream<KeyValue>> scan(byte[] startKey, byte[] endKey) {
         return scan(startKey, endKey, 0, ReadConsistency.LINEARIZABLE);
     }
 
     public CompletableFuture<Stream<KeyValue>> scan(
-        ByteArray startKey,
-        ByteArray endKey,
+        byte[] startKey,
+        byte[] endKey,
         int limit,
         ReadConsistency consistency
     ) {
         KvProto.ScanRequest request = KvProto.ScanRequest.newBuilder()
             .setHeader(buildHeader())
-            .setStartKey(ByteString.copyFrom(startKey.toByteArray()))
-            .setEndKey(ByteString.copyFrom(endKey.toByteArray()))
+            .setStartKey(toByteString(startKey))
+            .setEndKey(toByteString(endKey))
             .setLimit(limit)
             .setConsistency(toProtoConsistency(consistency))
             .build();
@@ -176,8 +175,8 @@ public final class KvClient implements AutoCloseable {
                         response.getError().getMessage()));
                 } else {
                     iterator.addResult(new KeyValue(
-                        ByteArray.copyOf(response.getKey().toByteArray()),
-                        ByteArray.copyOf(response.getValue().toByteArray()),
+                        response.getKey().toByteArray(),
+                        response.getValue().toByteArray(),
                         response.getRevision()
                     ));
                 }
@@ -197,17 +196,17 @@ public final class KvClient implements AutoCloseable {
         return CompletableFuture.completedFuture(iterator.toStream());
     }
 
-    public CompletableFuture<List<KeyValue>> batchGet(List<ByteArray> keys) {
+    public CompletableFuture<List<KeyValue>> batchGet(List<byte[]> keys) {
         return batchGet(keys, ReadConsistency.LINEARIZABLE);
     }
 
-    public CompletableFuture<List<KeyValue>> batchGet(List<ByteArray> keys, ReadConsistency consistency) {
+    public CompletableFuture<List<KeyValue>> batchGet(List<byte[]> keys, ReadConsistency consistency) {
         KvProto.BatchGetRequest.Builder builder = KvProto.BatchGetRequest.newBuilder()
             .setHeader(buildHeader())
             .setConsistency(toProtoConsistency(consistency));
 
-        for (ByteArray key : keys) {
-            builder.addKeys(ByteString.copyFrom(key.toByteArray()));
+        for (byte[] key : keys) {
+            builder.addKeys(toByteString(key));
         }
 
         KvProto.BatchGetRequest request = builder.build();
@@ -224,8 +223,8 @@ public final class KvClient implements AutoCloseable {
                         for (KvProto.KeyValue kv : response.getValuesList()) {
                             if (kv.getFound()) {
                                 results.add(new KeyValue(
-                                    ByteArray.copyOf(kv.getKey().toByteArray()),
-                                    ByteArray.copyOf(kv.getValue().toByteArray()),
+                                    kv.getKey().toByteArray(),
+                                    kv.getValue().toByteArray(),
                                     kv.getRevision()
                                 ));
                             }
@@ -255,12 +254,12 @@ public final class KvClient implements AutoCloseable {
             KvProto.WriteOp.Builder opBuilder = KvProto.WriteOp.newBuilder();
             switch (op) {
                 case WriteOp.Put put -> opBuilder.setPut(KvProto.PutOp.newBuilder()
-                    .setKey(ByteString.copyFrom(put.key().toByteArray()))
-                    .setValue(ByteString.copyFrom(put.value().toByteArray()))
+                    .setKey(toByteString(put.key()))
+                    .setValue(toByteString(put.value()))
                     .setLeaseId(put.leaseId())
                     .build());
                 case WriteOp.Delete delete -> opBuilder.setDelete(KvProto.DeleteOp.newBuilder()
-                    .setKey(ByteString.copyFrom(delete.key().toByteArray()))
+                    .setKey(toByteString(delete.key()))
                     .build());
             }
             builder.addOps(opBuilder.build());
@@ -492,6 +491,10 @@ public final class KvClient implements AutoCloseable {
             case LINEARIZABLE -> KvProto.ReadConsistency.LINEARIZABLE;
             case STALE -> KvProto.ReadConsistency.STALE;
         };
+    }
+
+    private static ByteString toByteString(byte[] bytes) {
+        return ByteString.copyFrom(bytes);
     }
 
     private KvServiceGrpc.KvServiceStub getStub() {

@@ -1,24 +1,26 @@
 package io.partdb.benchmark;
 
-import io.partdb.common.ByteArray;
 import io.partdb.common.Timestamp;
+import io.partdb.storage.KeyValue;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-@BenchmarkMode(Mode.Throughput)
-@OutputTimeUnit(TimeUnit.SECONDS)
+@BenchmarkMode({Mode.Throughput, Mode.SampleTime})
+@OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Benchmark)
-@Fork(2)
+@Fork(1)
 @Warmup(iterations = 3, time = 5)
 @Measurement(iterations = 5, time = 5)
 public class MixedWorkloadBenchmark {
@@ -34,7 +36,9 @@ public class MixedWorkloadBenchmark {
 
     private Path tempDir;
     private LSMTree tree;
+    private LSMTree.Snapshot readSnapshot;
     private AtomicLong keyCounter;
+    private AtomicLong timestampCounter;
     private byte[] valueTemplate;
 
     @Setup(Level.Trial)
@@ -42,37 +46,34 @@ public class MixedWorkloadBenchmark {
         tempDir = Files.createTempDirectory("mixed-workload-bench");
         tree = LSMTree.open(tempDir, LSMConfig.defaults());
         keyCounter = new AtomicLong(0);
+        timestampCounter = new AtomicLong(0);
         valueTemplate = new byte[valueSize];
         ThreadLocalRandom.current().nextBytes(valueTemplate);
 
-        ByteArray value = ByteArray.copyOf(valueTemplate);
         for (int i = 0; i < initialKeyCount; i++) {
-            ByteArray key = formatKey(i);
-            Timestamp ts = Timestamp.of(System.currentTimeMillis(), i);
-            tree.put(key, value, ts);
+            byte[] key = formatKey(i);
+            Timestamp ts = Timestamp.of(timestampCounter.incrementAndGet(), 0);
+            tree.put(key, valueTemplate, ts);
         }
         keyCounter.set(initialKeyCount);
         tree.flush();
+
+        Timestamp readTs = Timestamp.of(timestampCounter.get(), 0);
+        readSnapshot = tree.snapshot(readTs);
     }
 
     @TearDown(Level.Trial)
     public void tearDown() throws IOException {
+        readSnapshot.close();
         tree.close();
-        try (var paths = Files.walk(tempDir)) {
-            paths.sorted(Comparator.reverseOrder())
-                .forEach(path -> {
-                    try {
-                        Files.delete(path);
-                    } catch (IOException _) {}
-                });
-        }
+        deleteDirectory(tempDir);
     }
 
     @Benchmark
     @Threads(4)
-    public void mixed(Blackhole bh) {
+    public void mixedMultiThreaded(Blackhole bh) {
         if (ThreadLocalRandom.current().nextInt(100) < readPercent) {
-            doRead(bh);
+            bh.consume(doRead());
         } else {
             doWrite();
         }
@@ -80,22 +81,19 @@ public class MixedWorkloadBenchmark {
 
     @Benchmark
     @Threads(1)
-    public void mixedSingleThread(Blackhole bh) {
+    public void mixedSingleThreaded(Blackhole bh) {
         if (ThreadLocalRandom.current().nextInt(100) < readPercent) {
-            doRead(bh);
+            bh.consume(doRead());
         } else {
             doWrite();
         }
     }
 
-    private void doRead(Blackhole bh) {
+    private Optional<KeyValue> doRead() {
         long maxKey = keyCounter.get();
         long keyNum = ThreadLocalRandom.current().nextLong(maxKey);
-        ByteArray key = formatKey(keyNum);
-        Timestamp ts = Timestamp.of(System.currentTimeMillis(), 0);
-        try (var snapshot = tree.snapshot(ts)) {
-            bh.consume(snapshot.get(key));
-        }
+        byte[] key = formatKey(keyNum);
+        return readSnapshot.get(key);
     }
 
     private void doWrite() {
@@ -106,13 +104,23 @@ public class MixedWorkloadBenchmark {
         } else {
             keyNum = ThreadLocalRandom.current().nextLong(maxKey);
         }
-        ByteArray key = formatKey(keyNum);
-        ByteArray value = ByteArray.copyOf(valueTemplate);
-        Timestamp ts = Timestamp.of(System.currentTimeMillis(), 0);
-        tree.put(key, value, ts);
+        byte[] key = formatKey(keyNum);
+        Timestamp ts = Timestamp.of(timestampCounter.incrementAndGet(), 0);
+        tree.put(key, valueTemplate, ts);
     }
 
-    private static ByteArray formatKey(long keyNum) {
-        return ByteArray.copyOf(String.format("key%016d", keyNum).getBytes());
+    private static byte[] formatKey(long keyNum) {
+        return ("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static void deleteDirectory(Path dir) throws IOException {
+        try (var paths = Files.walk(dir)) {
+            paths.sorted(Comparator.reverseOrder())
+                .forEach(path -> {
+                    try {
+                        Files.delete(path);
+                    } catch (IOException ignored) {}
+                });
+        }
     }
 }

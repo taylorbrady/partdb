@@ -1,8 +1,8 @@
 package io.partdb.server;
 
 import com.google.protobuf.InvalidProtocolBufferException;
-import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
+import io.partdb.common.KeyBytes;
 import io.partdb.common.Leases;
 import io.partdb.common.Timestamp;
 import io.partdb.raft.StateMachine;
@@ -56,8 +56,8 @@ public final class KvStore implements StateMachine, AutoCloseable {
         switch (command.getOpCase()) {
             case PUT -> {
                 var put = command.getPut();
-                ByteArray key = ByteArray.copyOf(put.getKey().toByteArray());
-                ByteArray value = ByteArray.copyOf(put.getValue().toByteArray());
+                byte[] key = put.getKey().toByteArray();
+                byte[] value = put.getValue().toByteArray();
                 long leaseId = put.getLeaseId();
                 StoredValue stored = new StoredValue(value, index, leaseId);
                 store.put(key, stored.encode(), Timestamp.of(index, 0));
@@ -67,7 +67,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
             }
             case DELETE -> {
                 var delete = command.getDelete();
-                ByteArray key = ByteArray.copyOf(delete.getKey().toByteArray());
+                byte[] key = delete.getKey().toByteArray();
                 detachKeyFromLease(key);
                 store.delete(key, Timestamp.of(index, 0));
             }
@@ -77,9 +77,9 @@ public final class KvStore implements StateMachine, AutoCloseable {
             }
             case REVOKE_LEASE -> {
                 var revoke = command.getRevokeLease();
-                Set<ByteArray> keys = leases.getKeys(revoke.getLeaseId());
-                for (ByteArray key : keys) {
-                    store.delete(key, Timestamp.of(index, 0));
+                Set<KeyBytes> keys = leases.getKeys(revoke.getLeaseId());
+                for (KeyBytes key : keys) {
+                    store.delete(key.data(), Timestamp.of(index, 0));
                 }
                 leases.revoke(revoke.getLeaseId());
             }
@@ -95,7 +95,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         }
     }
 
-    private void detachKeyFromLease(ByteArray key) {
+    private void detachKeyFromLease(byte[] key) {
         try (var snap = store.snapshot(Timestamp.MAX)) {
             Optional<KeyValue> existing = snap.get(key);
             if (existing.isPresent()) {
@@ -107,7 +107,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         }
     }
 
-    public Optional<ByteArray> get(ByteArray key) {
+    public Optional<byte[]> get(byte[] key) {
         try (var snap = store.snapshot(Timestamp.MAX)) {
             Optional<KeyValue> raw = snap.get(key);
             if (raw.isEmpty()) {
@@ -121,7 +121,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         }
     }
 
-    public Stream<Entry> scan(ByteArray startKey, ByteArray endKey) {
+    public Stream<Entry> scan(byte[] startKey, byte[] endKey) {
         var snap = store.snapshot(Timestamp.MAX);
         Stream<KeyValue> raw = snap.scan(startKey, endKey);
 

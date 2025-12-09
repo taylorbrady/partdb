@@ -98,8 +98,8 @@ public final class Compactor {
             return new SSTableInfo(
                 id,
                 level,
-                table.smallestKey(),
-                table.largestKey(),
+                table.smallestKey().toByteArray(),
+                table.largestKey().toByteArray(),
                 timestamps.smallest(),
                 timestamps.largest(),
                 Files.size(path),

@@ -1,7 +1,5 @@
 package io.partdb.storage;
 
-import io.partdb.common.ByteArray;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -27,13 +25,13 @@ public record WriteBatch(List<BatchEntry> entries) {
 
         private final List<BatchEntry> entries = new ArrayList<>();
 
-        public Builder put(ByteArray key, ByteArray value) {
-            entries.add(new BatchEntry.Put(key, value));
+        public Builder put(byte[] key, byte[] value) {
+            entries.add(new BatchEntry.Put(key.clone(), value.clone()));
             return this;
         }
 
-        public Builder delete(ByteArray key) {
-            entries.add(new BatchEntry.Delete(key));
+        public Builder delete(byte[] key) {
+            entries.add(new BatchEntry.Delete(key.clone()));
             return this;
         }
 
@@ -44,10 +42,10 @@ public record WriteBatch(List<BatchEntry> entries) {
 
     public sealed interface BatchEntry permits BatchEntry.Put, BatchEntry.Delete {
 
-        ByteArray key();
+        byte[] key();
 
-        record Put(ByteArray key, ByteArray value) implements BatchEntry {}
+        record Put(byte[] key, byte[] value) implements BatchEntry {}
 
-        record Delete(ByteArray key) implements BatchEntry {}
+        record Delete(byte[] key) implements BatchEntry {}
     }
 }

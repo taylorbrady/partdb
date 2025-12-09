@@ -1,7 +1,5 @@
 package io.partdb.storage;
 
-import io.partdb.common.ByteArray;
-
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
@@ -12,7 +10,7 @@ public final class MergingIterator implements Iterator<Entry> {
 
     private final PriorityQueue<IteratorEntry> heap;
     private final List<Iterator<Entry>> iterators;
-    private ByteArray lastKey;
+    private Slice lastKey;
     private Entry nextEntry;
 
     public MergingIterator(List<Iterator<Entry>> iterators) {

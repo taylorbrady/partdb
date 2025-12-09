@@ -1,7 +1,7 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.common.ByteArray;
 import io.partdb.common.Timestamp;
+import io.partdb.storage.Slice;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -15,8 +15,8 @@ record SSTableFooter(
     int bloomFilterSize,
     long indexOffset,
     int blockCount,
-    ByteArray smallestKey,
-    ByteArray largestKey,
+    Slice smallestKey,
+    Slice largestKey,
     Timestamp smallestTimestamp,
     Timestamp largestTimestamp,
     long entryCount,
@@ -73,15 +73,13 @@ record SSTableFooter(
 
         int smallestKeySize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
         offset += 4;
-        byte[] smallestKeyBytes = segment.asSlice(offset, smallestKeySize).toArray(ValueLayout.JAVA_BYTE);
+        Slice smallestKey = Slice.wrap(segment.asSlice(offset, smallestKeySize));
         offset += smallestKeySize;
-        ByteArray smallestKey = ByteArray.copyOf(smallestKeyBytes);
 
         int largestKeySize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
         offset += 4;
-        byte[] largestKeyBytes = segment.asSlice(offset, largestKeySize).toArray(ValueLayout.JAVA_BYTE);
+        Slice largestKey = Slice.wrap(segment.asSlice(offset, largestKeySize));
         offset += largestKeySize;
-        ByteArray largestKey = ByteArray.copyOf(largestKeyBytes);
 
         Timestamp smallestTimestamp = new Timestamp(segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset));
         offset += 8;
@@ -112,7 +110,7 @@ record SSTableFooter(
         );
     }
 
-    static int calculateFooterSize(ByteArray smallestKey, ByteArray largestKey) {
+    static int calculateFooterSize(Slice smallestKey, Slice largestKey) {
         return 8 + 4 + 8 + 4 + 4 + smallestKey.length() + 4 + largestKey.length() + 8 + 8 + 8 + 4 + 4;
     }
 }

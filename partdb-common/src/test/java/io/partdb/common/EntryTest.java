@@ -8,8 +8,8 @@ class EntryTest {
 
     @Test
     void putFactoryCreatesNonTombstoneEntry() {
-        ByteArray key = ByteArray.of((byte) 1);
-        ByteArray value = ByteArray.of((byte) 2);
+        byte[] key = new byte[]{1};
+        byte[] value = new byte[]{2};
         long version = 1000L;
 
         Entry entry = Entry.put(key, value, version);
@@ -23,8 +23,8 @@ class EntryTest {
 
     @Test
     void putWithLeaseAttachesLease() {
-        ByteArray key = ByteArray.of((byte) 1);
-        ByteArray value = ByteArray.of((byte) 2);
+        byte[] key = new byte[]{1};
+        byte[] value = new byte[]{2};
         long version = 1000L;
         long leaseId = 42L;
 
@@ -36,7 +36,7 @@ class EntryTest {
 
     @Test
     void deleteFactoryCreatesTombstoneEntry() {
-        ByteArray key = ByteArray.of((byte) 1);
+        byte[] key = new byte[]{1};
         long version = 2000L;
 
         Entry entry = Entry.delete(key, version);
@@ -50,7 +50,7 @@ class EntryTest {
 
     @Test
     void constructorThrowsWhenKeyIsNull() {
-        ByteArray value = ByteArray.of((byte) 1);
+        byte[] value = new byte[]{1};
 
         assertThatThrownBy(() -> new Entry(null, value, 1000L, false, 0))
             .isInstanceOf(NullPointerException.class)
@@ -59,7 +59,7 @@ class EntryTest {
 
     @Test
     void constructorThrowsWhenNonTombstoneHasNullValue() {
-        ByteArray key = ByteArray.of((byte) 1);
+        byte[] key = new byte[]{1};
 
         assertThatThrownBy(() -> new Entry(key, null, 1000L, false, 0))
             .isInstanceOf(IllegalArgumentException.class)
@@ -68,7 +68,7 @@ class EntryTest {
 
     @Test
     void constructorAllowsNullValueForTombstone() {
-        ByteArray key = ByteArray.of((byte) 1);
+        byte[] key = new byte[]{1};
 
         Entry entry = new Entry(key, null, 1000L, true, 0);
 
@@ -78,8 +78,8 @@ class EntryTest {
 
     @Test
     void equalsWorksForSameContent() {
-        ByteArray key = ByteArray.of((byte) 1);
-        ByteArray value = ByteArray.of((byte) 2);
+        byte[] key = new byte[]{1};
+        byte[] value = new byte[]{2};
 
         Entry entry1 = Entry.put(key, value, 1000L);
         Entry entry2 = Entry.put(key, value, 1000L);
@@ -90,8 +90,8 @@ class EntryTest {
 
     @Test
     void notEqualWhenTimestampDiffers() {
-        ByteArray key = ByteArray.of((byte) 1);
-        ByteArray value = ByteArray.of((byte) 2);
+        byte[] key = new byte[]{1};
+        byte[] value = new byte[]{2};
 
         Entry entry1 = Entry.put(key, value, 1000L);
         Entry entry2 = Entry.put(key, value, 2000L);
@@ -101,8 +101,8 @@ class EntryTest {
 
     @Test
     void notEqualWhenTombstoneFlagDiffers() {
-        ByteArray key = ByteArray.of((byte) 1);
-        ByteArray value = ByteArray.of((byte) 2);
+        byte[] key = new byte[]{1};
+        byte[] value = new byte[]{2};
 
         Entry entry1 = Entry.put(key, value, 1000L);
         Entry entry2 = Entry.delete(key, 1000L);
@@ -112,8 +112,8 @@ class EntryTest {
 
     @Test
     void notEqualWhenLeaseIdDiffers() {
-        ByteArray key = ByteArray.of((byte) 1);
-        ByteArray value = ByteArray.of((byte) 2);
+        byte[] key = new byte[]{1};
+        byte[] value = new byte[]{2};
 
         Entry entry1 = Entry.put(key, value, 1000L);
         Entry entry2 = Entry.putWithLease(key, value, 1000L, 42L);

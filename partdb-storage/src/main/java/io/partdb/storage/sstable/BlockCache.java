@@ -13,7 +13,7 @@ public interface BlockCache {
 
     Stats stats();
 
-    record Stats(long hits, long misses, long evictions, int size, int capacity) {
+    record Stats(long hits, long misses, long evictions, long sizeInBytes, long maxSizeInBytes) {
 
         public double hitRate() {
             long total = hits + misses;

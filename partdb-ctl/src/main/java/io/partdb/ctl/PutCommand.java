@@ -2,7 +2,6 @@ package io.partdb.ctl;
 
 import io.partdb.client.KvClient;
 import io.partdb.client.KvClientConfig;
-import io.partdb.common.ByteArray;
 
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -55,8 +54,8 @@ final class PutCommand {
 
         var config = KvClientConfig.defaultConfig(endpoint);
         try (var client = new KvClient(config)) {
-            ByteArray keyBytes = ByteArray.copyOf(key.getBytes(StandardCharsets.UTF_8));
-            ByteArray valueBytes = ByteArray.copyOf(value.getBytes(StandardCharsets.UTF_8));
+            byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+            byte[] valueBytes = value.getBytes(StandardCharsets.UTF_8);
             client.put(keyBytes, valueBytes).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
             out.println("OK");
             return 0;

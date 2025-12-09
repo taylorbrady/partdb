@@ -2,7 +2,6 @@ package io.partdb.ctl;
 
 import io.partdb.client.KvClient;
 import io.partdb.client.KvClientConfig;
-import io.partdb.common.ByteArray;
 
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -53,11 +52,11 @@ final class GetCommand {
 
         var config = KvClientConfig.defaultConfig(endpoint);
         try (var client = new KvClient(config)) {
-            ByteArray keyBytes = ByteArray.copyOf(key.getBytes(StandardCharsets.UTF_8));
-            Optional<ByteArray> result = client.get(keyBytes).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+            Optional<byte[]> result = client.get(keyBytes).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             if (result.isPresent()) {
-                String value = new String(result.get().toByteArray(), StandardCharsets.UTF_8);
+                String value = new String(result.get(), StandardCharsets.UTF_8);
                 out.println(value);
                 return 0;
             } else {

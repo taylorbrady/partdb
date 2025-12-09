@@ -1,9 +1,9 @@
 package io.partdb.storage.memtable;
 
-import io.partdb.common.ByteArray;
 import io.partdb.common.Timestamp;
 import io.partdb.storage.Entry;
 import io.partdb.storage.ScanMode;
+import io.partdb.storage.Slice;
 import io.partdb.storage.VersionedKey;
 
 import java.util.Iterator;
@@ -34,7 +34,7 @@ public final class SkipListMemtable implements Memtable {
     }
 
     @Override
-    public Optional<Entry> get(ByteArray key, Timestamp readTimestamp) {
+    public Optional<Entry> get(Slice key, Timestamp readTimestamp) {
         VersionedKey searchKey = new VersionedKey(key, readTimestamp);
         Map.Entry<VersionedKey, Entry> ceiling = entries.ceilingEntry(searchKey);
 
@@ -50,7 +50,7 @@ public final class SkipListMemtable implements Memtable {
     }
 
     @Override
-    public Iterator<Entry> scan(ScanMode mode, ByteArray startKey, ByteArray endKey) {
+    public Iterator<Entry> scan(ScanMode mode, Slice startKey, Slice endKey) {
         ConcurrentNavigableMap<VersionedKey, Entry> range;
 
         if (startKey == null && endKey == null) {
@@ -100,7 +100,7 @@ public final class SkipListMemtable implements Memtable {
 
         private final Iterator<Entry> delegate;
         private final Timestamp readTimestamp;
-        private ByteArray lastKey;
+        private Slice lastKey;
         private Entry next;
 
         SnapshotIterator(Iterator<Entry> delegate, Timestamp readTimestamp) {

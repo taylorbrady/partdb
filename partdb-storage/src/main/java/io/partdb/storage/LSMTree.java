@@ -1,7 +1,7 @@
 package io.partdb.storage;
 
-import io.partdb.common.ByteArray;
 import io.partdb.common.Timestamp;
+
 import io.partdb.storage.sstable.SSTableSetRef;
 import io.partdb.storage.sstable.SSTableSetRef.AcquireResult;
 import io.partdb.storage.compaction.CompactionStrategy;
@@ -12,6 +12,8 @@ import io.partdb.storage.manifest.Manifest;
 import io.partdb.storage.manifest.SSTableInfo;
 import io.partdb.storage.memtable.Memtable;
 import io.partdb.storage.memtable.SkipListMemtable;
+import io.partdb.storage.sstable.BlockCache;
+import io.partdb.storage.sstable.S3FifoBlockCache;
 import io.partdb.storage.sstable.SSTable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,6 +66,7 @@ public final class LSMTree implements AutoCloseable {
     private final CompactionStrategy compactionStrategy;
     private final ExecutorService compactionExecutor;
     private final AtomicBoolean compacting;
+    private final BlockCache blockCache;
 
     private LSMTree(
         Path dataDirectory,
@@ -73,7 +76,8 @@ public final class LSMTree implements AutoCloseable {
         Manifest manifest,
         AtomicLong sstableIdCounter,
         Compactor compactor,
-        CompactionStrategy compactionStrategy
+        CompactionStrategy compactionStrategy,
+        BlockCache blockCache
     ) {
         this.dataDirectory = dataDirectory;
         this.config = config;
@@ -93,24 +97,29 @@ public final class LSMTree implements AutoCloseable {
         this.compactionStrategy = compactionStrategy;
         this.compactionExecutor = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
         this.compacting = new AtomicBoolean(false);
+        this.blockCache = blockCache;
     }
 
     public static LSMTree open(Path dataDirectory, LSMConfig config) {
         try {
             Files.createDirectories(dataDirectory);
 
+            BlockCache blockCache = config.blockCacheConfig() != null
+                ? new S3FifoBlockCache(config.blockCacheConfig().maxSizeInBytes())
+                : null;
+
             Manifest manifest = Manifest.readFrom(dataDirectory);
             List<SSTable> sstables;
 
             if (manifest.sstables().isEmpty()) {
-                sstables = loadSSTables(dataDirectory);
+                sstables = loadSSTables(dataDirectory, blockCache);
 
                 if (!sstables.isEmpty()) {
                     manifest = buildManifestFromSSTables(sstables);
                     manifest.writeTo(dataDirectory);
                 }
             } else {
-                sstables = loadSSTablesFromManifest(dataDirectory, manifest);
+                sstables = loadSSTablesFromManifest(dataDirectory, manifest, blockCache);
             }
 
             Memtable memtable = new SkipListMemtable();
@@ -135,20 +144,21 @@ public final class LSMTree implements AutoCloseable {
                 manifest,
                 idCounter,
                 compactor,
-                strategy
+                strategy,
+                blockCache
             );
         } catch (IOException e) {
             throw new LSMException.RecoveryException("Failed to open store", e);
         }
     }
 
-    public void put(ByteArray key, ByteArray value, Timestamp timestamp) {
-        Entry entry = new Entry.Put(key, timestamp, value);
+    public void put(byte[] key, byte[] value, Timestamp timestamp) {
+        Entry entry = new Entry.Put(Slice.copyOf(key), timestamp, Slice.copyOf(value));
         putEntry(entry);
     }
 
-    public void delete(ByteArray key, Timestamp timestamp) {
-        Entry entry = new Entry.Tombstone(key, timestamp);
+    public void delete(byte[] key, Timestamp timestamp) {
+        Entry entry = new Entry.Tombstone(Slice.copyOf(key), timestamp);
         putEntry(entry);
     }
 
@@ -156,9 +166,9 @@ public final class LSMTree implements AutoCloseable {
         for (WriteBatch.BatchEntry entry : batch.entries()) {
             switch (entry) {
                 case WriteBatch.BatchEntry.Put p ->
-                    putEntry(new Entry.Put(p.key(), timestamp, p.value()));
+                    putEntry(new Entry.Put(Slice.copyOf(p.key()), timestamp, Slice.copyOf(p.value())));
                 case WriteBatch.BatchEntry.Delete d ->
-                    putEntry(new Entry.Tombstone(d.key(), timestamp));
+                    putEntry(new Entry.Tombstone(Slice.copyOf(d.key()), timestamp));
             }
         }
     }
@@ -250,7 +260,7 @@ public final class LSMTree implements AutoCloseable {
             }
 
             Manifest newManifest = new Manifest(nextSSTableId, metadataList);
-            List<SSTable> newReaders = loadSSTablesFromManifest(dataDirectory, newManifest);
+            List<SSTable> newReaders = loadSSTablesFromManifest(dataDirectory, newManifest, blockCache);
 
             manifestLock.lock();
             try {
@@ -369,7 +379,7 @@ public final class LSMTree implements AutoCloseable {
     private Optional<KeyValue> toKeyValue(Entry entry) {
         return switch (entry) {
             case Entry.Tombstone _ -> Optional.empty();
-            case Entry.Put p -> Optional.of(new KeyValue(p.key(), p.value(), p.timestamp()));
+            case Entry.Put p -> Optional.of(new KeyValue(p.key().toByteArray(), p.value().toByteArray(), p.timestamp()));
         };
     }
 
@@ -469,7 +479,7 @@ public final class LSMTree implements AutoCloseable {
                 largestTs = writer.largestTimestamp();
             }
 
-            SSTable reader = SSTable.open(sstablePath);
+            SSTable reader = SSTable.open(sstablePath, blockCache);
             SSTableInfo metadata = buildMetadata(reader, sstableId, 0, smallestTs, largestTs);
 
             manifestLock.lock();
@@ -548,7 +558,7 @@ public final class LSMTree implements AutoCloseable {
         List<SSTable> readers = new ArrayList<>();
         for (SSTableInfo meta : metadata) {
             Path path = resolvePath(meta.id());
-            readers.add(SSTable.open(path));
+            readers.add(SSTable.open(path, blockCache));
         }
         return readers;
     }
@@ -590,7 +600,7 @@ public final class LSMTree implements AutoCloseable {
 
             for (SSTableInfo meta : newMeta) {
                 Path path = dataDirectory.resolve(String.format("%06d.sst", meta.id()));
-                retainedReaders.add(SSTable.open(path));
+                retainedReaders.add(SSTable.open(path, blockCache));
             }
 
             SSTableSetRef oldSet = sstableSet;
@@ -616,7 +626,7 @@ public final class LSMTree implements AutoCloseable {
         return dataDirectory.resolve(String.format("%06d.sst", id));
     }
 
-    private static List<SSTable> loadSSTables(Path dataDirectory) throws IOException {
+    private static List<SSTable> loadSSTables(Path dataDirectory, BlockCache blockCache) throws IOException {
         List<SSTable> sstables = new ArrayList<>();
 
         if (!Files.exists(dataDirectory)) {
@@ -630,7 +640,7 @@ public final class LSMTree implements AutoCloseable {
                 .toList();
 
             for (Path path : sstablePaths) {
-                sstables.add(SSTable.open(path));
+                sstables.add(SSTable.open(path, blockCache));
             }
         }
 
@@ -660,7 +670,7 @@ public final class LSMTree implements AutoCloseable {
         return new Manifest(maxId, metadataList);
     }
 
-    private static List<SSTable> loadSSTablesFromManifest(Path dataDirectory, Manifest manifest) {
+    private static List<SSTable> loadSSTablesFromManifest(Path dataDirectory, Manifest manifest, BlockCache blockCache) {
         List<SSTableInfo> sorted = manifest.sstables().stream()
             .sorted(Comparator.comparingLong(SSTableInfo::id).reversed())
             .toList();
@@ -668,7 +678,7 @@ public final class LSMTree implements AutoCloseable {
         List<SSTable> readers = new ArrayList<>();
         for (SSTableInfo metadata : sorted) {
             Path path = dataDirectory.resolve(String.format("%06d.sst", metadata.id()));
-            readers.add(SSTable.open(path));
+            readers.add(SSTable.open(path, blockCache));
         }
 
         return readers;
@@ -679,8 +689,8 @@ public final class LSMTree implements AutoCloseable {
     }
 
     private static SSTableInfo buildMetadata(SSTable reader, long id, int level, Timestamp smallestTs, Timestamp largestTs) throws IOException {
-        ByteArray smallestKey = reader.smallestKey();
-        ByteArray largestKey = reader.largestKey();
+        byte[] smallestKey = reader.smallestKey().toByteArray();
+        byte[] largestKey = reader.largestKey().toByteArray();
         long fileSize = Files.size(reader.path());
         long entryCount = reader.entryCount();
 
@@ -700,16 +710,18 @@ public final class LSMTree implements AutoCloseable {
             return readTimestamp;
         }
 
-        public Optional<KeyValue> get(ByteArray key) {
+        public Optional<KeyValue> get(byte[] key) {
             ensureOpen();
 
-            Optional<Entry> result = activeMemtable.get().get(key, readTimestamp);
+            Slice sliceKey = Slice.copyOf(key);
+
+            Optional<Entry> result = activeMemtable.get().get(sliceKey, readTimestamp);
             if (result.isPresent()) {
                 return toKeyValue(result.get());
             }
 
             for (Memtable immutable : immutableMemtables) {
-                result = immutable.get(key, readTimestamp);
+                result = immutable.get(sliceKey, readTimestamp);
                 if (result.isPresent()) {
                     return toKeyValue(result.get());
                 }
@@ -718,7 +730,7 @@ public final class LSMTree implements AutoCloseable {
             SSTableSetRef acquired = acquireSSTableSetRef();
             try {
                 for (SSTable sstable : acquired.readers()) {
-                    result = sstable.get(key, readTimestamp);
+                    result = sstable.get(sliceKey, readTimestamp);
                     if (result.isPresent()) {
                         return toKeyValue(result.get());
                     }
@@ -729,26 +741,29 @@ public final class LSMTree implements AutoCloseable {
             }
         }
 
-        public Stream<KeyValue> scan(ByteArray startKey, ByteArray endKey) {
+        public Stream<KeyValue> scan(byte[] startKey, byte[] endKey) {
             ensureOpen();
+
+            Slice sliceStartKey = startKey != null ? Slice.copyOf(startKey) : null;
+            Slice sliceEndKey = endKey != null ? Slice.copyOf(endKey) : null;
 
             ScanMode mode = new ScanMode.Snapshot(readTimestamp);
             List<Iterator<Entry>> iterators = new ArrayList<>();
 
-            iterators.add(activeMemtable.get().scan(mode, startKey, endKey));
+            iterators.add(activeMemtable.get().scan(mode, sliceStartKey, sliceEndKey));
 
             for (Memtable immutable : immutableMemtables) {
-                iterators.add(immutable.scan(mode, startKey, endKey));
+                iterators.add(immutable.scan(mode, sliceStartKey, sliceEndKey));
             }
 
             SSTableSetRef acquired = acquireSSTableSetRef();
             for (SSTable sstable : acquired.readers()) {
                 SSTable.Scan scan = sstable.scan();
-                if (startKey != null) {
-                    scan = scan.from(startKey);
+                if (sliceStartKey != null) {
+                    scan = scan.from(sliceStartKey);
                 }
-                if (endKey != null) {
-                    scan = scan.until(endKey);
+                if (sliceEndKey != null) {
+                    scan = scan.until(sliceEndKey);
                 }
                 iterators.add(scan.asOf(readTimestamp).iterator());
             }
@@ -761,7 +776,7 @@ public final class LSMTree implements AutoCloseable {
                 private KeyValue advance() {
                     while (merged.hasNext()) {
                         if (merged.next() instanceof Entry.Put p) {
-                            return new KeyValue(p.key(), p.value(), p.timestamp());
+                            return new KeyValue(p.key().toByteArray(), p.value().toByteArray(), p.timestamp());
                         }
                     }
                     return null;

@@ -1,8 +1,8 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.common.ByteArray;
 import io.partdb.common.Timestamp;
 import io.partdb.storage.Entry;
+import io.partdb.storage.Slice;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -41,9 +41,8 @@ public final class Block implements Iterable<Entry> {
         int storedChecksum = segment.get(ValueLayout.JAVA_INT_UNALIGNED, trailerOffset + 8);
 
         long checksumDataLength = size - 4;
-        byte[] checksumData = segment.asSlice(0, checksumDataLength).toArray(ValueLayout.JAVA_BYTE);
         CRC32C crc = new CRC32C();
-        crc.update(checksumData);
+        crc.update(segment.asByteBuffer().limit((int) checksumDataLength));
         int computedChecksum = (int) crc.getValue();
 
         if (storedChecksum != computedChecksum) {
@@ -53,7 +52,7 @@ public final class Block implements Iterable<Entry> {
         return new Block(segment, entryCount, offsetTableStart);
     }
 
-    public Optional<Entry> find(ByteArray key, Timestamp readTimestamp) {
+    public Optional<Entry> find(Slice key, Timestamp readTimestamp) {
         int index = binarySearchKey(key);
         if (index < 0) {
             return Optional.empty();
@@ -79,6 +78,10 @@ public final class Block implements Iterable<Entry> {
         return entryCount;
     }
 
+    public long sizeInBytes() {
+        return segment.byteSize();
+    }
+
     public Entry entry(int index) {
         if (index < 0 || index >= entryCount) {
             throw new IndexOutOfBoundsException("index: " + index + ", entryCount: " + entryCount);
@@ -86,14 +89,14 @@ public final class Block implements Iterable<Entry> {
         return parseEntryAt(getEntryOffset(index));
     }
 
-    public ByteArray firstKey() {
+    public Slice firstKey() {
         if (entryCount == 0) {
             throw new IllegalStateException("Block is empty");
         }
         return keyAt(0);
     }
 
-    public ByteArray lastKey() {
+    public Slice lastKey() {
         if (entryCount == 0) {
             throw new IllegalStateException("Block is empty");
         }
@@ -109,21 +112,20 @@ public final class Block implements Iterable<Entry> {
         return segment.get(ValueLayout.JAVA_INT_UNALIGNED, offsetTableStart + (index * 4L));
     }
 
-    private ByteArray keyAt(int index) {
+    private Slice keyAt(int index) {
         int offset = getEntryOffset(index);
         int keyLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 9);
-        byte[] keyBytes = segment.asSlice(offset + 13, keyLength).toArray(ValueLayout.JAVA_BYTE);
-        return ByteArray.copyOf(keyBytes);
+        return Slice.wrap(segment.asSlice(offset + 13, keyLength));
     }
 
-    private int binarySearchKey(ByteArray key) {
+    private int binarySearchKey(Slice key) {
         int low = 0;
         int high = entryCount - 1;
         int result = -1;
 
         while (low <= high) {
             int mid = (low + high) >>> 1;
-            ByteArray midKey = keyAt(mid);
+            Slice midKey = keyAt(mid);
             int cmp = midKey.compareTo(key);
 
             if (cmp < 0) {
@@ -147,8 +149,7 @@ public final class Block implements Iterable<Entry> {
         Timestamp timestamp = new Timestamp(timestampValue);
 
         int keyLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 9);
-        byte[] keyBytes = segment.asSlice(offset + 13, keyLength).toArray(ValueLayout.JAVA_BYTE);
-        ByteArray key = ByteArray.copyOf(keyBytes);
+        Slice key = Slice.wrap(segment.asSlice(offset + 13, keyLength));
 
         int valueOffset = offset + 13 + keyLength;
         int valueLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, valueOffset);
@@ -156,8 +157,8 @@ public final class Block implements Iterable<Entry> {
         if (tombstone) {
             return new Entry.Tombstone(key, timestamp);
         } else {
-            byte[] valueBytes = segment.asSlice(valueOffset + 4, valueLength).toArray(ValueLayout.JAVA_BYTE);
-            return new Entry.Put(key, timestamp, ByteArray.copyOf(valueBytes));
+            Slice value = Slice.wrap(segment.asSlice(valueOffset + 4, valueLength));
+            return new Entry.Put(key, timestamp, value);
         }
     }
 
@@ -203,14 +204,14 @@ public final class Block implements Iterable<Entry> {
             return entries.isEmpty();
         }
 
-        public ByteArray firstKey() {
+        public Slice firstKey() {
             if (entries.isEmpty()) {
                 throw new IllegalStateException("Block is empty");
             }
             return entries.getFirst().key();
         }
 
-        public ByteArray lastKey() {
+        public Slice lastKey() {
             if (entries.isEmpty()) {
                 throw new IllegalStateException("Block is empty");
             }
@@ -253,24 +254,21 @@ public final class Block implements Iterable<Entry> {
         }
 
         private void writeEntry(ByteBuffer buffer, Entry entry) {
-            byte[] keyBytes = entry.key().toByteArray();
-
             switch (entry) {
                 case Entry.Tombstone t -> {
                     buffer.put((byte) 0x01);
                     buffer.putLong(t.timestamp().value());
-                    buffer.putInt(keyBytes.length);
-                    buffer.put(keyBytes);
+                    buffer.putInt(t.key().length());
+                    buffer.put(t.key().toByteArray());
                     buffer.putInt(0);
                 }
                 case Entry.Put p -> {
                     buffer.put((byte) 0x00);
                     buffer.putLong(p.timestamp().value());
-                    buffer.putInt(keyBytes.length);
-                    buffer.put(keyBytes);
-                    byte[] valueBytes = p.value().toByteArray();
-                    buffer.putInt(valueBytes.length);
-                    buffer.put(valueBytes);
+                    buffer.putInt(p.key().length());
+                    buffer.put(p.key().toByteArray());
+                    buffer.putInt(p.value().length());
+                    buffer.put(p.value().toByteArray());
                 }
             }
         }

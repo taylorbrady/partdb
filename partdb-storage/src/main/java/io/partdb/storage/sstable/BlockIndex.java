@@ -1,6 +1,6 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.common.ByteArray;
+import io.partdb.storage.Slice;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -12,7 +12,7 @@ import java.util.Optional;
 
 final class BlockIndex {
 
-    record Entry(ByteArray firstKey, BlockHandle handle) {}
+    record Entry(Slice firstKey, BlockHandle handle) {}
 
     private final List<Entry> entries;
 
@@ -26,8 +26,7 @@ final class BlockIndex {
 
         for (int i = 0; i < blockCount; i++) {
             int keyLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
-            byte[] keyBytes = segment.asSlice(offset + 4, keyLength).toArray(ValueLayout.JAVA_BYTE);
-            ByteArray key = ByteArray.copyOf(keyBytes);
+            Slice key = Slice.wrap(segment.asSlice(offset + 4, keyLength));
 
             long blockOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 4 + keyLength);
             int blockSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 4 + keyLength + 8);
@@ -39,12 +38,12 @@ final class BlockIndex {
         return new BlockIndex(entries);
     }
 
-    public Optional<Entry> find(ByteArray key) {
+    public Optional<Entry> find(Slice key) {
         int index = indexOf(key);
         return index >= 0 ? Optional.of(entries.get(index)) : Optional.empty();
     }
 
-    public List<Entry> findInRange(ByteArray startKey, ByteArray endKey) {
+    public List<Entry> findInRange(Slice startKey, Slice endKey) {
         if (entries.isEmpty()) {
             return List.of();
         }
@@ -85,9 +84,8 @@ final class BlockIndex {
 
         ByteBuffer buffer = ByteBuffer.allocate(totalSize).order(ByteOrder.nativeOrder());
         for (Entry entry : entries) {
-            byte[] keyBytes = entry.firstKey().toByteArray();
-            buffer.putInt(keyBytes.length);
-            buffer.put(keyBytes);
+            buffer.putInt(entry.firstKey().length());
+            buffer.put(entry.firstKey().toByteArray());
             buffer.putLong(entry.handle().offset());
             buffer.putInt(entry.handle().size());
         }
@@ -95,7 +93,7 @@ final class BlockIndex {
         return buffer.array();
     }
 
-    private int indexOf(ByteArray key) {
+    private int indexOf(Slice key) {
         if (entries.isEmpty()) {
             return -1;
         }

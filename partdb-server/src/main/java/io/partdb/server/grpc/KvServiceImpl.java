@@ -2,7 +2,6 @@ package io.partdb.server.grpc;
 
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
-import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
 import io.partdb.server.NotLeaderException;
 import io.partdb.protocol.kv.proto.KvProto;
@@ -62,9 +61,9 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void get(GetRequest request, StreamObserver<GetResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
-        ByteArray key = toByteArray(request.getKey());
+        byte[] key = toBytes(request.getKey());
 
-        CompletableFuture<Optional<ByteArray>> future;
+        CompletableFuture<Optional<byte[]>> future;
         if (request.getConsistency() == ReadConsistency.STALE) {
             future = CompletableFuture.completedFuture(kvStore.get(key));
         } else {
@@ -98,8 +97,8 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void put(PutRequest request, StreamObserver<PutResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
-        ByteArray key = toByteArray(request.getKey());
-        ByteArray value = toByteArray(request.getValue());
+        byte[] key = toBytes(request.getKey());
+        byte[] value = toBytes(request.getValue());
         long leaseId = request.getLeaseId();
 
         proposer.put(key, value, leaseId)
@@ -121,7 +120,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void delete(DeleteRequest request, StreamObserver<DeleteResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
-        ByteArray key = toByteArray(request.getKey());
+        byte[] key = toBytes(request.getKey());
 
         proposer.delete(key)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
@@ -143,8 +142,8 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     public void scan(ScanRequest request, StreamObserver<ScanResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
 
-        ByteArray startKey = request.getStartKey().isEmpty() ? null : toByteArray(request.getStartKey());
-        ByteArray endKey = request.getEndKey().isEmpty() ? null : toByteArray(request.getEndKey());
+        byte[] startKey = request.getStartKey().isEmpty() ? null : toBytes(request.getStartKey());
+        byte[] endKey = request.getEndKey().isEmpty() ? null : toBytes(request.getEndKey());
         int limit = request.getLimit() > 0 ? request.getLimit() : Integer.MAX_VALUE;
 
         CompletableFuture<Stream<Entry>> future;
@@ -190,8 +189,8 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         List<CompletableFuture<KeyValue>> futures = new ArrayList<>();
 
         for (ByteString keyBytes : request.getKeysList()) {
-            ByteArray key = toByteArray(keyBytes);
-            Optional<ByteArray> value = kvStore.get(key);
+            byte[] key = toBytes(keyBytes);
+            Optional<byte[]> value = kvStore.get(key);
             CompletableFuture<KeyValue> kvFuture = CompletableFuture.completedFuture(buildKeyValue(keyBytes, value));
             futures.add(kvFuture);
         }
@@ -226,14 +225,14 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                 case PUT -> {
                     KvProto.PutOp put = writeOp.getPut();
                     yield proposer.put(
-                        toByteArray(put.getKey()),
-                        toByteArray(put.getValue()),
+                        toBytes(put.getKey()),
+                        toBytes(put.getValue()),
                         put.getLeaseId()
                     );
                 }
                 case DELETE -> {
                     KvProto.DeleteOp del = writeOp.getDelete();
-                    yield proposer.delete(toByteArray(del.getKey()));
+                    yield proposer.delete(toBytes(del.getKey()));
                 }
                 case OP_NOT_SET -> CompletableFuture.failedFuture(
                     new IllegalArgumentException("WriteOp type not set"));
@@ -329,15 +328,15 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         return Duration.ofMillis(header.getTimeoutMs());
     }
 
-    private static ByteArray toByteArray(ByteString bytes) {
-        return ByteArray.copyOf(bytes.toByteArray());
+    private static byte[] toBytes(ByteString bytes) {
+        return bytes.toByteArray();
     }
 
-    private static ByteString toByteString(ByteArray bytes) {
-        return ByteString.copyFrom(bytes.toByteArray());
+    private static ByteString toByteString(byte[] bytes) {
+        return ByteString.copyFrom(bytes);
     }
 
-    private static KeyValue buildKeyValue(ByteString key, Optional<ByteArray> value) {
+    private static KeyValue buildKeyValue(ByteString key, Optional<byte[]> value) {
         KeyValue.Builder builder = KeyValue.newBuilder()
             .setKey(key)
             .setFound(value.isPresent());

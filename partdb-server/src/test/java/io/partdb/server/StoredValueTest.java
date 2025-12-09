@@ -1,6 +1,5 @@
 package io.partdb.server;
 
-import io.partdb.common.ByteArray;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -10,7 +9,7 @@ class StoredValueTest {
     @Test
     void encodeDecodeRoundTrip() {
         var original = new StoredValue(
-            ByteArray.copyOf("hello".getBytes()),
+            "hello".getBytes(),
             42L,
             123L
         );
@@ -18,14 +17,14 @@ class StoredValueTest {
         var encoded = original.encode();
         var decoded = StoredValue.decode(encoded);
 
-        assertArrayEquals(original.value().toByteArray(), decoded.value().toByteArray());
+        assertArrayEquals(original.value(), decoded.value());
         assertEquals(original.version(), decoded.version());
         assertEquals(original.leaseId(), decoded.leaseId());
     }
 
     @Test
     void preservesVersion() {
-        var stored = new StoredValue(ByteArray.copyOf("data".getBytes()), 999L, 0L);
+        var stored = new StoredValue("data".getBytes(), 999L, 0L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -34,7 +33,7 @@ class StoredValueTest {
 
     @Test
     void preservesLeaseId() {
-        var stored = new StoredValue(ByteArray.copyOf("data".getBytes()), 1L, 456L);
+        var stored = new StoredValue("data".getBytes(), 1L, 456L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -43,7 +42,7 @@ class StoredValueTest {
 
     @Test
     void handlesZeroLeaseId() {
-        var stored = new StoredValue(ByteArray.copyOf("data".getBytes()), 1L, 0L);
+        var stored = new StoredValue("data".getBytes(), 1L, 0L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -52,11 +51,11 @@ class StoredValueTest {
 
     @Test
     void handlesEmptyValue() {
-        var stored = new StoredValue(ByteArray.copyOf(new byte[0]), 1L, 0L);
+        var stored = new StoredValue(new byte[0], 1L, 0L);
 
         var decoded = StoredValue.decode(stored.encode());
 
-        assertEquals(0, decoded.value().toByteArray().length);
+        assertEquals(0, decoded.value().length);
     }
 
     @Test
@@ -65,17 +64,17 @@ class StoredValueTest {
         for (int i = 0; i < largeData.length; i++) {
             largeData[i] = (byte) (i % 256);
         }
-        var stored = new StoredValue(ByteArray.copyOf(largeData), 1L, 0L);
+        var stored = new StoredValue(largeData, 1L, 0L);
 
         var decoded = StoredValue.decode(stored.encode());
 
-        assertArrayEquals(largeData, decoded.value().toByteArray());
+        assertArrayEquals(largeData, decoded.value());
     }
 
     @Test
     void handlesMaxLongValues() {
         var stored = new StoredValue(
-            ByteArray.copyOf("data".getBytes()),
+            "data".getBytes(),
             Long.MAX_VALUE,
             Long.MAX_VALUE
         );
@@ -89,32 +88,26 @@ class StoredValueTest {
     @Test
     void encodedSizeIsHeaderPlusValue() {
         byte[] value = "test".getBytes();
-        var stored = new StoredValue(ByteArray.copyOf(value), 1L, 1L);
+        var stored = new StoredValue(value, 1L, 1L);
 
         var encoded = stored.encode();
 
-        assertEquals(16 + value.length, encoded.toByteArray().length);
+        assertEquals(16 + value.length, encoded.length);
     }
 
     @Test
     void differentValuesProduceDifferentEncodings() {
-        var stored1 = new StoredValue(ByteArray.copyOf("aaa".getBytes()), 1L, 1L);
-        var stored2 = new StoredValue(ByteArray.copyOf("bbb".getBytes()), 1L, 1L);
+        var stored1 = new StoredValue("aaa".getBytes(), 1L, 1L);
+        var stored2 = new StoredValue("bbb".getBytes(), 1L, 1L);
 
-        assertFalse(java.util.Arrays.equals(
-            stored1.encode().toByteArray(),
-            stored2.encode().toByteArray()
-        ));
+        assertFalse(java.util.Arrays.equals(stored1.encode(), stored2.encode()));
     }
 
     @Test
     void differentVersionsProduceDifferentEncodings() {
-        var stored1 = new StoredValue(ByteArray.copyOf("data".getBytes()), 1L, 0L);
-        var stored2 = new StoredValue(ByteArray.copyOf("data".getBytes()), 2L, 0L);
+        var stored1 = new StoredValue("data".getBytes(), 1L, 0L);
+        var stored2 = new StoredValue("data".getBytes(), 2L, 0L);
 
-        assertFalse(java.util.Arrays.equals(
-            stored1.encode().toByteArray(),
-            stored2.encode().toByteArray()
-        ));
+        assertFalse(java.util.Arrays.equals(stored1.encode(), stored2.encode()));
     }
 }
