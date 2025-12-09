@@ -18,7 +18,7 @@ public record StoredValue(
         buffer.putLong(version);
         buffer.putLong(leaseId);
         buffer.put(valueBytes);
-        return ByteArray.wrap(buffer.array());
+        return ByteArray.copyOf(buffer.array());
     }
 
     public static StoredValue decode(ByteArray encoded) {
@@ -27,6 +27,6 @@ public record StoredValue(
         long leaseId = buffer.getLong();
         byte[] valueBytes = new byte[buffer.remaining()];
         buffer.get(valueBytes);
-        return new StoredValue(ByteArray.wrap(valueBytes), version, leaseId);
+        return new StoredValue(ByteArray.copyOf(valueBytes), version, leaseId);
     }
 }

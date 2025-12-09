@@ -10,68 +10,67 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-public final class BlockIndex {
+final class BlockIndex {
 
-    public record IndexEntry(ByteArray firstKey, long offset, int size) {}
+    record Entry(ByteArray firstKey, BlockHandle handle) {}
 
-    private final List<IndexEntry> entries;
+    private final List<Entry> entries;
 
-    public BlockIndex(List<IndexEntry> entries) {
-        this.entries = new ArrayList<>(entries);
+    public BlockIndex(List<Entry> entries) {
+        this.entries = List.copyOf(entries);
     }
 
-    public Optional<IndexEntry> findBlock(ByteArray key) {
+    public static BlockIndex deserialize(MemorySegment segment, int blockCount) {
+        List<Entry> entries = new ArrayList<>(blockCount);
+        long offset = 0;
+
+        for (int i = 0; i < blockCount; i++) {
+            int keyLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+            byte[] keyBytes = segment.asSlice(offset + 4, keyLength).toArray(ValueLayout.JAVA_BYTE);
+            ByteArray key = ByteArray.copyOf(keyBytes);
+
+            long blockOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 4 + keyLength);
+            int blockSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 4 + keyLength + 8);
+
+            entries.add(new Entry(key, new BlockHandle(blockOffset, blockSize)));
+            offset += 4 + keyLength + 8 + 4;
+        }
+
+        return new BlockIndex(entries);
+    }
+
+    public Optional<Entry> find(ByteArray key) {
+        int index = indexOf(key);
+        return index >= 0 ? Optional.of(entries.get(index)) : Optional.empty();
+    }
+
+    public List<Entry> findInRange(ByteArray startKey, ByteArray endKey) {
         if (entries.isEmpty()) {
-            return Optional.empty();
+            return List.of();
         }
-
-        int left = 0;
-        int right = entries.size() - 1;
-        IndexEntry candidate = null;
-
-        while (left <= right) {
-            int mid = left + (right - left) / 2;
-            IndexEntry entry = entries.get(mid);
-
-            int cmp = key.compareTo(entry.firstKey());
-            if (cmp >= 0) {
-                candidate = entry;
-                left = mid + 1;
-            } else {
-                right = mid - 1;
-            }
-        }
-
-        return Optional.ofNullable(candidate);
-    }
-
-    public List<IndexEntry> findBlocksInRange(ByteArray startKey, ByteArray endKey) {
-        List<IndexEntry> result = new ArrayList<>();
 
         int startIndex = 0;
         if (startKey != null) {
-            Optional<IndexEntry> startBlock = findBlock(startKey);
-            if (startBlock.isEmpty()) {
-                return result;
+            startIndex = indexOf(startKey);
+            if (startIndex < 0) {
+                return List.of();
             }
-            startIndex = entries.indexOf(startBlock.get());
         }
 
+        List<Entry> result = new ArrayList<>();
         for (int i = startIndex; i < entries.size(); i++) {
-            IndexEntry entry = entries.get(i);
-
+            Entry entry = entries.get(i);
             if (endKey != null && entry.firstKey().compareTo(endKey) >= 0) {
                 break;
             }
-
             result.add(entry);
         }
 
         return result;
     }
 
-    public List<IndexEntry> entries() {
-        return List.copyOf(entries);
+    public List<Entry> entries() {
+        return entries;
     }
 
     public int size() {
@@ -80,38 +79,43 @@ public final class BlockIndex {
 
     public byte[] serialize() {
         int totalSize = 0;
-        for (IndexEntry entry : entries) {
-            totalSize += 4 + entry.firstKey().size() + 8 + 4;
+        for (Entry entry : entries) {
+            totalSize += 4 + entry.firstKey().length() + 8 + 4;
         }
 
         ByteBuffer buffer = ByteBuffer.allocate(totalSize).order(ByteOrder.nativeOrder());
-        for (IndexEntry entry : entries) {
+        for (Entry entry : entries) {
             byte[] keyBytes = entry.firstKey().toByteArray();
             buffer.putInt(keyBytes.length);
             buffer.put(keyBytes);
-            buffer.putLong(entry.offset());
-            buffer.putInt(entry.size());
+            buffer.putLong(entry.handle().offset());
+            buffer.putInt(entry.handle().size());
         }
 
         return buffer.array();
     }
 
-    public static BlockIndex deserialize(MemorySegment segment, int blockCount) {
-        List<IndexEntry> entries = new ArrayList<>(blockCount);
-        long offset = 0;
-
-        for (int i = 0; i < blockCount; i++) {
-            int keyLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
-            byte[] keyBytes = segment.asSlice(offset + 4, keyLength).toArray(ValueLayout.JAVA_BYTE);
-            ByteArray key = ByteArray.wrap(keyBytes);
-
-            long blockOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 4 + keyLength);
-            int size = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 4 + keyLength + 8);
-
-            entries.add(new IndexEntry(key, blockOffset, size));
-            offset += 4 + keyLength + 8 + 4;
+    private int indexOf(ByteArray key) {
+        if (entries.isEmpty()) {
+            return -1;
         }
 
-        return new BlockIndex(entries);
+        int low = 0;
+        int high = entries.size() - 1;
+        int result = -1;
+
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            int cmp = key.compareTo(entries.get(mid).firstKey());
+
+            if (cmp >= 0) {
+                result = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        return result;
     }
 }

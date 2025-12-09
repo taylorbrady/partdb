@@ -1,32 +1,37 @@
 package io.partdb.storage.sstable;
 
 import io.partdb.common.ByteArray;
+import io.partdb.common.Timestamp;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Objects;
-import java.util.zip.CRC32;
+import java.util.zip.CRC32C;
 
-public record SSTableFooter(
+record SSTableFooter(
     long bloomFilterOffset,
     int bloomFilterSize,
     long indexOffset,
     int blockCount,
+    ByteArray smallestKey,
     ByteArray largestKey,
+    Timestamp smallestTimestamp,
+    Timestamp largestTimestamp,
     long entryCount,
     int checksum
 ) {
 
-    public static final int MIN_FOOTER_SIZE = 44;
-
-    public SSTableFooter {
+    SSTableFooter {
+        Objects.requireNonNull(smallestKey, "smallestKey cannot be null");
         Objects.requireNonNull(largestKey, "largestKey cannot be null");
+        Objects.requireNonNull(smallestTimestamp, "smallestTimestamp cannot be null");
+        Objects.requireNonNull(largestTimestamp, "largestTimestamp cannot be null");
     }
 
-    public byte[] serialize() {
-        int footerSize = calculateFooterSize(largestKey);
+    byte[] serialize() {
+        int footerSize = calculateFooterSize(smallestKey, largestKey);
         ByteBuffer buffer = ByteBuffer.allocate(footerSize).order(ByteOrder.nativeOrder());
 
         buffer.putLong(bloomFilterOffset);
@@ -34,21 +39,27 @@ public record SSTableFooter(
         buffer.putLong(indexOffset);
         buffer.putInt(blockCount);
 
-        buffer.putInt(largestKey.size());
+        buffer.putInt(smallestKey.length());
+        buffer.put(smallestKey.toByteArray());
+
+        buffer.putInt(largestKey.length());
         buffer.put(largestKey.toByteArray());
+
+        buffer.putLong(smallestTimestamp.value());
+        buffer.putLong(largestTimestamp.value());
 
         buffer.putLong(entryCount);
 
         buffer.putInt(footerSize);
 
-        CRC32 crc = new CRC32();
+        CRC32C crc = new CRC32C();
         crc.update(buffer.array(), 0, buffer.position());
         buffer.putInt((int) crc.getValue());
 
         return buffer.array();
     }
 
-    public static SSTableFooter deserialize(MemorySegment segment) {
+    static SSTableFooter deserialize(MemorySegment segment) {
         long offset = 0;
 
         long bloomFilterOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
@@ -60,11 +71,22 @@ public record SSTableFooter(
         int blockCount = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
         offset += 4;
 
+        int smallestKeySize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+        offset += 4;
+        byte[] smallestKeyBytes = segment.asSlice(offset, smallestKeySize).toArray(ValueLayout.JAVA_BYTE);
+        offset += smallestKeySize;
+        ByteArray smallestKey = ByteArray.copyOf(smallestKeyBytes);
+
         int largestKeySize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
         offset += 4;
         byte[] largestKeyBytes = segment.asSlice(offset, largestKeySize).toArray(ValueLayout.JAVA_BYTE);
         offset += largestKeySize;
-        ByteArray largestKey = ByteArray.wrap(largestKeyBytes);
+        ByteArray largestKey = ByteArray.copyOf(largestKeyBytes);
+
+        Timestamp smallestTimestamp = new Timestamp(segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset));
+        offset += 8;
+        Timestamp largestTimestamp = new Timestamp(segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset));
+        offset += 8;
 
         long entryCount = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
         offset += 8;
@@ -75,7 +97,7 @@ public record SSTableFooter(
         int expectedChecksum = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
 
         byte[] checksumData = segment.asSlice(0, footerSize - 4).toArray(ValueLayout.JAVA_BYTE);
-        CRC32 crc = new CRC32();
+        CRC32C crc = new CRC32C();
         crc.update(checksumData);
         int actualChecksum = (int) crc.getValue();
 
@@ -83,10 +105,14 @@ public record SSTableFooter(
             throw new SSTableException("Footer checksum mismatch");
         }
 
-        return new SSTableFooter(bloomFilterOffset, bloomFilterSize, indexOffset, blockCount, largestKey, entryCount, expectedChecksum);
+        return new SSTableFooter(
+            bloomFilterOffset, bloomFilterSize, indexOffset, blockCount,
+            smallestKey, largestKey, smallestTimestamp, largestTimestamp,
+            entryCount, expectedChecksum
+        );
     }
 
-    public static int calculateFooterSize(ByteArray largestKey) {
-        return 8 + 4 + 8 + 4 + 4 + largestKey.size() + 8 + 4 + 4;
+    static int calculateFooterSize(ByteArray smallestKey, ByteArray largestKey) {
+        return 8 + 4 + 8 + 4 + 4 + smallestKey.length() + 4 + largestKey.length() + 8 + 8 + 8 + 4 + 4;
     }
 }

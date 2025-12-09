@@ -1,4 +1,4 @@
-package io.partdb.storage.compaction;
+package io.partdb.storage.manifest;
 
 public final class ManifestException extends RuntimeException {
 

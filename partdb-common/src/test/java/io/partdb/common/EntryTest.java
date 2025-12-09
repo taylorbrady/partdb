@@ -77,27 +77,6 @@ class EntryTest {
     }
 
     @Test
-    void toKeyValueConvertsSuccessfully() {
-        ByteArray key = ByteArray.of((byte) 1);
-        ByteArray value = ByteArray.of((byte) 2);
-        Entry entry = Entry.put(key, value, 1000L);
-
-        KeyValue pair = entry.toKeyValue();
-
-        assertThat(pair.key()).isEqualTo(key);
-        assertThat(pair.value()).isEqualTo(value);
-    }
-
-    @Test
-    void toKeyValueThrowsForTombstone() {
-        Entry entry = Entry.delete(ByteArray.of((byte) 1), 1000L);
-
-        assertThatThrownBy(entry::toKeyValue)
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("Cannot convert tombstone to KeyValue");
-    }
-
-    @Test
     void equalsWorksForSameContent() {
         ByteArray key = ByteArray.of((byte) 1);
         ByteArray value = ByteArray.of((byte) 2);

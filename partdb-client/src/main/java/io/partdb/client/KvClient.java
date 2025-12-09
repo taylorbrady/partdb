@@ -5,7 +5,6 @@ import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
 import io.partdb.common.ByteArray;
-import io.partdb.common.CloseableIterator;
 import io.partdb.protocol.kv.proto.KvProto;
 import io.partdb.protocol.kv.proto.KvServiceGrpc;
 
@@ -21,6 +20,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 public final class KvClient implements AutoCloseable {
 
@@ -148,11 +148,11 @@ public final class KvClient implements AutoCloseable {
         });
     }
 
-    public CompletableFuture<CloseableIterator<KeyValue>> scan(ByteArray startKey, ByteArray endKey) {
+    public CompletableFuture<Stream<KeyValue>> scan(ByteArray startKey, ByteArray endKey) {
         return scan(startKey, endKey, 0, ReadConsistency.LINEARIZABLE);
     }
 
-    public CompletableFuture<CloseableIterator<KeyValue>> scan(
+    public CompletableFuture<Stream<KeyValue>> scan(
         ByteArray startKey,
         ByteArray endKey,
         int limit,
@@ -194,7 +194,7 @@ public final class KvClient implements AutoCloseable {
             }
         });
 
-        return CompletableFuture.completedFuture(iterator);
+        return CompletableFuture.completedFuture(iterator.toStream());
     }
 
     public CompletableFuture<List<KeyValue>> batchGet(List<ByteArray> keys) {

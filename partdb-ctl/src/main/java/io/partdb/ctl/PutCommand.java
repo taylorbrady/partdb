@@ -55,8 +55,8 @@ final class PutCommand {
 
         var config = KvClientConfig.defaultConfig(endpoint);
         try (var client = new KvClient(config)) {
-            ByteArray keyBytes = ByteArray.wrap(key.getBytes(StandardCharsets.UTF_8));
-            ByteArray valueBytes = ByteArray.wrap(value.getBytes(StandardCharsets.UTF_8));
+            ByteArray keyBytes = ByteArray.copyOf(key.getBytes(StandardCharsets.UTF_8));
+            ByteArray valueBytes = ByteArray.copyOf(value.getBytes(StandardCharsets.UTF_8));
             client.put(keyBytes, valueBytes).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
             out.println("OK");
             return 0;

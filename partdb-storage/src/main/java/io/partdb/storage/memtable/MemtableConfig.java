@@ -10,7 +10,7 @@ public record MemtableConfig(long maxSizeInBytes) {
         }
     }
 
-    public static MemtableConfig create() {
+    public static MemtableConfig defaults() {
         return new MemtableConfig(DEFAULT_MAX_SIZE);
     }
 }

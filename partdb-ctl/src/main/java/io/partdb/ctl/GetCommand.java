@@ -53,7 +53,7 @@ final class GetCommand {
 
         var config = KvClientConfig.defaultConfig(endpoint);
         try (var client = new KvClient(config)) {
-            ByteArray keyBytes = ByteArray.wrap(key.getBytes(StandardCharsets.UTF_8));
+            ByteArray keyBytes = ByteArray.copyOf(key.getBytes(StandardCharsets.UTF_8));
             Optional<ByteArray> result = client.get(keyBytes).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             if (result.isPresent()) {

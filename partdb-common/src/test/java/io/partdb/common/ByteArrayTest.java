@@ -7,44 +7,44 @@ import static org.assertj.core.api.Assertions.*;
 class ByteArrayTest {
 
     @Test
-    void wrapCreatesInstanceWithFullArray() {
+    void copyOfCreatesInstanceWithFullArray() {
         byte[] data = {1, 2, 3, 4, 5};
-        ByteArray ba = ByteArray.wrap(data);
+        ByteArray ba = ByteArray.copyOf(data);
 
-        assertThat(ba.size()).isEqualTo(5);
+        assertThat(ba.length()).isEqualTo(5);
         assertThat(ba.get(0)).isEqualTo((byte) 1);
         assertThat(ba.get(4)).isEqualTo((byte) 5);
     }
 
     @Test
-    void wrapWithOffsetAndLength() {
+    void copyOfWithOffsetAndLength() {
         byte[] data = {1, 2, 3, 4, 5};
-        ByteArray ba = ByteArray.wrap(data, 1, 3);
+        ByteArray ba = ByteArray.copyOf(data, 1, 3);
 
-        assertThat(ba.size()).isEqualTo(3);
+        assertThat(ba.length()).isEqualTo(3);
         assertThat(ba.get(0)).isEqualTo((byte) 2);
         assertThat(ba.get(2)).isEqualTo((byte) 4);
     }
 
     @Test
-    void wrapWithInvalidOffsetThrows() {
+    void copyOfWithInvalidOffsetThrows() {
         byte[] data = {1, 2, 3};
-        assertThatThrownBy(() -> ByteArray.wrap(data, -1, 2))
+        assertThatThrownBy(() -> ByteArray.copyOf(data, -1, 2))
             .isInstanceOf(IndexOutOfBoundsException.class);
-        assertThatThrownBy(() -> ByteArray.wrap(data, 2, 5))
+        assertThatThrownBy(() -> ByteArray.copyOf(data, 2, 5))
             .isInstanceOf(IndexOutOfBoundsException.class);
     }
 
     @Test
     void emptyReturnsEmptyInstance() {
         ByteArray empty = ByteArray.empty();
-        assertThat(empty.size()).isZero();
+        assertThat(empty.length()).isZero();
         assertThat(empty.isEmpty()).isTrue();
     }
 
     @Test
-    void wrapEmptyArrayReturnsSameInstance() {
-        ByteArray ba1 = ByteArray.wrap(new byte[0]);
+    void copyOfEmptyArrayReturnsSameInstance() {
+        ByteArray ba1 = ByteArray.copyOf(new byte[0]);
         ByteArray ba2 = ByteArray.empty();
         assertThat(ba1).isSameAs(ba2);
     }
@@ -63,7 +63,7 @@ class ByteArrayTest {
     void ofVarargsCreatesInstance() {
         ByteArray ba = ByteArray.of((byte) 1, (byte) 2, (byte) 3);
 
-        assertThat(ba.size()).isEqualTo(3);
+        assertThat(ba.length()).isEqualTo(3);
         assertThat(ba.get(0)).isEqualTo((byte) 1);
         assertThat(ba.get(2)).isEqualTo((byte) 3);
     }
@@ -73,7 +73,7 @@ class ByteArrayTest {
         ByteArray ba = ByteArray.of((byte) 1, (byte) 2, (byte) 3, (byte) 4, (byte) 5);
         ByteArray slice = ba.slice(1, 3);
 
-        assertThat(slice.size()).isEqualTo(3);
+        assertThat(slice.length()).isEqualTo(3);
         assertThat(slice.get(0)).isEqualTo((byte) 2);
         assertThat(slice.get(2)).isEqualTo((byte) 4);
     }
@@ -91,9 +91,9 @@ class ByteArrayTest {
     void getWithInvalidIndexThrows() {
         ByteArray ba = ByteArray.of((byte) 1, (byte) 2);
         assertThatThrownBy(() -> ba.get(-1))
-            .isInstanceOf(IndexOutOfBoundsException.class);
+            .isInstanceOf(ArrayIndexOutOfBoundsException.class);
         assertThatThrownBy(() -> ba.get(2))
-            .isInstanceOf(IndexOutOfBoundsException.class);
+            .isInstanceOf(ArrayIndexOutOfBoundsException.class);
     }
 
     @Test
@@ -126,7 +126,7 @@ class ByteArrayTest {
     @Test
     void equalsWorksWithSlices() {
         byte[] data = {0, 1, 2, 3, 4, 5};
-        ByteArray ba1 = ByteArray.wrap(data, 1, 3);
+        ByteArray ba1 = ByteArray.copyOf(data, 1, 3);
         ByteArray ba2 = ByteArray.of((byte) 1, (byte) 2, (byte) 3);
 
         assertThat(ba1).isEqualTo(ba2);
@@ -184,7 +184,7 @@ class ByteArrayTest {
     @Test
     void toStringTruncatesLongArrays() {
         byte[] data = new byte[50];
-        ByteArray ba = ByteArray.wrap(data);
+        ByteArray ba = ByteArray.copyOf(data);
         String str = ba.toString();
 
         assertThat(str).contains("...");

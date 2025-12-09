@@ -31,11 +31,4 @@ public record Entry(
     public static Entry delete(ByteArray key, long version) {
         return new Entry(key, null, version, true, 0);
     }
-
-    public KeyValue toKeyValue() {
-        if (tombstone) {
-            throw new IllegalStateException("Cannot convert tombstone to KeyValue");
-        }
-        return new KeyValue(key, value);
-    }
 }

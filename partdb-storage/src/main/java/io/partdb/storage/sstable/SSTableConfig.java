@@ -1,6 +1,9 @@
 package io.partdb.storage.sstable;
 
-public record SSTableConfig(int blockSize, double bloomFilterFalsePositiveRate) {
+public record SSTableConfig(
+    int blockSize,
+    double bloomFilterFalsePositiveRate
+) {
 
     public static final int DEFAULT_BLOCK_SIZE = 8 * 1024;
     public static final double DEFAULT_BLOOM_FILTER_FPR = 0.01;
@@ -14,7 +17,7 @@ public record SSTableConfig(int blockSize, double bloomFilterFalsePositiveRate) 
         }
     }
 
-    public static SSTableConfig create() {
+    public static SSTableConfig defaults() {
         return new SSTableConfig(DEFAULT_BLOCK_SIZE, DEFAULT_BLOOM_FILTER_FPR);
     }
 }

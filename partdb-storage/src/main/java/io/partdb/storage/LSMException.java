@@ -3,7 +3,7 @@ package io.partdb.storage;
 public sealed class LSMException extends RuntimeException
     permits LSMException.FlushException,
             LSMException.RecoveryException,
-            LSMException.SnapshotException,
+            LSMException.CheckpointException,
             LSMException.ConcurrencyException {
 
     public LSMException(String message) {
@@ -26,8 +26,8 @@ public sealed class LSMException extends RuntimeException
         }
     }
 
-    public static final class SnapshotException extends LSMException {
-        public SnapshotException(String message, Throwable cause) {
+    public static final class CheckpointException extends LSMException {
+        public CheckpointException(String message, Throwable cause) {
             super(message, cause);
         }
     }

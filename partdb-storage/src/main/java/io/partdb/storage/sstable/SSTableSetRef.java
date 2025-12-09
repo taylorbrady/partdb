@@ -1,13 +1,11 @@
-package io.partdb.storage;
-
-import io.partdb.storage.sstable.SSTableReader;
+package io.partdb.storage.sstable;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class SSTableSet {
+public final class SSTableSetRef {
 
     private static final int RETIRED_BIT = 1 << 30;
     private static final int COUNT_MASK = RETIRED_BIT - 1;
@@ -16,31 +14,31 @@ public final class SSTableSet {
 
     static {
         try {
-            STATE = MethodHandles.lookup().findVarHandle(SSTableSet.class, "state", int.class);
+            STATE = MethodHandles.lookup().findVarHandle(SSTableSetRef.class, "state", int.class);
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
     }
 
     public sealed interface AcquireResult {
-        record Success(SSTableSet sstableSet) implements AcquireResult {}
+        record Success(SSTableSetRef sstableSet) implements AcquireResult {}
         record Retired() implements AcquireResult {}
     }
 
-    private final List<SSTableReader> readers;
+    private final List<SSTable> readers;
     private volatile int state;
-    private volatile List<SSTableReader> readersToClose;
+    private volatile List<SSTable> readersToClose;
     private final AtomicBoolean closed;
 
-    private SSTableSet(List<SSTableReader> readers) {
+    private SSTableSetRef(List<SSTable> readers) {
         this.readers = readers;
         this.state = 0;
         this.readersToClose = List.of();
         this.closed = new AtomicBoolean(false);
     }
 
-    public static SSTableSet of(List<SSTableReader> readers) {
-        return new SSTableSet(List.copyOf(readers));
+    public static SSTableSetRef of(List<SSTable> readers) {
+        return new SSTableSetRef(List.copyOf(readers));
     }
 
     public AcquireResult tryAcquire() {
@@ -60,7 +58,7 @@ public final class SSTableSet {
             int current = (int) STATE.getVolatile(this);
             int currentCount = current & COUNT_MASK;
             if (currentCount <= 0) {
-                throw new IllegalStateException("SSTableSet over-released");
+                throw new IllegalStateException("SSTableSetRef over-released");
             }
 
             int newState = (current & RETIRED_BIT) | (currentCount - 1);
@@ -74,7 +72,7 @@ public final class SSTableSet {
         }
     }
 
-    public void retire(List<SSTableReader> orphanedReaders) {
+    public void retire(List<SSTable> orphanedReaders) {
         this.readersToClose = List.copyOf(orphanedReaders);
         VarHandle.releaseFence();
 
@@ -100,13 +98,13 @@ public final class SSTableSet {
 
     private void closeOrphanedReaders() {
         if (closed.compareAndSet(false, true)) {
-            for (SSTableReader reader : readersToClose) {
+            for (SSTable reader : readersToClose) {
                 reader.close();
             }
         }
     }
 
-    public List<SSTableReader> readers() {
+    public List<SSTable> readers() {
         return readers;
     }
 }

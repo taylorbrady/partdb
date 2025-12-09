@@ -36,7 +36,6 @@ import io.partdb.server.Proposer;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -44,6 +43,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Stream;
 
 public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
 
@@ -147,7 +147,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         ByteArray endKey = request.getEndKey().isEmpty() ? null : toByteArray(request.getEndKey());
         int limit = request.getLimit() > 0 ? request.getLimit() : Integer.MAX_VALUE;
 
-        CompletableFuture<Iterator<Entry>> future;
+        CompletableFuture<Stream<Entry>> future;
         if (request.getConsistency() == ReadConsistency.STALE) {
             future = CompletableFuture.completedFuture(kvStore.scan(startKey, endKey));
         } else {
@@ -156,7 +156,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
 
         future
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((iterator, ex) -> {
+            .whenComplete((stream, ex) -> {
                 if (ex != null) {
                     responseObserver.onNext(ScanResponse.newBuilder()
                         .setError(toProtoError(ex))
@@ -165,22 +165,15 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                     return;
                 }
 
-                try {
-                    int count = 0;
-                    while (iterator.hasNext() && count < limit) {
-                        Entry entry = iterator.next();
-                        responseObserver.onNext(ScanResponse.newBuilder()
+                try (stream) {
+                    stream
+                        .limit(limit)
+                        .forEach(entry -> responseObserver.onNext(ScanResponse.newBuilder()
                             .setError(okError())
                             .setKey(toByteString(entry.key()))
                             .setValue(toByteString(entry.value()))
                             .setRevision(entry.version())
-                            .build());
-                        count++;
-                    }
-
-                    if (iterator instanceof AutoCloseable closeable) {
-                        closeable.close();
-                    }
+                            .build()));
                 } catch (Exception e) {
                     responseObserver.onNext(ScanResponse.newBuilder()
                         .setError(toProtoError(e))
@@ -337,7 +330,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     }
 
     private static ByteArray toByteArray(ByteString bytes) {
-        return ByteArray.wrap(bytes.toByteArray());
+        return ByteArray.copyOf(bytes.toByteArray());
     }
 
     private static ByteString toByteString(ByteArray bytes) {

@@ -1,20 +1,18 @@
 package io.partdb.storage;
 
 import io.partdb.common.ByteArray;
-import io.partdb.common.CloseableIterator;
-import io.partdb.common.KeyValue;
+import io.partdb.common.Timestamp;
+import io.partdb.storage.sstable.SSTableSetRef;
+import io.partdb.storage.sstable.SSTableSetRef.AcquireResult;
 import io.partdb.storage.compaction.CompactionStrategy;
 import io.partdb.storage.compaction.CompactionTask;
-import io.partdb.storage.compaction.LeveledCompactionConfig;
+import io.partdb.storage.compaction.Compactor;
 import io.partdb.storage.compaction.LeveledCompactionStrategy;
-import io.partdb.storage.compaction.Manifest;
-import io.partdb.storage.compaction.ManifestFile;
-import io.partdb.storage.compaction.SSTableMetadata;
-import io.partdb.storage.SSTableSet.AcquireResult;
+import io.partdb.storage.manifest.Manifest;
+import io.partdb.storage.manifest.SSTableInfo;
 import io.partdb.storage.memtable.Memtable;
 import io.partdb.storage.memtable.SkipListMemtable;
-import io.partdb.storage.sstable.SSTableReader;
-import io.partdb.storage.sstable.SSTableWriter;
+import io.partdb.storage.sstable.SSTable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,22 +23,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.concurrent.locks.StampedLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 public final class LSMTree implements AutoCloseable {
 
@@ -54,9 +47,10 @@ public final class LSMTree implements AutoCloseable {
 
     private final Path dataDirectory;
     private final LSMConfig config;
+    private final SnapshotRegistry snapshotRegistry;
     private final AtomicReference<Memtable> activeMemtable;
-    private final Deque<Memtable> immutableMemtables;
-    private final StampedLock memtableLock;
+    private final ReentrantLock immutableMemtablesLock;
+    private volatile List<Memtable> immutableMemtables;
     private final ReentrantLock rotationLock;
     private final ReentrantLock manifestLock;
     private final Semaphore flushPermits;
@@ -64,23 +58,29 @@ public final class LSMTree implements AutoCloseable {
     private final ExecutorService flushExecutor;
     private final AtomicBoolean closed;
 
-    private volatile SSTableSet sstableSet;
+    private volatile SSTableSetRef sstableSet;
     private volatile Manifest manifest;
-    private Compactor compactor;
+    private final Compactor compactor;
+    private final CompactionStrategy compactionStrategy;
+    private final ExecutorService compactionExecutor;
+    private final AtomicBoolean compacting;
 
     private LSMTree(
         Path dataDirectory,
         LSMConfig config,
         Memtable activeMemtable,
-        SSTableSet sstableSet,
+        SSTableSetRef sstableSet,
         Manifest manifest,
-        AtomicLong sstableIdCounter
+        AtomicLong sstableIdCounter,
+        Compactor compactor,
+        CompactionStrategy compactionStrategy
     ) {
         this.dataDirectory = dataDirectory;
         this.config = config;
+        this.snapshotRegistry = new SnapshotRegistry();
         this.activeMemtable = new AtomicReference<>(activeMemtable);
-        this.immutableMemtables = new ArrayDeque<>();
-        this.memtableLock = new StampedLock();
+        this.immutableMemtablesLock = new ReentrantLock();
+        this.immutableMemtables = List.of();
         this.rotationLock = new ReentrantLock();
         this.manifestLock = new ReentrantLock();
         this.flushPermits = new Semaphore(MAX_IMMUTABLE_MEMTABLES);
@@ -89,56 +89,235 @@ public final class LSMTree implements AutoCloseable {
         this.closed = new AtomicBoolean(false);
         this.sstableSet = sstableSet;
         this.manifest = manifest;
+        this.compactor = compactor;
+        this.compactionStrategy = compactionStrategy;
+        this.compactionExecutor = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
+        this.compacting = new AtomicBoolean(false);
     }
 
     public static LSMTree open(Path dataDirectory, LSMConfig config) {
         try {
             Files.createDirectories(dataDirectory);
 
-            Manifest manifest = ManifestFile.read(dataDirectory);
-            List<SSTableReader> sstables;
+            Manifest manifest = Manifest.readFrom(dataDirectory);
+            List<SSTable> sstables;
 
             if (manifest.sstables().isEmpty()) {
                 sstables = loadSSTables(dataDirectory);
 
                 if (!sstables.isEmpty()) {
                     manifest = buildManifestFromSSTables(sstables);
-                    ManifestFile.write(dataDirectory, manifest);
+                    manifest.writeTo(dataDirectory);
                 }
             } else {
                 sstables = loadSSTablesFromManifest(dataDirectory, manifest);
             }
 
-            Memtable memtable = new SkipListMemtable(config.memtableConfig());
+            Memtable memtable = new SkipListMemtable();
+            AtomicLong idCounter = new AtomicLong(manifest.nextSSTableId());
 
-            LSMTree tree = new LSMTree(
+            CompactionStrategy strategy = new LeveledCompactionStrategy(
+                config.leveledCompactionConfig()
+            );
+
+            Compactor compactor = new Compactor(
+                idCounter::incrementAndGet,
+                id -> dataDirectory.resolve(String.format("%06d.sst", id)),
+                config.sstableConfig(),
+                config.compactionConfig()
+            );
+
+            return new LSMTree(
                 dataDirectory,
                 config,
                 memtable,
-                SSTableSet.of(sstables),
+                SSTableSetRef.of(sstables),
                 manifest,
-                new AtomicLong(manifest.nextSSTableId())
+                idCounter,
+                compactor,
+                strategy
             );
-
-            LeveledCompactionStrategy strategy = new LeveledCompactionStrategy(
-                LeveledCompactionConfig.create()
-            );
-            tree.compactor = tree.new Compactor(strategy);
-
-            return tree;
         } catch (IOException e) {
             throw new LSMException.RecoveryException("Failed to open store", e);
         }
     }
 
-    public void put(ByteArray key, ByteArray value) {
-        Entry entry = new Entry.Data(key, value);
+    public void put(ByteArray key, ByteArray value, Timestamp timestamp) {
+        Entry entry = new Entry.Put(key, timestamp, value);
         putEntry(entry);
     }
 
-    public void delete(ByteArray key) {
-        Entry entry = new Entry.Tombstone(key);
+    public void delete(ByteArray key, Timestamp timestamp) {
+        Entry entry = new Entry.Tombstone(key, timestamp);
         putEntry(entry);
+    }
+
+    public void write(WriteBatch batch, Timestamp timestamp) {
+        for (WriteBatch.BatchEntry entry : batch.entries()) {
+            switch (entry) {
+                case WriteBatch.BatchEntry.Put p ->
+                    putEntry(new Entry.Put(p.key(), timestamp, p.value()));
+                case WriteBatch.BatchEntry.Delete d ->
+                    putEntry(new Entry.Tombstone(d.key(), timestamp));
+            }
+        }
+    }
+
+    public Snapshot snapshot(Timestamp readTimestamp) {
+        snapshotRegistry.register(readTimestamp);
+        return new Snapshot(readTimestamp);
+    }
+
+    public void flush() {
+        rotationLock.lock();
+        try {
+            Memtable current = activeMemtable.get();
+            if (current.entryCount() == 0) {
+                awaitPendingFlushes();
+                return;
+            }
+
+            try {
+                flushPermits.acquire();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new LSMException.FlushException("Interrupted waiting for flush permit", e);
+            }
+
+            Memtable newMemtable = new SkipListMemtable();
+            immutableMemtablesLock.lock();
+            try {
+                var updated = new ArrayList<>(immutableMemtables);
+                updated.add(current);
+                immutableMemtables = List.copyOf(updated);
+            } finally {
+                immutableMemtablesLock.unlock();
+            }
+            activeMemtable.set(newMemtable);
+
+            flushExecutor.submit(this::flushPendingMemtables);
+        } finally {
+            rotationLock.unlock();
+        }
+
+        awaitPendingFlushes();
+    }
+
+    public byte[] checkpoint() {
+        flush();
+
+        try {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            ByteBuffer header = ByteBuffer.allocate(8);
+
+            manifestLock.lock();
+            try {
+                header.putLong(manifest.nextSSTableId());
+                output.write(header.array());
+
+                ByteBuffer countBuffer = ByteBuffer.allocate(4);
+                countBuffer.putInt(manifest.sstables().size());
+                output.write(countBuffer.array());
+
+                for (SSTableInfo meta : manifest.sstables()) {
+                    ByteBuffer metaBuffer = ByteBuffer.allocate(meta.serializedSize());
+                    meta.writeTo(metaBuffer);
+                    output.write(metaBuffer.array());
+                }
+            } finally {
+                manifestLock.unlock();
+            }
+
+            return output.toByteArray();
+        } catch (IOException e) {
+            throw new LSMException.CheckpointException("Failed to create checkpoint", e);
+        }
+    }
+
+    public void restoreFromCheckpoint(byte[] data) {
+        rotationLock.lock();
+        try {
+            awaitPendingFlushes();
+
+            ByteBuffer buffer = ByteBuffer.wrap(data);
+
+            long nextSSTableId = buffer.getLong();
+            int sstableCount = buffer.getInt();
+
+            List<SSTableInfo> metadataList = new ArrayList<>(sstableCount);
+            for (int i = 0; i < sstableCount; i++) {
+                metadataList.add(SSTableInfo.readFrom(buffer));
+            }
+
+            Manifest newManifest = new Manifest(nextSSTableId, metadataList);
+            List<SSTable> newReaders = loadSSTablesFromManifest(dataDirectory, newManifest);
+
+            manifestLock.lock();
+            try {
+                manifest = newManifest;
+                manifest.writeTo(dataDirectory);
+                sstableIdCounter.set(nextSSTableId);
+
+                SSTableSetRef oldSet = sstableSet;
+                List<SSTable> orphanedReaders = new ArrayList<>(oldSet.readers());
+                sstableSet = SSTableSetRef.of(newReaders);
+                oldSet.retire(orphanedReaders);
+            } finally {
+                manifestLock.unlock();
+            }
+
+            Memtable newMemtable = new SkipListMemtable();
+            immutableMemtablesLock.lock();
+            try {
+                immutableMemtables = List.of();
+            } finally {
+                immutableMemtablesLock.unlock();
+            }
+            activeMemtable.set(newMemtable);
+        } catch (Exception e) {
+            throw new LSMException.CheckpointException("Failed to restore from checkpoint", e);
+        } finally {
+            rotationLock.unlock();
+        }
+    }
+
+    public Manifest manifest() {
+        manifestLock.lock();
+        try {
+            return manifest;
+        } finally {
+            manifestLock.unlock();
+        }
+    }
+
+    @Override
+    public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+
+        flush();
+
+        flushExecutor.shutdown();
+        compactionExecutor.shutdown();
+        try {
+            if (!flushExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+                flushExecutor.shutdownNow();
+            }
+            if (!compactionExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                compactionExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            flushExecutor.shutdownNow();
+            compactionExecutor.shutdownNow();
+        }
+
+        SSTableSetRef finalSet = sstableSet;
+        List<SSTable> allReaders = new ArrayList<>(finalSet.readers());
+        finalSet.retire(allReaders);
+
+        awaitDrain(finalSet, SHUTDOWN_DRAIN_TIMEOUT);
     }
 
     private void putEntry(Entry entry) {
@@ -170,14 +349,16 @@ public final class LSMTree implements AutoCloseable {
                 throw new LSMException.FlushException("Interrupted waiting for flush permit", e);
             }
 
-            Memtable newMemtable = new SkipListMemtable(config.memtableConfig());
-            long stamp = memtableLock.writeLock();
+            Memtable newMemtable = new SkipListMemtable();
+            immutableMemtablesLock.lock();
             try {
-                immutableMemtables.addLast(current);
-                activeMemtable.set(newMemtable);
+                var updated = new ArrayList<>(immutableMemtables);
+                updated.add(current);
+                immutableMemtables = List.copyOf(updated);
             } finally {
-                memtableLock.unlockWrite(stamp);
+                immutableMemtablesLock.unlock();
             }
+            activeMemtable.set(newMemtable);
 
             flushExecutor.submit(this::flushPendingMemtables);
         } finally {
@@ -185,85 +366,18 @@ public final class LSMTree implements AutoCloseable {
         }
     }
 
-    public Optional<ByteArray> get(ByteArray key) {
-        Optional<Entry> result = activeMemtable.get().get(key);
-        if (result.isPresent()) {
-            return toValue(result.get());
-        }
-
-        long stamp = memtableLock.tryOptimisticRead();
-        List<Memtable> immutablesCopy = List.copyOf(immutableMemtables);
-        if (!memtableLock.validate(stamp)) {
-            stamp = memtableLock.readLock();
-            try {
-                immutablesCopy = List.copyOf(immutableMemtables);
-            } finally {
-                memtableLock.unlockRead(stamp);
-            }
-        }
-
-        for (Memtable immutable : immutablesCopy) {
-            result = immutable.get(key);
-            if (result.isPresent()) {
-                return toValue(result.get());
-            }
-        }
-
-        SSTableSet acquired = acquireSSTableSet();
-        try {
-            for (SSTableReader sstable : acquired.readers()) {
-                result = sstable.get(key);
-                if (result.isPresent()) {
-                    return toValue(result.get());
-                }
-            }
-            return Optional.empty();
-        } finally {
-            acquired.release();
-        }
-    }
-
-    private Optional<ByteArray> toValue(Entry entry) {
+    private Optional<KeyValue> toKeyValue(Entry entry) {
         return switch (entry) {
             case Entry.Tombstone _ -> Optional.empty();
-            case Entry.Data data -> Optional.of(data.value());
+            case Entry.Put p -> Optional.of(new KeyValue(p.key(), p.value(), p.timestamp()));
         };
     }
 
-    public CloseableIterator<KeyValue> scan(ByteArray startKey, ByteArray endKey) {
-        List<CloseableIterator<Entry>> iterators = new ArrayList<>();
-
-        iterators.add(activeMemtable.get().scan(startKey, endKey));
-
-        long stamp = memtableLock.tryOptimisticRead();
-        List<Memtable> immutablesCopy = List.copyOf(immutableMemtables);
-        if (!memtableLock.validate(stamp)) {
-            stamp = memtableLock.readLock();
-            try {
-                immutablesCopy = List.copyOf(immutableMemtables);
-            } finally {
-                memtableLock.unlockRead(stamp);
-            }
-        }
-
-        for (Memtable immutable : immutablesCopy) {
-            iterators.add(immutable.scan(startKey, endKey));
-        }
-
-        SSTableSet acquired = acquireSSTableSet();
-        for (SSTableReader sstable : acquired.readers()) {
-            iterators.add(sstable.scan(startKey, endKey));
-        }
-
-        MergingIterator merged = new MergingIterator(iterators);
-        return new KeyValueIterator(merged, acquired);
-    }
-
-    private SSTableSet acquireSSTableSet() {
+    private SSTableSetRef acquireSSTableSetRef() {
         long backoffNanos = INITIAL_BACKOFF_NANOS;
 
         for (int attempt = 0; attempt < MAX_SSTABLE_SET_ACQUIRE_ATTEMPTS; attempt++) {
-            SSTableSet current = sstableSet;
+            SSTableSetRef current = sstableSet;
             AcquireResult result = current.tryAcquire();
 
             switch (result) {
@@ -282,126 +396,17 @@ public final class LSMTree implements AutoCloseable {
         }
 
         throw new LSMException.ConcurrencyException(
-            "Failed to acquire SSTableSet after " + MAX_SSTABLE_SET_ACQUIRE_ATTEMPTS + " attempts"
+            "Failed to acquire SSTableSetRef after " + MAX_SSTABLE_SET_ACQUIRE_ATTEMPTS + " attempts"
         );
-    }
-
-    public byte[] snapshot() {
-        flush();
-
-        try {
-            ByteArrayOutputStream output = new ByteArrayOutputStream();
-            ByteBuffer header = ByteBuffer.allocate(8);
-
-            manifestLock.lock();
-            try {
-                header.putLong(manifest.nextSSTableId());
-                output.write(header.array());
-
-                ByteBuffer countBuffer = ByteBuffer.allocate(4);
-                countBuffer.putInt(manifest.sstables().size());
-                output.write(countBuffer.array());
-
-                for (SSTableMetadata meta : manifest.sstables()) {
-                    ByteBuffer metaBuffer = ByteBuffer.allocate(meta.serializedSize());
-                    meta.writeTo(metaBuffer);
-                    output.write(metaBuffer.array());
-                }
-            } finally {
-                manifestLock.unlock();
-            }
-
-            return output.toByteArray();
-        } catch (IOException e) {
-            throw new LSMException.SnapshotException("Failed to create snapshot", e);
-        }
-    }
-
-    public void restore(byte[] data) {
-        rotationLock.lock();
-        try {
-            awaitPendingFlushes();
-
-            ByteBuffer buffer = ByteBuffer.wrap(data);
-
-            long nextSSTableId = buffer.getLong();
-            int sstableCount = buffer.getInt();
-
-            List<SSTableMetadata> metadataList = new ArrayList<>(sstableCount);
-            for (int i = 0; i < sstableCount; i++) {
-                metadataList.add(SSTableMetadata.readFrom(buffer));
-            }
-
-            Manifest newManifest = new Manifest(nextSSTableId, metadataList);
-            List<SSTableReader> newReaders = loadSSTablesFromManifest(dataDirectory, newManifest);
-
-            manifestLock.lock();
-            try {
-                manifest = newManifest;
-                ManifestFile.write(dataDirectory, manifest);
-                sstableIdCounter.set(nextSSTableId);
-
-                SSTableSet oldSet = sstableSet;
-                List<SSTableReader> orphanedReaders = new ArrayList<>(oldSet.readers());
-                sstableSet = SSTableSet.of(newReaders);
-                oldSet.retire(orphanedReaders);
-            } finally {
-                manifestLock.unlock();
-            }
-
-            Memtable newMemtable = new SkipListMemtable(config.memtableConfig());
-            long stamp = memtableLock.writeLock();
-            try {
-                activeMemtable.set(newMemtable);
-                immutableMemtables.clear();
-            } finally {
-                memtableLock.unlockWrite(stamp);
-            }
-        } catch (Exception e) {
-            throw new LSMException.SnapshotException("Failed to restore from snapshot", e);
-        } finally {
-            rotationLock.unlock();
-        }
-    }
-
-    public void flush() {
-        rotationLock.lock();
-        try {
-            Memtable current = activeMemtable.get();
-            if (current.entryCount() == 0) {
-                awaitPendingFlushes();
-                return;
-            }
-
-            try {
-                flushPermits.acquire();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new LSMException.FlushException("Interrupted waiting for flush permit", e);
-            }
-
-            Memtable newMemtable = new SkipListMemtable(config.memtableConfig());
-            long stamp = memtableLock.writeLock();
-            try {
-                immutableMemtables.addLast(current);
-                activeMemtable.set(newMemtable);
-            } finally {
-                memtableLock.unlockWrite(stamp);
-            }
-
-            flushExecutor.submit(this::flushPendingMemtables);
-        } finally {
-            rotationLock.unlock();
-        }
-
-        awaitPendingFlushes();
     }
 
     private void awaitPendingFlushes() {
         CompletableFuture<Void> sentinel = new CompletableFuture<>();
         flushExecutor.submit(() -> sentinel.complete(null));
         try {
-            sentinel.get();
+            sentinel.get(30, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            throw new LSMException.FlushException("Flush operation timed out", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new LSMException.FlushException("Interrupted waiting for flush", e);
@@ -410,41 +415,12 @@ public final class LSMTree implements AutoCloseable {
         }
     }
 
-    @Override
-    public void close() {
-        if (!closed.compareAndSet(false, true)) {
-            return;
-        }
-
-        flush();
-
-        flushExecutor.shutdown();
-        try {
-            if (!flushExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
-                flushExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            flushExecutor.shutdownNow();
-        }
-
-        if (compactor != null) {
-            compactor.close();
-        }
-
-        SSTableSet finalSet = sstableSet;
-        List<SSTableReader> allReaders = new ArrayList<>(finalSet.readers());
-        finalSet.retire(allReaders);
-
-        awaitDrain(finalSet, SHUTDOWN_DRAIN_TIMEOUT);
-    }
-
-    private void awaitDrain(SSTableSet set, Duration timeout) {
+    private void awaitDrain(SSTableSetRef set, Duration timeout) {
         long deadlineNanos = System.nanoTime() + timeout.toNanos();
 
         while (!set.isDrained()) {
             if (System.nanoTime() > deadlineNanos) {
-                for (SSTableReader reader : set.readers()) {
+                for (SSTable reader : set.readers()) {
                     reader.close();
                 }
                 return;
@@ -455,25 +431,22 @@ public final class LSMTree implements AutoCloseable {
 
     private void flushPendingMemtables() {
         while (true) {
-            Memtable toFlush;
-            long stamp = memtableLock.readLock();
-            try {
-                toFlush = immutableMemtables.peekFirst();
-                if (toFlush == null) {
-                    return;
-                }
-            } finally {
-                memtableLock.unlockRead(stamp);
+            List<Memtable> current = immutableMemtables;
+            if (current.isEmpty()) {
+                return;
             }
+            Memtable toFlush = current.getFirst();
 
             try {
                 flushMemtableToSSTable(toFlush);
             } finally {
-                stamp = memtableLock.writeLock();
+                immutableMemtablesLock.lock();
                 try {
-                    immutableMemtables.pollFirst();
+                    var updated = new ArrayList<>(immutableMemtables);
+                    updated.removeFirst();
+                    immutableMemtables = List.copyOf(updated);
                 } finally {
-                    memtableLock.unlockWrite(stamp);
+                    immutableMemtablesLock.unlock();
                 }
                 flushPermits.release();
             }
@@ -485,133 +458,129 @@ public final class LSMTree implements AutoCloseable {
             long sstableId = sstableIdCounter.incrementAndGet();
             Path sstablePath = dataDirectory.resolve(String.format("%06d.sst", sstableId));
 
-            try (SSTableWriter writer = SSTableWriter.create(sstablePath, config.sstableConfig())) {
-                Iterator<Entry> it = memtable.scan(null, null);
+            Timestamp smallestTs;
+            Timestamp largestTs;
+            try (SSTable.Writer writer = SSTable.Writer.create(sstablePath, config.sstableConfig())) {
+                Iterator<Entry> it = memtable.scan(new ScanMode.AllVersions(), null, null);
                 while (it.hasNext()) {
-                    writer.append(it.next());
+                    writer.add(it.next());
                 }
+                smallestTs = writer.smallestTimestamp();
+                largestTs = writer.largestTimestamp();
             }
 
-            SSTableReader reader = SSTableReader.open(sstablePath);
-            SSTableMetadata metadata = buildMetadata(reader, sstableId, 0);
+            SSTable reader = SSTable.open(sstablePath);
+            SSTableInfo metadata = buildMetadata(reader, sstableId, 0, smallestTs, largestTs);
 
             manifestLock.lock();
             try {
-                List<SSTableMetadata> updatedSSTables = new ArrayList<>(manifest.sstables());
+                List<SSTableInfo> updatedSSTables = new ArrayList<>(manifest.sstables());
                 updatedSSTables.addFirst(metadata);
                 manifest = new Manifest(sstableIdCounter.get(), updatedSSTables);
-                ManifestFile.write(dataDirectory, manifest);
+                manifest.writeTo(dataDirectory);
 
-                List<SSTableReader> newReaders = new ArrayList<>();
+                List<SSTable> newReaders = new ArrayList<>();
                 newReaders.add(reader);
                 newReaders.addAll(sstableSet.readers());
 
-                SSTableSet oldSet = sstableSet;
-                sstableSet = SSTableSet.of(newReaders);
+                SSTableSetRef oldSet = sstableSet;
+                sstableSet = SSTableSetRef.of(newReaders);
                 oldSet.retire(List.of());
             } finally {
                 manifestLock.unlock();
             }
 
-            compactor.maybeSchedule();
+            maybeScheduleCompaction();
         } catch (Exception e) {
             throw new LSMException.FlushException("Failed to flush memtable to SSTable", e);
         }
     }
 
-    private static List<SSTableReader> loadSSTables(Path dataDirectory) throws IOException {
-        List<SSTableReader> sstables = new ArrayList<>();
-
-        if (!Files.exists(dataDirectory)) {
-            return sstables;
+    private void maybeScheduleCompaction() {
+        if (closed.get()) {
+            return;
         }
 
-        try (Stream<Path> paths = Files.list(dataDirectory)) {
-            List<Path> sstablePaths = paths
-                .filter(path -> SSTABLE_PATTERN.matcher(path.getFileName().toString()).matches())
-                .sorted(Comparator.comparingLong(LSMTree::parseSSTableId).reversed())
-                .toList();
+        if (!compacting.compareAndSet(false, true)) {
+            return;
+        }
 
-            for (Path path : sstablePaths) {
-                sstables.add(SSTableReader.open(path));
+        compactionExecutor.submit(() -> {
+            try {
+                runCompaction();
+            } finally {
+                compacting.set(false);
             }
-        }
-
-        return sstables;
+        });
     }
 
-    private static long parseSSTableId(Path path) {
-        Matcher matcher = SSTABLE_PATTERN.matcher(path.getFileName().toString());
-        if (matcher.matches()) {
-            return Long.parseLong(matcher.group(1));
+    private void runCompaction() {
+        Manifest current = manifest();
+        Optional<CompactionTask> task = compactionStrategy.selectCompaction(current);
+
+        if (task.isEmpty()) {
+            return;
         }
-        throw new IllegalArgumentException("Invalid SSTable filename: " + path);
+
+        CompactionTask t = task.get();
+        List<SSTable> readers = openCompactionSSTables(t.inputs());
+
+        try {
+            List<SSTableInfo> outputs = compactor.execute(
+                readers,
+                t.targetLevel(),
+                t.gcTombstones(),
+                snapshotRegistry.gcWatermark()
+            );
+
+            commitCompaction(t.inputs(), outputs);
+            deleteOldSSTables(t.inputs());
+
+            maybeScheduleCompaction();
+        } catch (Exception e) {
+            logger.error("Compaction failed", e);
+        } finally {
+            readers.forEach(SSTable::close);
+        }
     }
 
-    private static Manifest buildManifestFromSSTables(List<SSTableReader> sstables) throws IOException {
-        List<SSTableMetadata> metadataList = new ArrayList<>();
-        long maxId = 0;
-
-        for (SSTableReader reader : sstables) {
-            long id = parseSSTableId(reader.path());
-            maxId = Math.max(maxId, id);
-
-            SSTableMetadata metadata = buildMetadata(reader, id, 0);
-            metadataList.add(metadata);
+    private List<SSTable> openCompactionSSTables(List<SSTableInfo> metadata) {
+        List<SSTable> readers = new ArrayList<>();
+        for (SSTableInfo meta : metadata) {
+            Path path = resolvePath(meta.id());
+            readers.add(SSTable.open(path));
         }
-
-        return new Manifest(maxId, metadataList);
-    }
-
-    private static List<SSTableReader> loadSSTablesFromManifest(Path dataDirectory, Manifest manifest) {
-        List<SSTableMetadata> sorted = manifest.sstables().stream()
-            .sorted(Comparator.comparingLong(SSTableMetadata::id).reversed())
-            .toList();
-
-        List<SSTableReader> readers = new ArrayList<>();
-        for (SSTableMetadata metadata : sorted) {
-            Path path = dataDirectory.resolve(String.format("%06d.sst", metadata.id()));
-            readers.add(SSTableReader.open(path));
-        }
-
         return readers;
     }
 
-    private static SSTableMetadata buildMetadata(SSTableReader reader, long id, int level) throws IOException {
-        ByteArray smallestKey = reader.index().entries().getFirst().firstKey();
-        ByteArray largestKey = reader.largestKey();
-        long fileSize = Files.size(reader.path());
-        long entryCount = reader.entryCount();
-
-        return new SSTableMetadata(id, level, smallestKey, largestKey, fileSize, entryCount);
-    }
-
-    public Manifest manifest() {
-        manifestLock.lock();
-        try {
-            return manifest;
-        } finally {
-            manifestLock.unlock();
+    private void deleteOldSSTables(List<SSTableInfo> metadata) {
+        for (SSTableInfo meta : metadata) {
+            Path path = resolvePath(meta.id());
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException e) {
+                logger.warn("Failed to delete old SSTable: {}", path);
+            }
         }
     }
 
-    private void commitCompaction(List<SSTableMetadata> oldMeta, List<SSTableMetadata> newMeta) {
+    private void commitCompaction(List<SSTableInfo> oldMeta, List<SSTableInfo> newMeta) {
         manifestLock.lock();
         try {
-            List<SSTableMetadata> updated = new ArrayList<>(manifest.sstables());
+            List<SSTableInfo> updated = new ArrayList<>(manifest.sstables());
             updated.removeAll(oldMeta);
             updated.addAll(newMeta);
             manifest = new Manifest(manifest.nextSSTableId(), updated);
-            ManifestFile.write(dataDirectory, manifest);
+            manifest.writeTo(dataDirectory);
 
             Set<Long> oldIds = oldMeta.stream()
-                .map(SSTableMetadata::id)
+                .map(SSTableInfo::id)
                 .collect(Collectors.toSet());
 
-            List<SSTableReader> orphanedReaders = new ArrayList<>();
-            List<SSTableReader> retainedReaders = new ArrayList<>();
+            List<SSTable> orphanedReaders = new ArrayList<>();
+            List<SSTable> retainedReaders = new ArrayList<>();
 
-            for (SSTableReader reader : sstableSet.readers()) {
+            for (SSTable reader : sstableSet.readers()) {
                 if (oldIds.contains(parseSSTableId(reader.path()))) {
                     orphanedReaders.add(reader);
                 } else {
@@ -619,13 +588,13 @@ public final class LSMTree implements AutoCloseable {
                 }
             }
 
-            for (SSTableMetadata meta : newMeta) {
+            for (SSTableInfo meta : newMeta) {
                 Path path = dataDirectory.resolve(String.format("%06d.sst", meta.id()));
-                retainedReaders.add(SSTableReader.open(path));
+                retainedReaders.add(SSTable.open(path));
             }
 
-            SSTableSet oldSet = sstableSet;
-            sstableSet = SSTableSet.of(retainedReaders);
+            SSTableSetRef oldSet = sstableSet;
+            sstableSet = SSTableSetRef.of(retainedReaders);
             oldSet.retire(orphanedReaders);
         } finally {
             manifestLock.unlock();
@@ -647,213 +616,191 @@ public final class LSMTree implements AutoCloseable {
         return dataDirectory.resolve(String.format("%06d.sst", id));
     }
 
-    private class Compactor {
+    private static List<SSTable> loadSSTables(Path dataDirectory) throws IOException {
+        List<SSTable> sstables = new ArrayList<>();
 
-        private static final long TARGET_SSTABLE_SIZE = 2 * 1024 * 1024;
-
-        private final CompactionStrategy strategy;
-        private final ExecutorService executor;
-        private final AtomicBoolean compacting;
-        private volatile boolean closed;
-
-        Compactor(CompactionStrategy strategy) {
-            this.strategy = strategy;
-            this.executor = Executors.newVirtualThreadPerTaskExecutor();
-            this.compacting = new AtomicBoolean(false);
-            this.closed = false;
+        if (!Files.exists(dataDirectory)) {
+            return sstables;
         }
 
-        void maybeSchedule() {
-            if (closed) {
-                return;
-            }
+        try (Stream<Path> paths = Files.list(dataDirectory)) {
+            List<Path> sstablePaths = paths
+                .filter(path -> SSTABLE_PATTERN.matcher(path.getFileName().toString()).matches())
+                .sorted(Comparator.comparingLong(LSMTree::parseSSTableId).reversed())
+                .toList();
 
-            if (!compacting.compareAndSet(false, true)) {
-                return;
-            }
-
-            executor.submit(() -> {
-                try {
-                    run();
-                } finally {
-                    compacting.set(false);
-                }
-            });
-        }
-
-        private void run() {
-            Manifest current = manifest();
-            Optional<CompactionTask> task = strategy.selectCompaction(current);
-
-            if (task.isEmpty()) {
-                return;
-            }
-
-            try {
-                execute(task.get());
-            } catch (Exception e) {
-                logger.error("Compaction failed", e);
+            for (Path path : sstablePaths) {
+                sstables.add(SSTable.open(path));
             }
         }
 
-        private void execute(CompactionTask task) throws IOException {
-            List<SSTableReader> readers = openSSTables(task.inputs());
-
-            try {
-                List<CloseableIterator<Entry>> iterators = readers.stream()
-                    .map(r -> r.scan(null, null))
-                    .toList();
-
-                MergingIterator mergeIterator = new MergingIterator(iterators);
-
-                List<SSTableMetadata> newSSTables = writeMergedSSTables(
-                    mergeIterator,
-                    task.targetLevel(),
-                    task.isBottomLevel()
-                );
-
-                commitCompaction(task.inputs(), newSSTables);
-
-                deleteOldSSTables(task.inputs());
-
-                maybeSchedule();
-
-            } catch (Exception e) {
-                readers.forEach(SSTableReader::close);
-                throw e;
-            }
-        }
-
-        private List<SSTableReader> openSSTables(List<SSTableMetadata> metadata) {
-            List<SSTableReader> readers = new ArrayList<>();
-            for (SSTableMetadata meta : metadata) {
-                Path path = resolvePath(meta.id());
-                readers.add(SSTableReader.open(path));
-            }
-            return readers;
-        }
-
-        private List<SSTableMetadata> writeMergedSSTables(
-            Iterator<Entry> entries,
-            int targetLevel,
-            boolean dropTombstones
-        ) throws IOException {
-            List<SSTableMetadata> result = new ArrayList<>();
-
-            while (entries.hasNext()) {
-                long sstableId = allocateSSTableId();
-                Path path = resolvePath(sstableId);
-
-                try (SSTableWriter writer = SSTableWriter.create(path, config.sstableConfig())) {
-                    long bytesWritten = 0;
-
-                    while (entries.hasNext() && bytesWritten < TARGET_SSTABLE_SIZE) {
-                        Entry entry = entries.next();
-
-                        switch (entry) {
-                            case Entry.Tombstone _ when dropTombstones -> {}
-                            default -> {
-                                writer.append(entry);
-                                bytesWritten += estimateSize(entry);
-                            }
-                        }
-                    }
-                }
-
-                SSTableReader reader = SSTableReader.open(path);
-                SSTableMetadata metadata = buildCompactionMetadata(reader, sstableId, targetLevel);
-                result.add(metadata);
-                reader.close();
-            }
-
-            return result;
-        }
-
-        private SSTableMetadata buildCompactionMetadata(SSTableReader reader, long id, int level) throws IOException {
-            ByteArray smallestKey = reader.index().entries().getFirst().firstKey();
-            ByteArray largestKey = reader.largestKey();
-            long fileSize = Files.size(reader.path());
-            long entryCount = reader.entryCount();
-
-            return new SSTableMetadata(id, level, smallestKey, largestKey, fileSize, entryCount);
-        }
-
-        private void deleteOldSSTables(List<SSTableMetadata> metadata) {
-            for (SSTableMetadata meta : metadata) {
-                Path path = resolvePath(meta.id());
-                try {
-                    Files.deleteIfExists(path);
-                } catch (IOException e) {
-                    logger.warn("Failed to delete old SSTable: {}", path);
-                }
-            }
-        }
-
-        private long estimateSize(Entry entry) {
-            return switch (entry) {
-                case Entry.Data data -> 1 + 4 + entry.key().size() + 4 + data.value().size();
-                case Entry.Tombstone _ -> 1 + 4 + entry.key().size() + 4;
-            };
-        }
-
-        void close() {
-            closed = true;
-            executor.shutdown();
-            try {
-                if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
-                    executor.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                executor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-        }
+        return sstables;
     }
 
-    private static final class KeyValueIterator implements CloseableIterator<KeyValue> {
+    private static long parseSSTableId(Path path) {
+        Matcher matcher = SSTABLE_PATTERN.matcher(path.getFileName().toString());
+        if (matcher.matches()) {
+            return Long.parseLong(matcher.group(1));
+        }
+        throw new IllegalArgumentException("Invalid SSTable filename: " + path);
+    }
 
-        private final MergingIterator delegate;
-        private final SSTableSet sstableSet;
-        private KeyValue next;
+    private static Manifest buildManifestFromSSTables(List<SSTable> sstables) throws IOException {
+        List<SSTableInfo> metadataList = new ArrayList<>();
+        long maxId = 0;
 
-        KeyValueIterator(MergingIterator delegate, SSTableSet sstableSet) {
-            this.delegate = delegate;
-            this.sstableSet = sstableSet;
-            advance();
+        for (SSTable reader : sstables) {
+            long id = parseSSTableId(reader.path());
+            maxId = Math.max(maxId, id);
+
+            SSTableInfo metadata = buildMetadata(reader, id, 0);
+            metadataList.add(metadata);
         }
 
-        private void advance() {
-            while (delegate.hasNext()) {
-                switch (delegate.next()) {
-                    case Entry.Data data -> {
-                        next = new KeyValue(data.key(), data.value());
-                        return;
-                    }
-                    case Entry.Tombstone _ -> {}
+        return new Manifest(maxId, metadataList);
+    }
+
+    private static List<SSTable> loadSSTablesFromManifest(Path dataDirectory, Manifest manifest) {
+        List<SSTableInfo> sorted = manifest.sstables().stream()
+            .sorted(Comparator.comparingLong(SSTableInfo::id).reversed())
+            .toList();
+
+        List<SSTable> readers = new ArrayList<>();
+        for (SSTableInfo metadata : sorted) {
+            Path path = dataDirectory.resolve(String.format("%06d.sst", metadata.id()));
+            readers.add(SSTable.open(path));
+        }
+
+        return readers;
+    }
+
+    private static SSTableInfo buildMetadata(SSTable reader, long id, int level) throws IOException {
+        return buildMetadata(reader, id, level, reader.smallestTimestamp(), reader.largestTimestamp());
+    }
+
+    private static SSTableInfo buildMetadata(SSTable reader, long id, int level, Timestamp smallestTs, Timestamp largestTs) throws IOException {
+        ByteArray smallestKey = reader.smallestKey();
+        ByteArray largestKey = reader.largestKey();
+        long fileSize = Files.size(reader.path());
+        long entryCount = reader.entryCount();
+
+        return new SSTableInfo(id, level, smallestKey, largestKey, smallestTs, largestTs, fileSize, entryCount);
+    }
+
+    public final class Snapshot implements AutoCloseable {
+
+        private final Timestamp readTimestamp;
+        private final AtomicBoolean closed = new AtomicBoolean(false);
+
+        private Snapshot(Timestamp readTimestamp) {
+            this.readTimestamp = readTimestamp;
+        }
+
+        public Timestamp readTimestamp() {
+            return readTimestamp;
+        }
+
+        public Optional<KeyValue> get(ByteArray key) {
+            ensureOpen();
+
+            Optional<Entry> result = activeMemtable.get().get(key, readTimestamp);
+            if (result.isPresent()) {
+                return toKeyValue(result.get());
+            }
+
+            for (Memtable immutable : immutableMemtables) {
+                result = immutable.get(key, readTimestamp);
+                if (result.isPresent()) {
+                    return toKeyValue(result.get());
                 }
             }
-            next = null;
-        }
 
-        @Override
-        public boolean hasNext() {
-            return next != null;
-        }
-
-        @Override
-        public KeyValue next() {
-            if (next == null) {
-                throw new NoSuchElementException();
+            SSTableSetRef acquired = acquireSSTableSetRef();
+            try {
+                for (SSTable sstable : acquired.readers()) {
+                    result = sstable.get(key, readTimestamp);
+                    if (result.isPresent()) {
+                        return toKeyValue(result.get());
+                    }
+                }
+                return Optional.empty();
+            } finally {
+                acquired.release();
             }
-            KeyValue result = next;
-            advance();
-            return result;
+        }
+
+        public Stream<KeyValue> scan(ByteArray startKey, ByteArray endKey) {
+            ensureOpen();
+
+            ScanMode mode = new ScanMode.Snapshot(readTimestamp);
+            List<Iterator<Entry>> iterators = new ArrayList<>();
+
+            iterators.add(activeMemtable.get().scan(mode, startKey, endKey));
+
+            for (Memtable immutable : immutableMemtables) {
+                iterators.add(immutable.scan(mode, startKey, endKey));
+            }
+
+            SSTableSetRef acquired = acquireSSTableSetRef();
+            for (SSTable sstable : acquired.readers()) {
+                SSTable.Scan scan = sstable.scan();
+                if (startKey != null) {
+                    scan = scan.from(startKey);
+                }
+                if (endKey != null) {
+                    scan = scan.until(endKey);
+                }
+                iterators.add(scan.asOf(readTimestamp).iterator());
+            }
+
+            MergingIterator merged = new MergingIterator(iterators);
+
+            Iterator<KeyValue> kvIterator = new Iterator<>() {
+                private KeyValue next = advance();
+
+                private KeyValue advance() {
+                    while (merged.hasNext()) {
+                        if (merged.next() instanceof Entry.Put p) {
+                            return new KeyValue(p.key(), p.value(), p.timestamp());
+                        }
+                    }
+                    return null;
+                }
+
+                @Override
+                public boolean hasNext() {
+                    return next != null;
+                }
+
+                @Override
+                public KeyValue next() {
+                    if (next == null) {
+                        throw new NoSuchElementException();
+                    }
+                    KeyValue result = next;
+                    next = advance();
+                    return result;
+                }
+            };
+
+            return StreamSupport.stream(
+                    Spliterators.spliteratorUnknownSize(kvIterator, Spliterator.ORDERED | Spliterator.NONNULL),
+                    false)
+                .onClose(acquired::release);
+        }
+
+        private void ensureOpen() {
+            if (closed.get()) {
+                throw new IllegalStateException("Snapshot is closed");
+            }
         }
 
         @Override
         public void close() {
-            delegate.close();
-            sstableSet.release();
+            if (closed.compareAndSet(false, true)) {
+                snapshotRegistry.release(readTimestamp);
+            }
         }
     }
+
 }

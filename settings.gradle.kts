@@ -8,5 +8,6 @@ include(
     "partdb-server",
     "partdb-client",
     "partdb-cli",
-    "partdb-ctl"
+    "partdb-ctl",
+    "partdb-benchmark"
 )

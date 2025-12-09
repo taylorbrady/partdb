@@ -5,115 +5,87 @@ import java.util.HexFormat;
 
 public final class ByteArray implements Comparable<ByteArray> {
 
-    private static final ByteArray EMPTY = new ByteArray(new byte[0], 0, 0);
+    private static final ByteArray EMPTY = new ByteArray(new byte[0]);
 
     private final byte[] data;
-    private final int offset;
-    private final int length;
 
-    private ByteArray(byte[] data, int offset, int length) {
+    private ByteArray(byte[] data) {
         this.data = data;
-        this.offset = offset;
-        this.length = length;
     }
 
-    public static ByteArray wrap(byte[] data) {
-        if (data.length == 0) {
+    public static ByteArray of(byte... bytes) {
+        if (bytes.length == 0) {
             return EMPTY;
         }
-        return new ByteArray(data, 0, data.length);
+        return new ByteArray(bytes.clone());
     }
 
-    public static ByteArray wrap(byte[] data, int offset, int length) {
-        if (offset < 0 || length < 0 || offset + length > data.length) {
+    public static ByteArray copyOf(byte[] bytes) {
+        if (bytes.length == 0) {
+            return EMPTY;
+        }
+        return new ByteArray(bytes.clone());
+    }
+
+    public static ByteArray copyOf(byte[] bytes, int offset, int length) {
+        if (offset < 0 || length < 0 || offset + length > bytes.length) {
             throw new IndexOutOfBoundsException(
-                "Invalid offset=%d, length=%d for array of size %d".formatted(offset, length, data.length)
+                "Invalid offset=%d, length=%d for array of size %d".formatted(offset, length, bytes.length)
             );
         }
         if (length == 0) {
             return EMPTY;
         }
-        return new ByteArray(data, offset, length);
-    }
-
-    public static ByteArray copyOf(byte[] data) {
-        if (data.length == 0) {
-            return EMPTY;
-        }
-        return new ByteArray(Arrays.copyOf(data, data.length), 0, data.length);
-    }
-
-    public static ByteArray of(byte... bytes) {
-        return copyOf(bytes);
+        return new ByteArray(Arrays.copyOfRange(bytes, offset, offset + length));
     }
 
     public static ByteArray empty() {
         return EMPTY;
     }
 
-    public int size() {
-        return length;
+    public int length() {
+        return data.length;
     }
 
     public boolean isEmpty() {
-        return length == 0;
+        return data.length == 0;
     }
 
     public byte get(int index) {
-        if (index < 0 || index >= length) {
-            throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + length);
-        }
-        return data[offset + index];
+        return data[index];
     }
 
-    public ByteArray slice(int sliceOffset, int sliceLength) {
-        if (sliceOffset < 0 || sliceLength < 0 || sliceOffset + sliceLength > length) {
-            throw new IndexOutOfBoundsException(
-                "Invalid slice offset=%d, length=%d for ByteArray of size %d".formatted(sliceOffset, sliceLength, length)
-            );
-        }
-        if (sliceLength == 0) {
-            return EMPTY;
-        }
-        return new ByteArray(data, offset + sliceOffset, sliceLength);
+    public ByteArray slice(int offset, int length) {
+        return copyOf(data, offset, length);
     }
 
     public byte[] toByteArray() {
-        return Arrays.copyOfRange(data, offset, offset + length);
+        return data.clone();
     }
 
     @Override
     public int compareTo(ByteArray other) {
-        return Arrays.compareUnsigned(
-            data, offset, offset + length,
-            other.data, other.offset, other.offset + other.length
-        );
+        return Arrays.compareUnsigned(data, other.data);
     }
 
     @Override
     public boolean equals(Object obj) {
-        return obj instanceof ByteArray other &&
-               Arrays.equals(data, offset, offset + length,
-                           other.data, other.offset, other.offset + other.length);
+        return obj instanceof ByteArray other && Arrays.equals(data, other.data);
     }
 
     @Override
     public int hashCode() {
-        int result = 1;
-        for (int i = offset; i < offset + length; i++) {
-            result = 31 * result + data[i];
-        }
-        return result;
+        return Arrays.hashCode(data);
     }
 
     @Override
     public String toString() {
-        if (length == 0) {
+        if (data.length == 0) {
             return "ByteArray[]";
         }
-        String hex = HexFormat.of().formatHex(data, offset, offset + length);
+        String hex = HexFormat.of().formatHex(data);
         if (hex.length() > 32) {
-            return "ByteArray[" + hex.substring(0, 32) + "... (" + length + " bytes)]";
+            return "ByteArray[" + hex.substring(0, 32) + "... (" + data.length + " bytes)]";
         }
         return "ByteArray[" + hex + "]";
     }

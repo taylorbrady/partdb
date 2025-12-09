@@ -10,7 +10,7 @@ class StoredValueTest {
     @Test
     void encodeDecodeRoundTrip() {
         var original = new StoredValue(
-            ByteArray.wrap("hello".getBytes()),
+            ByteArray.copyOf("hello".getBytes()),
             42L,
             123L
         );
@@ -25,7 +25,7 @@ class StoredValueTest {
 
     @Test
     void preservesVersion() {
-        var stored = new StoredValue(ByteArray.wrap("data".getBytes()), 999L, 0L);
+        var stored = new StoredValue(ByteArray.copyOf("data".getBytes()), 999L, 0L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -34,7 +34,7 @@ class StoredValueTest {
 
     @Test
     void preservesLeaseId() {
-        var stored = new StoredValue(ByteArray.wrap("data".getBytes()), 1L, 456L);
+        var stored = new StoredValue(ByteArray.copyOf("data".getBytes()), 1L, 456L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -43,7 +43,7 @@ class StoredValueTest {
 
     @Test
     void handlesZeroLeaseId() {
-        var stored = new StoredValue(ByteArray.wrap("data".getBytes()), 1L, 0L);
+        var stored = new StoredValue(ByteArray.copyOf("data".getBytes()), 1L, 0L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -52,7 +52,7 @@ class StoredValueTest {
 
     @Test
     void handlesEmptyValue() {
-        var stored = new StoredValue(ByteArray.wrap(new byte[0]), 1L, 0L);
+        var stored = new StoredValue(ByteArray.copyOf(new byte[0]), 1L, 0L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -65,7 +65,7 @@ class StoredValueTest {
         for (int i = 0; i < largeData.length; i++) {
             largeData[i] = (byte) (i % 256);
         }
-        var stored = new StoredValue(ByteArray.wrap(largeData), 1L, 0L);
+        var stored = new StoredValue(ByteArray.copyOf(largeData), 1L, 0L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -75,7 +75,7 @@ class StoredValueTest {
     @Test
     void handlesMaxLongValues() {
         var stored = new StoredValue(
-            ByteArray.wrap("data".getBytes()),
+            ByteArray.copyOf("data".getBytes()),
             Long.MAX_VALUE,
             Long.MAX_VALUE
         );
@@ -89,7 +89,7 @@ class StoredValueTest {
     @Test
     void encodedSizeIsHeaderPlusValue() {
         byte[] value = "test".getBytes();
-        var stored = new StoredValue(ByteArray.wrap(value), 1L, 1L);
+        var stored = new StoredValue(ByteArray.copyOf(value), 1L, 1L);
 
         var encoded = stored.encode();
 
@@ -98,8 +98,8 @@ class StoredValueTest {
 
     @Test
     void differentValuesProduceDifferentEncodings() {
-        var stored1 = new StoredValue(ByteArray.wrap("aaa".getBytes()), 1L, 1L);
-        var stored2 = new StoredValue(ByteArray.wrap("bbb".getBytes()), 1L, 1L);
+        var stored1 = new StoredValue(ByteArray.copyOf("aaa".getBytes()), 1L, 1L);
+        var stored2 = new StoredValue(ByteArray.copyOf("bbb".getBytes()), 1L, 1L);
 
         assertFalse(java.util.Arrays.equals(
             stored1.encode().toByteArray(),
@@ -109,8 +109,8 @@ class StoredValueTest {
 
     @Test
     void differentVersionsProduceDifferentEncodings() {
-        var stored1 = new StoredValue(ByteArray.wrap("data".getBytes()), 1L, 0L);
-        var stored2 = new StoredValue(ByteArray.wrap("data".getBytes()), 2L, 0L);
+        var stored1 = new StoredValue(ByteArray.copyOf("data".getBytes()), 1L, 0L);
+        var stored2 = new StoredValue(ByteArray.copyOf("data".getBytes()), 2L, 0L);
 
         assertFalse(java.util.Arrays.equals(
             stored1.encode().toByteArray(),

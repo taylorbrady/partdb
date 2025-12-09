@@ -1,25 +1,29 @@
 package io.partdb.storage;
 
 import io.partdb.common.ByteArray;
-import io.partdb.common.CloseableIterator;
 
-import java.util.*;
+import java.util.Comparator;
+import java.util.Iterator;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.PriorityQueue;
 
-public final class MergingIterator implements CloseableIterator<Entry> {
+public final class MergingIterator implements Iterator<Entry> {
 
     private final PriorityQueue<IteratorEntry> heap;
-    private final List<CloseableIterator<Entry>> iterators;
+    private final List<Iterator<Entry>> iterators;
     private ByteArray lastKey;
     private Entry nextEntry;
 
-    public MergingIterator(List<CloseableIterator<Entry>> iterators) {
+    public MergingIterator(List<Iterator<Entry>> iterators) {
         this.iterators = iterators;
         this.heap = new PriorityQueue<>(Comparator
             .comparing((IteratorEntry e) -> e.entry.key())
+            .thenComparing((IteratorEntry e) -> e.entry.timestamp(), Comparator.reverseOrder())
             .thenComparingInt(e -> e.iteratorIndex));
 
         for (int i = 0; i < iterators.size(); i++) {
-            CloseableIterator<Entry> it = iterators.get(i);
+            Iterator<Entry> it = iterators.get(i);
             if (it.hasNext()) {
                 heap.offer(new IteratorEntry(it.next(), i));
             }
@@ -63,13 +67,6 @@ public final class MergingIterator implements CloseableIterator<Entry> {
         Entry result = nextEntry;
         advance();
         return result;
-    }
-
-    @Override
-    public void close() {
-        for (CloseableIterator<Entry> it : iterators) {
-            it.close();
-        }
     }
 
     private record IteratorEntry(Entry entry, int iteratorIndex) {}

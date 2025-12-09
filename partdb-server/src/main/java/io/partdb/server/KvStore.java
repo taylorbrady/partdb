@@ -3,11 +3,11 @@ package io.partdb.server;
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.partdb.common.ByteArray;
 import io.partdb.common.Entry;
-import io.partdb.common.KeyValue;
 import io.partdb.common.Leases;
-import io.partdb.common.CloseableIterator;
+import io.partdb.common.Timestamp;
 import io.partdb.raft.StateMachine;
 import io.partdb.server.command.proto.CommandProto.Command;
+import io.partdb.storage.KeyValue;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
 
@@ -15,9 +15,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
-import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 public final class KvStore implements StateMachine, AutoCloseable {
 
@@ -56,20 +56,20 @@ public final class KvStore implements StateMachine, AutoCloseable {
         switch (command.getOpCase()) {
             case PUT -> {
                 var put = command.getPut();
-                ByteArray key = ByteArray.wrap(put.getKey().toByteArray());
-                ByteArray value = ByteArray.wrap(put.getValue().toByteArray());
+                ByteArray key = ByteArray.copyOf(put.getKey().toByteArray());
+                ByteArray value = ByteArray.copyOf(put.getValue().toByteArray());
                 long leaseId = put.getLeaseId();
                 StoredValue stored = new StoredValue(value, index, leaseId);
-                store.put(key, stored.encode());
+                store.put(key, stored.encode(), Timestamp.of(index, 0));
                 if (leaseId != 0) {
                     leases.attachKey(leaseId, key);
                 }
             }
             case DELETE -> {
                 var delete = command.getDelete();
-                ByteArray key = ByteArray.wrap(delete.getKey().toByteArray());
+                ByteArray key = ByteArray.copyOf(delete.getKey().toByteArray());
                 detachKeyFromLease(key);
-                store.delete(key);
+                store.delete(key, Timestamp.of(index, 0));
             }
             case GRANT_LEASE -> {
                 var grant = command.getGrantLease();
@@ -79,7 +79,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
                 var revoke = command.getRevokeLease();
                 Set<ByteArray> keys = leases.getKeys(revoke.getLeaseId());
                 for (ByteArray key : keys) {
-                    store.delete(key);
+                    store.delete(key, Timestamp.of(index, 0));
                 }
                 leases.revoke(revoke.getLeaseId());
             }
@@ -96,30 +96,43 @@ public final class KvStore implements StateMachine, AutoCloseable {
     }
 
     private void detachKeyFromLease(ByteArray key) {
-        Optional<ByteArray> existing = store.get(key);
-        if (existing.isPresent()) {
-            StoredValue stored = StoredValue.decode(existing.get());
-            if (stored.leaseId() != 0) {
-                leases.detachKey(stored.leaseId(), key);
+        try (var snap = store.snapshot(Timestamp.MAX)) {
+            Optional<KeyValue> existing = snap.get(key);
+            if (existing.isPresent()) {
+                StoredValue stored = StoredValue.decode(existing.get().value());
+                if (stored.leaseId() != 0) {
+                    leases.detachKey(stored.leaseId(), key);
+                }
             }
         }
     }
 
     public Optional<ByteArray> get(ByteArray key) {
-        Optional<ByteArray> raw = store.get(key);
-        if (raw.isEmpty()) {
-            return Optional.empty();
+        try (var snap = store.snapshot(Timestamp.MAX)) {
+            Optional<KeyValue> raw = snap.get(key);
+            if (raw.isEmpty()) {
+                return Optional.empty();
+            }
+            StoredValue stored = StoredValue.decode(raw.get().value());
+            if (stored.leaseId() != 0 && !leases.isLeaseActive(stored.leaseId())) {
+                return Optional.empty();
+            }
+            return Optional.of(stored.value());
         }
-        StoredValue stored = StoredValue.decode(raw.get());
-        if (stored.leaseId() != 0 && !leases.isLeaseActive(stored.leaseId())) {
-            return Optional.empty();
-        }
-        return Optional.of(stored.value());
     }
 
-    public CloseableIterator<Entry> scan(ByteArray startKey, ByteArray endKey) {
-        CloseableIterator<KeyValue> raw = store.scan(startKey, endKey);
-        return new DecodingIterator(raw, leases);
+    public Stream<Entry> scan(ByteArray startKey, ByteArray endKey) {
+        var snap = store.snapshot(Timestamp.MAX);
+        Stream<KeyValue> raw = snap.scan(startKey, endKey);
+
+        return raw
+            .<Entry>mapMulti((kv, consumer) -> {
+                StoredValue stored = StoredValue.decode(kv.value());
+                if (stored.leaseId() == 0 || leases.isLeaseActive(stored.leaseId())) {
+                    consumer.accept(Entry.putWithLease(kv.key(), stored.value(), stored.version(), stored.leaseId()));
+                }
+            })
+            .onClose(snap::close);
     }
 
     @Override
@@ -127,7 +140,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         store.flush();
 
         try {
-            byte[] storageData = store.snapshot();
+            byte[] storageData = store.checkpoint();
             byte[] leaseData = leases.toSnapshot();
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -158,7 +171,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         byte[] leaseData = new byte[leaseLen];
         buffer.get(leaseData);
 
-        store.restore(storageData);
+        store.restoreFromCheckpoint(storageData);
         leases.restoreSnapshot(leaseData);
 
         lastApplied = index;
@@ -175,51 +188,5 @@ public final class KvStore implements StateMachine, AutoCloseable {
     @Override
     public void close() {
         store.close();
-    }
-
-    private static final class DecodingIterator implements CloseableIterator<Entry> {
-
-        private final CloseableIterator<KeyValue> delegate;
-        private final Leases leases;
-        private Entry next;
-
-        DecodingIterator(CloseableIterator<KeyValue> delegate, Leases leases) {
-            this.delegate = delegate;
-            this.leases = leases;
-            advance();
-        }
-
-        private void advance() {
-            while (delegate.hasNext()) {
-                KeyValue kv = delegate.next();
-                StoredValue stored = StoredValue.decode(kv.value());
-                if (stored.leaseId() != 0 && !leases.isLeaseActive(stored.leaseId())) {
-                    continue;
-                }
-                next = Entry.putWithLease(kv.key(), stored.value(), stored.version(), stored.leaseId());
-                return;
-            }
-            next = null;
-        }
-
-        @Override
-        public boolean hasNext() {
-            return next != null;
-        }
-
-        @Override
-        public Entry next() {
-            if (next == null) {
-                throw new NoSuchElementException();
-            }
-            Entry result = next;
-            advance();
-            return result;
-        }
-
-        @Override
-        public void close() {
-            delegate.close();
-        }
     }
 }

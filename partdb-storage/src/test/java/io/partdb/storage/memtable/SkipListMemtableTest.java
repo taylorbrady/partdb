@@ -1,7 +1,9 @@
 package io.partdb.storage.memtable;
 
 import io.partdb.common.ByteArray;
+import io.partdb.common.Timestamp;
 import io.partdb.storage.Entry;
+import io.partdb.storage.ScanMode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -10,12 +12,10 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.*;
 
 class SkipListMemtableTest {
 
@@ -23,7 +23,7 @@ class SkipListMemtableTest {
 
     @BeforeEach
     void setUp() {
-        memtable = new SkipListMemtable(MemtableConfig.create());
+        memtable = new SkipListMemtable();
     }
 
     private static ByteArray key(int i) {
@@ -34,12 +34,12 @@ class SkipListMemtableTest {
         return ByteArray.of((byte) i);
     }
 
-    private static Entry.Data entry(int key, int value) {
-        return new Entry.Data(key(key), value(value));
+    private static Entry.Put entry(int key, int value) {
+        return new Entry.Put(key(key), Timestamp.of(key, 0), value(value));
     }
 
     private static ByteArray largeValue(int size) {
-        return ByteArray.wrap(new byte[size]);
+        return ByteArray.copyOf(new byte[size]);
     }
 
     private List<Entry> collectEntries(Iterator<Entry> iterator) {
@@ -57,50 +57,50 @@ class SkipListMemtableTest {
         void putAndGet() {
             memtable.put(entry(1, 2));
 
-            Optional<Entry> result = memtable.get(key(1));
+            Optional<Entry> result = memtable.get(key(1), Timestamp.MAX);
 
-            assertThat(result).isPresent();
-            assertThat(result.get().key()).isEqualTo(key(1));
-            assertThat(result.get()).isInstanceOf(Entry.Data.class);
-            assertThat(((Entry.Data) result.get()).value()).isEqualTo(value(2));
+            assertTrue(result.isPresent());
+            assertEquals(key(1), result.get().key());
+            assertInstanceOf(Entry.Put.class, result.get());
+            assertEquals(value(2), ((Entry.Put) result.get()).value());
         }
 
         @Test
         void getNonExistentKeyReturnsEmpty() {
-            Optional<Entry> result = memtable.get(key(99));
-            assertThat(result).isEmpty();
+            Optional<Entry> result = memtable.get(key(99), Timestamp.MAX);
+            assertTrue(result.isEmpty());
         }
 
         @Test
         void putOverwritesExistingEntry() {
-            memtable.put(entry(1, 10));
-            memtable.put(entry(1, 20));
+            memtable.put(new Entry.Put(key(1), Timestamp.of(1, 0), value(10)));
+            memtable.put(new Entry.Put(key(1), Timestamp.of(1, 1), value(20)));
 
-            Optional<Entry> result = memtable.get(key(1));
+            Optional<Entry> result = memtable.get(key(1), Timestamp.MAX);
 
-            assertThat(result).isPresent();
-            assertThat(((Entry.Data) result.get()).value()).isEqualTo(value(20));
+            assertTrue(result.isPresent());
+            assertEquals(value(20), ((Entry.Put) result.get()).value());
         }
 
         @Test
         void putTombstone() {
-            memtable.put(new Entry.Tombstone(key(5)));
+            memtable.put(new Entry.Tombstone(key(5), Timestamp.of(5, 0)));
 
-            Optional<Entry> result = memtable.get(key(5));
+            Optional<Entry> result = memtable.get(key(5), Timestamp.MAX);
 
-            assertThat(result).isPresent();
-            assertThat(result.get()).isInstanceOf(Entry.Tombstone.class);
+            assertTrue(result.isPresent());
+            assertInstanceOf(Entry.Tombstone.class, result.get());
         }
 
         @Test
         void deleteOverwritesExistingEntry() {
-            memtable.put(entry(1, 10));
-            memtable.put(new Entry.Tombstone(key(1)));
+            memtable.put(new Entry.Put(key(1), Timestamp.of(1, 0), value(10)));
+            memtable.put(new Entry.Tombstone(key(1), Timestamp.of(1, 1)));
 
-            Optional<Entry> result = memtable.get(key(1));
+            Optional<Entry> result = memtable.get(key(1), Timestamp.MAX);
 
-            assertThat(result).isPresent();
-            assertThat(result.get()).isInstanceOf(Entry.Tombstone.class);
+            assertTrue(result.isPresent());
+            assertInstanceOf(Entry.Tombstone.class, result.get());
         }
 
         @Test
@@ -110,9 +110,9 @@ class SkipListMemtableTest {
 
             memtable.clear();
 
-            assertThat(memtable.entryCount()).isEqualTo(0);
-            assertThat(memtable.sizeInBytes()).isEqualTo(0);
-            assertThat(memtable.get(key(1))).isEmpty();
+            assertEquals(0, memtable.entryCount());
+            assertEquals(0, memtable.sizeInBytes());
+            assertTrue(memtable.get(key(1), Timestamp.MAX).isEmpty());
         }
     }
 
@@ -121,26 +121,26 @@ class SkipListMemtableTest {
 
         @Test
         void initiallyZero() {
-            assertThat(memtable.sizeInBytes()).isEqualTo(0);
+            assertEquals(0, memtable.sizeInBytes());
         }
 
         @Test
         void increasesWithPut() {
             long initialSize = memtable.sizeInBytes();
-            memtable.put(new Entry.Data(key(1), value(2)));
+            memtable.put(new Entry.Put(key(1), Timestamp.of(1, 0), value(2)));
 
-            assertThat(memtable.sizeInBytes()).isGreaterThan(initialSize);
+            assertTrue(memtable.sizeInBytes() > initialSize);
         }
 
         @Test
         void updatesOnOverwrite() {
-            memtable.put(new Entry.Data(key(1), value(1)));
+            memtable.put(new Entry.Put(key(1), Timestamp.of(1, 0), value(1)));
             long sizeAfterSmall = memtable.sizeInBytes();
 
-            memtable.put(new Entry.Data(key(1), largeValue(1000)));
+            memtable.put(new Entry.Put(key(1), Timestamp.of(1, 1), largeValue(1000)));
             long sizeAfterLarge = memtable.sizeInBytes();
 
-            assertThat(sizeAfterLarge).isGreaterThan(sizeAfterSmall);
+            assertTrue(sizeAfterLarge > sizeAfterSmall);
         }
     }
 
@@ -149,24 +149,24 @@ class SkipListMemtableTest {
 
         @Test
         void initiallyZero() {
-            assertThat(memtable.entryCount()).isEqualTo(0);
+            assertEquals(0, memtable.entryCount());
         }
 
         @Test
         void increasesWithNewEntries() {
             memtable.put(entry(1, 10));
-            assertThat(memtable.entryCount()).isEqualTo(1);
+            assertEquals(1, memtable.entryCount());
 
             memtable.put(entry(2, 20));
-            assertThat(memtable.entryCount()).isEqualTo(2);
+            assertEquals(2, memtable.entryCount());
         }
 
         @Test
-        void unchangedOnOverwrite() {
-            memtable.put(entry(1, 10));
-            memtable.put(entry(1, 20));
+        void increasesOnNewVersion() {
+            memtable.put(new Entry.Put(key(1), Timestamp.of(1, 0), value(10)));
+            memtable.put(new Entry.Put(key(1), Timestamp.of(1, 1), value(20)));
 
-            assertThat(memtable.entryCount()).isEqualTo(1);
+            assertEquals(2, memtable.entryCount());
         }
     }
 
@@ -179,13 +179,13 @@ class SkipListMemtableTest {
             memtable.put(entry(2, 20));
             memtable.put(entry(3, 30));
 
-            Iterator<Entry> it = memtable.scan(null, null);
+            Iterator<Entry> it = memtable.scan(new ScanMode.Snapshot(Timestamp.MAX), null, null);
             List<Entry> entries = collectEntries(it);
 
-            assertThat(entries).hasSize(3);
-            assertThat(entries.get(0).key()).isEqualTo(key(1));
-            assertThat(entries.get(1).key()).isEqualTo(key(2));
-            assertThat(entries.get(2).key()).isEqualTo(key(3));
+            assertEquals(3, entries.size());
+            assertEquals(key(1), entries.get(0).key());
+            assertEquals(key(2), entries.get(1).key());
+            assertEquals(key(3), entries.get(2).key());
         }
 
         @Test
@@ -194,12 +194,12 @@ class SkipListMemtableTest {
             memtable.put(entry(2, 20));
             memtable.put(entry(3, 30));
 
-            Iterator<Entry> it = memtable.scan(key(2), null);
+            Iterator<Entry> it = memtable.scan(new ScanMode.Snapshot(Timestamp.MAX), key(2), null);
             List<Entry> entries = collectEntries(it);
 
-            assertThat(entries).hasSize(2);
-            assertThat(entries.get(0).key()).isEqualTo(key(2));
-            assertThat(entries.get(1).key()).isEqualTo(key(3));
+            assertEquals(2, entries.size());
+            assertEquals(key(2), entries.get(0).key());
+            assertEquals(key(3), entries.get(1).key());
         }
 
         @Test
@@ -208,12 +208,12 @@ class SkipListMemtableTest {
             memtable.put(entry(2, 20));
             memtable.put(entry(3, 30));
 
-            Iterator<Entry> it = memtable.scan(null, key(3));
+            Iterator<Entry> it = memtable.scan(new ScanMode.Snapshot(Timestamp.MAX), null, key(3));
             List<Entry> entries = collectEntries(it);
 
-            assertThat(entries).hasSize(2);
-            assertThat(entries.get(0).key()).isEqualTo(key(1));
-            assertThat(entries.get(1).key()).isEqualTo(key(2));
+            assertEquals(2, entries.size());
+            assertEquals(key(1), entries.get(0).key());
+            assertEquals(key(2), entries.get(1).key());
         }
 
         @Test
@@ -223,22 +223,22 @@ class SkipListMemtableTest {
             memtable.put(entry(3, 30));
             memtable.put(entry(4, 40));
 
-            Iterator<Entry> it = memtable.scan(key(2), key(4));
+            Iterator<Entry> it = memtable.scan(new ScanMode.Snapshot(Timestamp.MAX), key(2), key(4));
             List<Entry> entries = collectEntries(it);
 
-            assertThat(entries).hasSize(2);
-            assertThat(entries.get(0).key()).isEqualTo(key(2));
-            assertThat(entries.get(1).key()).isEqualTo(key(3));
+            assertEquals(2, entries.size());
+            assertEquals(key(2), entries.get(0).key());
+            assertEquals(key(3), entries.get(1).key());
         }
 
         @Test
         void emptyRange() {
             memtable.put(entry(1, 10));
 
-            Iterator<Entry> it = memtable.scan(key(5), key(10));
+            Iterator<Entry> it = memtable.scan(new ScanMode.Snapshot(Timestamp.MAX), key(5), key(10));
             List<Entry> entries = collectEntries(it);
 
-            assertThat(entries).isEmpty();
+            assertTrue(entries.isEmpty());
         }
 
         @Test
@@ -247,13 +247,13 @@ class SkipListMemtableTest {
             memtable.put(entry(1, 10));
             memtable.put(entry(2, 20));
 
-            Iterator<Entry> it = memtable.scan(null, null);
+            Iterator<Entry> it = memtable.scan(new ScanMode.Snapshot(Timestamp.MAX), null, null);
             List<Entry> entries = collectEntries(it);
 
-            assertThat(entries).hasSize(3);
-            assertThat(entries.get(0).key()).isEqualTo(key(1));
-            assertThat(entries.get(1).key()).isEqualTo(key(2));
-            assertThat(entries.get(2).key()).isEqualTo(key(3));
+            assertEquals(3, entries.size());
+            assertEquals(key(1), entries.get(0).key());
+            assertEquals(key(2), entries.get(1).key());
+            assertEquals(key(3), entries.get(2).key());
         }
     }
 
@@ -265,28 +265,24 @@ class SkipListMemtableTest {
             int threadCount = 10;
             int entriesPerThread = 100;
 
-            ExecutorService executor = Executors.newFixedThreadPool(threadCount);
-            CountDownLatch latch = new CountDownLatch(threadCount);
-
-            for (int i = 0; i < threadCount; i++) {
-                int threadId = i;
-                executor.submit(() -> {
-                    try {
+            try (var executor = Executors.newFixedThreadPool(threadCount)) {
+                for (int i = 0; i < threadCount; i++) {
+                    int threadId = i;
+                    executor.submit(() -> {
                         for (int j = 0; j < entriesPerThread; j++) {
                             int keyValue = threadId * entriesPerThread + j;
-                            memtable.put(new Entry.Data(key(keyValue & 0xFF), value(keyValue)));
+                            memtable.put(new Entry.Put(key(keyValue & 0xFF), Timestamp.of(keyValue, 0), value(keyValue)));
                         }
-                    } finally {
-                        latch.countDown();
-                    }
-                });
+                    });
+                }
+
+                executor.shutdown();
+                assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS),
+                    "Concurrent put tasks did not complete in time");
             }
 
-            latch.await(10, TimeUnit.SECONDS);
-            executor.shutdown();
-
-            assertThat(memtable.entryCount()).isGreaterThan(0);
-            assertThat(memtable.sizeInBytes()).isGreaterThan(0);
+            assertTrue(memtable.entryCount() > 0);
+            assertTrue(memtable.sizeInBytes() > 0);
         }
 
         @Test
@@ -294,38 +290,30 @@ class SkipListMemtableTest {
             int writerCount = 5;
             int readerCount = 5;
 
-            ExecutorService executor = Executors.newFixedThreadPool(writerCount + readerCount);
-            CountDownLatch latch = new CountDownLatch(writerCount + readerCount);
-
-            for (int i = 0; i < writerCount; i++) {
-                int threadId = i;
-                executor.submit(() -> {
-                    try {
+            try (var executor = Executors.newFixedThreadPool(writerCount + readerCount)) {
+                for (int i = 0; i < writerCount; i++) {
+                    int threadId = i;
+                    executor.submit(() -> {
                         for (int j = 0; j < 100; j++) {
-                            memtable.put(new Entry.Data(key(threadId * 100 + j), value(j)));
+                            memtable.put(new Entry.Put(key(threadId * 100 + j), Timestamp.of(j, 0), value(j)));
                         }
-                    } finally {
-                        latch.countDown();
-                    }
-                });
+                    });
+                }
+
+                for (int i = 0; i < readerCount; i++) {
+                    executor.submit(() -> {
+                        for (int j = 0; j < 100; j++) {
+                            memtable.get(key(j), Timestamp.MAX);
+                        }
+                    });
+                }
+
+                executor.shutdown();
+                assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS),
+                    "Concurrent read/write tasks did not complete in time");
             }
 
-            for (int i = 0; i < readerCount; i++) {
-                executor.submit(() -> {
-                    try {
-                        for (int j = 0; j < 100; j++) {
-                            memtable.get(key(j));
-                        }
-                    } finally {
-                        latch.countDown();
-                    }
-                });
-            }
-
-            latch.await(10, TimeUnit.SECONDS);
-            executor.shutdown();
-
-            assertThat(memtable.entryCount()).isGreaterThan(0);
+            assertTrue(memtable.entryCount() > 0);
         }
     }
 }

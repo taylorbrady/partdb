@@ -1,13 +1,16 @@
 package io.partdb.client;
 
-import io.partdb.common.CloseableIterator;
-
+import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
-public final class ScanIterator implements CloseableIterator<KeyValue> {
+final class ScanIterator implements Iterator<KeyValue>, AutoCloseable {
 
     private static final KeyValue SENTINEL = new KeyValue(null, null, -1);
 
@@ -76,5 +79,12 @@ public final class ScanIterator implements CloseableIterator<KeyValue> {
     public void close() {
         closed.set(true);
         queue.clear();
+    }
+
+    Stream<KeyValue> toStream() {
+        return StreamSupport.stream(
+                Spliterators.spliteratorUnknownSize(this, Spliterator.ORDERED | Spliterator.NONNULL),
+                false)
+            .onClose(this::close);
     }
 }

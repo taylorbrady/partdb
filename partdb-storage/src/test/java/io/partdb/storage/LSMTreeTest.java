@@ -1,11 +1,11 @@
 package io.partdb.storage;
 
 import io.partdb.common.ByteArray;
-import io.partdb.common.CloseableIterator;
-import io.partdb.common.KeyValue;
+import io.partdb.common.Timestamp;
+import io.partdb.storage.compaction.CompactionConfig;
 import io.partdb.storage.compaction.LeveledCompactionConfig;
-import io.partdb.storage.compaction.Manifest;
-import io.partdb.storage.compaction.SSTableMetadata;
+import io.partdb.storage.manifest.Manifest;
+import io.partdb.storage.manifest.SSTableInfo;
 import io.partdb.storage.memtable.MemtableConfig;
 import io.partdb.storage.sstable.SSTableConfig;
 import org.junit.jupiter.api.Nested;
@@ -18,12 +18,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.*;
 
 class LSMTreeTest {
 
@@ -35,7 +36,7 @@ class LSMTreeTest {
     }
 
     private static ByteArray key(String s) {
-        return ByteArray.wrap(s.getBytes(StandardCharsets.UTF_8));
+        return ByteArray.copyOf(s.getBytes(StandardCharsets.UTF_8));
     }
 
     private static ByteArray value(int i) {
@@ -43,23 +44,26 @@ class LSMTreeTest {
     }
 
     private static ByteArray value(String s) {
-        return ByteArray.wrap(s.getBytes(StandardCharsets.UTF_8));
+        return ByteArray.copyOf(s.getBytes(StandardCharsets.UTF_8));
     }
 
     private static ByteArray largeValue(int size) {
-        return ByteArray.wrap(new byte[size]);
+        return ByteArray.copyOf(new byte[size]);
     }
 
     private static LSMConfig smallMemtableConfig(int sizeBytes) {
-        return new LSMConfig(new MemtableConfig(sizeBytes), SSTableConfig.create());
+        return new LSMConfig(
+            new MemtableConfig(sizeBytes),
+            SSTableConfig.defaults(),
+            CompactionConfig.defaults(),
+            LeveledCompactionConfig.defaults()
+        );
     }
 
-    private List<KeyValue> collectEntries(CloseableIterator<KeyValue> iterator) {
-        List<KeyValue> entries = new ArrayList<>();
-        while (iterator.hasNext()) {
-            entries.add(iterator.next());
-        }
-        return entries;
+    private final AtomicLong timestampCounter = new AtomicLong(0);
+
+    private Timestamp nextTimestamp() {
+        return new Timestamp(timestampCounter.incrementAndGet());
     }
 
     @Nested
@@ -67,55 +71,65 @@ class LSMTreeTest {
 
         @Test
         void putAndGet() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
 
-                Optional<ByteArray> result = tree.get(key(1));
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    Optional<KeyValue> result = snap.get(key(1));
 
-                assertThat(result).isPresent();
-                assertThat(result.get()).isEqualTo(value(10));
+                    assertTrue(result.isPresent());
+                    assertEquals(value(10), result.get().value());
+                }
             }
         }
 
         @Test
         void getNonExistentKey() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                Optional<ByteArray> result = tree.get(key(99));
-                assertThat(result).isEmpty();
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    Optional<KeyValue> result = snap.get(key(99));
+                    assertTrue(result.isEmpty());
+                }
             }
         }
 
         @Test
         void deleteKey() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
-                tree.delete(key(1));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+                tree.delete(key(1), nextTimestamp());
 
-                Optional<ByteArray> result = tree.get(key(1));
-                assertThat(result).isEmpty();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    Optional<KeyValue> result = snap.get(key(1));
+                    assertTrue(result.isEmpty());
+                }
             }
         }
 
         @Test
         void deleteNonExistentKey() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.delete(key(1));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.delete(key(1), nextTimestamp());
 
-                Optional<ByteArray> result = tree.get(key(1));
-                assertThat(result).isEmpty();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    Optional<KeyValue> result = snap.get(key(1));
+                    assertTrue(result.isEmpty());
+                }
             }
         }
 
         @Test
         void putOverwritesPreviousValue() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
-                tree.put(key(1), value(20));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+                tree.put(key(1), value(20), nextTimestamp());
 
-                Optional<ByteArray> result = tree.get(key(1));
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    Optional<KeyValue> result = snap.get(key(1));
 
-                assertThat(result).isPresent();
-                assertThat(result.get()).isEqualTo(value(20));
+                    assertTrue(result.isPresent());
+                    assertEquals(value(20), result.get().value());
+                }
             }
         }
     }
@@ -125,54 +139,57 @@ class LSMTreeTest {
 
         @Test
         void entireRange() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
-                tree.put(key(2), value(20));
-                tree.put(key(3), value(30));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+                tree.put(key(2), value(20), nextTimestamp());
+                tree.put(key(3), value(30), nextTimestamp());
 
-                try (CloseableIterator<KeyValue> it = tree.scan(null, null)) {
-                    List<KeyValue> entries = collectEntries(it);
+                try (var snap = tree.snapshot(Timestamp.MAX);
+                     Stream<KeyValue> stream = snap.scan(null, null)) {
+                    List<KeyValue> entries = stream.toList();
 
-                    assertThat(entries).hasSize(3);
-                    assertThat(entries.get(0).key()).isEqualTo(key(1));
-                    assertThat(entries.get(1).key()).isEqualTo(key(2));
-                    assertThat(entries.get(2).key()).isEqualTo(key(3));
+                    assertEquals(3, entries.size());
+                    assertEquals(key(1), entries.get(0).key());
+                    assertEquals(key(2), entries.get(1).key());
+                    assertEquals(key(3), entries.get(2).key());
                 }
             }
         }
 
         @Test
         void withBounds() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
-                tree.put(key(2), value(20));
-                tree.put(key(3), value(30));
-                tree.put(key(4), value(40));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+                tree.put(key(2), value(20), nextTimestamp());
+                tree.put(key(3), value(30), nextTimestamp());
+                tree.put(key(4), value(40), nextTimestamp());
 
-                try (CloseableIterator<KeyValue> it = tree.scan(key(2), key(4))) {
-                    List<KeyValue> entries = collectEntries(it);
+                try (var snap = tree.snapshot(Timestamp.MAX);
+                     Stream<KeyValue> stream = snap.scan(key(2), key(4))) {
+                    List<KeyValue> entries = stream.toList();
 
-                    assertThat(entries).hasSize(2);
-                    assertThat(entries.get(0).key()).isEqualTo(key(2));
-                    assertThat(entries.get(1).key()).isEqualTo(key(3));
+                    assertEquals(2, entries.size());
+                    assertEquals(key(2), entries.get(0).key());
+                    assertEquals(key(3), entries.get(1).key());
                 }
             }
         }
 
         @Test
         void excludesDeletedKeys() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
-                tree.put(key(2), value(20));
-                tree.delete(key(2));
-                tree.put(key(3), value(30));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+                tree.put(key(2), value(20), nextTimestamp());
+                tree.delete(key(2), nextTimestamp());
+                tree.put(key(3), value(30), nextTimestamp());
 
-                try (CloseableIterator<KeyValue> it = tree.scan(null, null)) {
-                    List<KeyValue> entries = collectEntries(it);
+                try (var snap = tree.snapshot(Timestamp.MAX);
+                     Stream<KeyValue> stream = snap.scan(null, null)) {
+                    List<KeyValue> entries = stream.toList();
 
-                    assertThat(entries).hasSize(2);
-                    assertThat(entries.get(0).key()).isEqualTo(key(1));
-                    assertThat(entries.get(1).key()).isEqualTo(key(3));
+                    assertEquals(2, entries.size());
+                    assertEquals(key(1), entries.get(0).key());
+                    assertEquals(key(3), entries.get(1).key());
                 }
             }
         }
@@ -183,15 +200,16 @@ class LSMTreeTest {
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < 20; i++) {
-                    tree.put(key(i), largeValue(100));
+                    tree.put(key(i), largeValue(100), nextTimestamp());
                 }
 
-                try (CloseableIterator<KeyValue> it = tree.scan(null, null)) {
-                    List<KeyValue> entries = collectEntries(it);
+                try (var snap = tree.snapshot(Timestamp.MAX);
+                     Stream<KeyValue> stream = snap.scan(null, null)) {
+                    List<KeyValue> entries = stream.toList();
 
-                    assertThat(entries).hasSize(20);
+                    assertEquals(20, entries.size());
                     for (int i = 0; i < 20; i++) {
-                        assertThat(entries.get(i).key()).isEqualTo(key(i));
+                        assertEquals(key(i), entries.get(i).key());
                     }
                 }
             }
@@ -202,19 +220,20 @@ class LSMTreeTest {
             LSMConfig config = smallMemtableConfig(256);
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
-                tree.put(key(1), value(10));
-                tree.put(key(2), largeValue(100));
-                tree.put(key(1), value(20));
+                tree.put(key(1), value(10), nextTimestamp());
+                tree.put(key(2), largeValue(100), nextTimestamp());
+                tree.put(key(1), value(20), nextTimestamp());
 
-                try (CloseableIterator<KeyValue> it = tree.scan(null, null)) {
-                    List<KeyValue> entries = collectEntries(it);
+                try (var snap = tree.snapshot(Timestamp.MAX);
+                     Stream<KeyValue> stream = snap.scan(null, null)) {
+                    List<KeyValue> entries = stream.toList();
 
                     Optional<KeyValue> keyEntry = entries.stream()
                         .filter(e -> e.key().equals(key(1)))
                         .findFirst();
 
-                    assertThat(keyEntry).isPresent();
-                    assertThat(keyEntry.get().value()).isEqualTo(value(20));
+                    assertTrue(keyEntry.isPresent());
+                    assertEquals(value(20), keyEntry.get().value());
                 }
             }
         }
@@ -225,14 +244,16 @@ class LSMTreeTest {
 
         @Test
         void manualFlush() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
-                tree.put(key(2), value(20));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+                tree.put(key(2), value(20), nextTimestamp());
 
                 tree.flush();
 
-                assertThat(tree.get(key(1))).isPresent();
-                assertThat(tree.get(key(2))).isPresent();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isPresent());
+                    assertTrue(snap.get(key(2)).isPresent());
+                }
             }
         }
 
@@ -242,11 +263,13 @@ class LSMTreeTest {
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < 10; i++) {
-                    tree.put(key(i), largeValue(200));
+                    tree.put(key(i), largeValue(200), nextTimestamp());
                 }
 
-                for (int i = 0; i < 10; i++) {
-                    assertThat(tree.get(key(i))).isPresent();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    for (int i = 0; i < 10; i++) {
+                        assertTrue(snap.get(key(i)).isPresent());
+                    }
                 }
             }
         }
@@ -257,37 +280,41 @@ class LSMTreeTest {
 
         @Test
         void fromSSTables() {
-            LSMConfig config = LSMConfig.create();
+            LSMConfig config = LSMConfig.defaults();
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
-                tree.put(key(1), value(10));
-                tree.put(key(2), value(20));
+                tree.put(key(1), value(10), nextTimestamp());
+                tree.put(key(2), value(20), nextTimestamp());
                 tree.flush();
             }
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
-                Optional<ByteArray> result1 = tree.get(key(1));
-                Optional<ByteArray> result2 = tree.get(key(2));
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    Optional<KeyValue> result1 = snap.get(key(1));
+                    Optional<KeyValue> result2 = snap.get(key(2));
 
-                assertThat(result1).isPresent();
-                assertThat(result1.get()).isEqualTo(value(10));
+                    assertTrue(result1.isPresent());
+                    assertEquals(value(10), result1.get().value());
 
-                assertThat(result2).isPresent();
-                assertThat(result2.get()).isEqualTo(value(20));
+                    assertTrue(result2.isPresent());
+                    assertEquals(value(20), result2.get().value());
+                }
             }
         }
 
         @Test
         void readPathPriority() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
                 tree.flush();
-                tree.put(key(1), value(20));
+                tree.put(key(1), value(20), nextTimestamp());
 
-                Optional<ByteArray> result = tree.get(key(1));
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    Optional<KeyValue> result = snap.get(key(1));
 
-                assertThat(result).isPresent();
-                assertThat(result.get()).isEqualTo(value(20));
+                    assertTrue(result.isPresent());
+                    assertEquals(value(20), result.get().value());
+                }
             }
         }
 
@@ -297,13 +324,15 @@ class LSMTreeTest {
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < 30; i++) {
-                    tree.put(key(i), largeValue(100));
+                    tree.put(key(i), largeValue(100), nextTimestamp());
                 }
 
                 tree.flush();
 
-                for (int i = 0; i < 30; i++) {
-                    assertThat(tree.get(key(i))).isPresent();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    for (int i = 0; i < 30; i++) {
+                        assertTrue(snap.get(key(i)).isPresent());
+                    }
                 }
             }
         }
@@ -318,18 +347,18 @@ class LSMTreeTest {
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < 100; i++) {
-                    tree.put(key(String.format("key-%03d", i)), value("value-" + i));
+                    tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextTimestamp());
                 }
 
                 tree.flush();
                 Thread.sleep(500);
 
                 Manifest manifest = tree.manifest();
-                List<SSTableMetadata> l0Files = manifest.level(0);
-                List<SSTableMetadata> l1Files = manifest.level(1);
+                List<SSTableInfo> l0Files = manifest.level(0);
+                List<SSTableInfo> l1Files = manifest.level(1);
 
-                assertThat(l0Files.size()).isLessThan(4);
-                assertThat(l1Files.size()).isGreaterThan(0);
+                assertTrue(l0Files.size() < 4);
+                assertTrue(l1Files.size() > 0);
             }
         }
 
@@ -340,17 +369,19 @@ class LSMTreeTest {
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int version = 0; version < 5; version++) {
                     for (int i = 0; i < 20; i++) {
-                        tree.put(key(String.format("key-%02d", i)), value("v" + version + "-" + i));
+                        tree.put(key(String.format("key-%02d", i)), value("v" + version + "-" + i), nextTimestamp());
                     }
                     tree.flush();
                 }
 
                 Thread.sleep(1000);
 
-                for (int i = 0; i < 20; i++) {
-                    Optional<ByteArray> result = tree.get(key(String.format("key-%02d", i)));
-                    assertThat(result).isPresent();
-                    assertThat(new String(result.get().toByteArray())).startsWith("v4");
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    for (int i = 0; i < 20; i++) {
+                        Optional<KeyValue> result = snap.get(key(String.format("key-%02d", i)));
+                        assertTrue(result.isPresent());
+                        assertTrue(new String(result.get().value().toByteArray()).startsWith("v4"));
+                    }
                 }
             }
         }
@@ -361,19 +392,21 @@ class LSMTreeTest {
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < 50; i++) {
-                    tree.put(key(String.format("key-%03d", i)), value("value-" + i));
+                    tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextTimestamp());
                 }
                 tree.flush();
 
                 for (int i = 0; i < 50; i++) {
-                    tree.delete(key(String.format("key-%03d", i)));
+                    tree.delete(key(String.format("key-%03d", i)), nextTimestamp());
                 }
                 tree.flush();
 
                 Thread.sleep(500);
 
-                for (int i = 0; i < 50; i++) {
-                    assertThat(tree.get(key(String.format("key-%03d", i)))).isEmpty();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    for (int i = 0; i < 50; i++) {
+                        assertTrue(snap.get(key(String.format("key-%03d", i))).isEmpty());
+                    }
                 }
             }
         }
@@ -385,7 +418,7 @@ class LSMTreeTest {
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int batch = 0; batch < 20; batch++) {
                     for (int i = 0; i < 100; i++) {
-                        tree.put(key(String.format("key-%05d", batch * 100 + i)), largeValue(100));
+                        tree.put(key(String.format("key-%05d", batch * 100 + i)), largeValue(100), nextTimestamp());
                     }
                     tree.flush();
                 }
@@ -393,13 +426,13 @@ class LSMTreeTest {
                 Thread.sleep(2000);
 
                 Manifest manifest = tree.manifest();
-                LeveledCompactionConfig compactionConfig = LeveledCompactionConfig.create();
+                LeveledCompactionConfig compactionConfig = LeveledCompactionConfig.defaults();
 
                 for (int level = 1; level < manifest.maxLevel(); level++) {
                     long levelSize = manifest.levelSize(level);
                     long maxSize = compactionConfig.maxBytesForLevel(level);
 
-                    assertThat(levelSize).isLessThanOrEqualTo(maxSize * 2);
+                    assertTrue(levelSize <= maxSize * 2);
                 }
             }
         }
@@ -414,7 +447,7 @@ class LSMTreeTest {
                 for (int i = 0; i < 30; i++) {
                     String val = "version-" + i;
                     expectedValues.add(val);
-                    tree.put(key(String.format("key-%02d", i)), value(val));
+                    tree.put(key(String.format("key-%02d", i)), value(val), nextTimestamp());
 
                     if (i % 10 == 9) {
                         tree.flush();
@@ -423,10 +456,12 @@ class LSMTreeTest {
 
                 Thread.sleep(1000);
 
-                for (int i = 0; i < 30; i++) {
-                    Optional<ByteArray> result = tree.get(key(String.format("key-%02d", i)));
-                    assertThat(result).isPresent();
-                    assertThat(new String(result.get().toByteArray())).isEqualTo(expectedValues.get(i));
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    for (int i = 0; i < 30; i++) {
+                        Optional<KeyValue> result = snap.get(key(String.format("key-%02d", i)));
+                        assertTrue(result.isPresent());
+                        assertEquals(expectedValues.get(i), new String(result.get().value().toByteArray()));
+                    }
                 }
             }
         }
@@ -437,7 +472,7 @@ class LSMTreeTest {
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < 80; i++) {
-                    tree.put(key(String.format("key-%03d", i)), value("value-" + i));
+                    tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextTimestamp());
                 }
                 tree.flush();
 
@@ -446,16 +481,16 @@ class LSMTreeTest {
                 Manifest manifest = tree.manifest();
 
                 long totalEntries = 0;
-                for (SSTableMetadata meta : manifest.sstables()) {
+                for (SSTableInfo meta : manifest.sstables()) {
                     totalEntries += meta.entryCount();
-                    assertThat(meta.id()).isGreaterThan(0);
-                    assertThat(meta.level()).isGreaterThanOrEqualTo(0);
-                    assertThat(meta.fileSizeBytes()).isGreaterThan(0);
-                    assertThat(meta.smallestKey()).isNotNull();
-                    assertThat(meta.largestKey()).isNotNull();
+                    assertTrue(meta.id() > 0);
+                    assertTrue(meta.level() >= 0);
+                    assertTrue(meta.fileSizeBytes() > 0);
+                    assertNotNull(meta.smallestKey());
+                    assertNotNull(meta.largestKey());
                 }
 
-                assertThat(totalEntries).isGreaterThanOrEqualTo(80);
+                assertTrue(totalEntries >= 80);
             }
         }
 
@@ -472,17 +507,19 @@ class LSMTreeTest {
                     ByteArray v = value("value-" + i);
                     keys.add(k);
                     values.add(v);
-                    tree.put(k, v);
+                    tree.put(k, v, nextTimestamp());
                 }
                 tree.flush();
                 Thread.sleep(500);
             }
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
-                for (int i = 0; i < keys.size(); i++) {
-                    Optional<ByteArray> result = tree.get(keys.get(i));
-                    assertThat(result).isPresent();
-                    assertThat(result.get()).isEqualTo(values.get(i));
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    for (int i = 0; i < keys.size(); i++) {
+                        Optional<KeyValue> result = snap.get(keys.get(i));
+                        assertTrue(result.isPresent());
+                        assertEquals(values.get(i), result.get().value());
+                    }
                 }
             }
         }
@@ -493,7 +530,7 @@ class LSMTreeTest {
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < 100; i++) {
-                    tree.put(key(String.format("key-%03d", i)), value("value-" + i));
+                    tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextTimestamp());
                 }
                 tree.flush();
 
@@ -502,175 +539,197 @@ class LSMTreeTest {
                 ByteArray startKey = key("key-020");
                 ByteArray endKey = key("key-030");
 
-                try (CloseableIterator<KeyValue> iterator = tree.scan(startKey, endKey)) {
-                    int count = 0;
-                    while (iterator.hasNext()) {
-                        KeyValue kv = iterator.next();
-                        count++;
-                        assertThat(kv.key().compareTo(startKey)).isGreaterThanOrEqualTo(0);
-                        assertThat(kv.key().compareTo(endKey)).isLessThan(0);
-                    }
+                try (var snap = tree.snapshot(Timestamp.MAX);
+                     Stream<KeyValue> stream = snap.scan(startKey, endKey)) {
+                    List<KeyValue> entries = stream.toList();
 
-                    assertThat(count).isEqualTo(10);
+                    assertEquals(10, entries.size());
+                    for (KeyValue kv : entries) {
+                        assertTrue(kv.key().compareTo(startKey) >= 0);
+                        assertTrue(kv.key().compareTo(endKey) < 0);
+                    }
                 }
             }
         }
 
         @Test
         void emptyManifestLoad() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
                 Manifest manifest = tree.manifest();
-                assertThat(manifest).isNotNull();
-                assertThat(manifest.sstables()).isEmpty();
+                assertNotNull(manifest);
+                assertTrue(manifest.sstables().isEmpty());
             }
         }
     }
 
     @Nested
-    class Snapshot {
+    class Checkpoint {
 
         @Test
         void roundtrip() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
-                tree.put(key(2), value(20));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+                tree.put(key(2), value(20), nextTimestamp());
                 tree.flush();
 
-                byte[] snapshot = tree.snapshot();
-                tree.restore(snapshot);
+                byte[] checkpoint = tree.checkpoint();
+                tree.restoreFromCheckpoint(checkpoint);
 
-                assertThat(tree.get(key(1))).isPresent().contains(value(10));
-                assertThat(tree.get(key(2))).isPresent().contains(value(20));
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isPresent());
+                    assertEquals(value(10), snap.get(key(1)).get().value());
+                    assertTrue(snap.get(key(2)).isPresent());
+                    assertEquals(value(20), snap.get(key(2)).get().value());
+                }
             }
         }
 
         @Test
         void restoresToPreviousState() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
                 tree.flush();
 
-                byte[] snapshot = tree.snapshot();
+                byte[] checkpoint = tree.checkpoint();
 
-                tree.put(key(2), value(20));
-                tree.put(key(3), value(30));
+                tree.put(key(2), value(20), nextTimestamp());
+                tree.put(key(3), value(30), nextTimestamp());
                 tree.flush();
 
-                assertThat(tree.get(key(2))).isPresent();
-                assertThat(tree.get(key(3))).isPresent();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(2)).isPresent());
+                    assertTrue(snap.get(key(3)).isPresent());
+                }
 
-                tree.restore(snapshot);
+                tree.restoreFromCheckpoint(checkpoint);
 
-                assertThat(tree.get(key(1))).isPresent().contains(value(10));
-                assertThat(tree.get(key(2))).isEmpty();
-                assertThat(tree.get(key(3))).isEmpty();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isPresent());
+                    assertEquals(value(10), snap.get(key(1)).get().value());
+                    assertTrue(snap.get(key(2)).isEmpty());
+                    assertTrue(snap.get(key(3)).isEmpty());
+                }
             }
         }
 
         @Test
         void capturesMultipleSSTables() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
                 tree.flush();
 
-                tree.put(key(2), value(20));
+                tree.put(key(2), value(20), nextTimestamp());
                 tree.flush();
 
-                byte[] snapshot = tree.snapshot();
-                assertThat(tree.manifest().sstables()).hasSize(2);
+                byte[] checkpoint = tree.checkpoint();
+                assertEquals(2, tree.manifest().sstables().size());
 
-                tree.put(key(3), value(30));
+                tree.put(key(3), value(30), nextTimestamp());
                 tree.flush();
 
-                tree.restore(snapshot);
+                tree.restoreFromCheckpoint(checkpoint);
 
-                assertThat(tree.get(key(1))).isPresent();
-                assertThat(tree.get(key(2))).isPresent();
-                assertThat(tree.get(key(3))).isEmpty();
-                assertThat(tree.manifest().sstables()).hasSize(2);
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isPresent());
+                    assertTrue(snap.get(key(2)).isPresent());
+                    assertTrue(snap.get(key(3)).isEmpty());
+                }
+                assertEquals(2, tree.manifest().sstables().size());
             }
         }
 
         @Test
         void clearsMemtableOnRestore() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
                 tree.flush();
 
-                byte[] snapshot = tree.snapshot();
+                byte[] checkpoint = tree.checkpoint();
 
-                tree.put(key(2), value(20));
+                tree.put(key(2), value(20), nextTimestamp());
 
-                assertThat(tree.get(key(2))).isPresent();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(2)).isPresent());
+                }
 
-                tree.restore(snapshot);
+                tree.restoreFromCheckpoint(checkpoint);
 
-                assertThat(tree.get(key(1))).isPresent();
-                assertThat(tree.get(key(2))).isEmpty();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isPresent());
+                    assertTrue(snap.get(key(2)).isEmpty());
+                }
             }
         }
 
         @Test
         void manifestStateRestored() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
                 tree.flush();
 
-                byte[] snapshot = tree.snapshot();
+                byte[] checkpoint = tree.checkpoint();
                 long originalNextId = tree.manifest().nextSSTableId();
                 int originalSSTableCount = tree.manifest().sstables().size();
 
-                tree.put(key(2), value(20));
+                tree.put(key(2), value(20), nextTimestamp());
                 tree.flush();
 
-                assertThat(tree.manifest().nextSSTableId()).isGreaterThan(originalNextId);
+                assertTrue(tree.manifest().nextSSTableId() > originalNextId);
 
-                tree.restore(snapshot);
+                tree.restoreFromCheckpoint(checkpoint);
 
-                assertThat(tree.manifest().nextSSTableId()).isEqualTo(originalNextId);
-                assertThat(tree.manifest().sstables()).hasSize(originalSSTableCount);
+                assertEquals(originalNextId, tree.manifest().nextSSTableId());
+                assertEquals(originalSSTableCount, tree.manifest().sstables().size());
             }
         }
 
         @Test
-        void multipleSnapshots() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                tree.put(key(1), value(10));
+        void multipleCheckpoints() {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
                 tree.flush();
-                byte[] snapshot1 = tree.snapshot();
+                byte[] checkpoint1 = tree.checkpoint();
 
-                tree.put(key(2), value(20));
+                tree.put(key(2), value(20), nextTimestamp());
                 tree.flush();
-                byte[] snapshot2 = tree.snapshot();
+                byte[] checkpoint2 = tree.checkpoint();
 
-                tree.put(key(3), value(30));
+                tree.put(key(3), value(30), nextTimestamp());
                 tree.flush();
 
-                tree.restore(snapshot1);
-                assertThat(tree.get(key(1))).isPresent();
-                assertThat(tree.get(key(2))).isEmpty();
-                assertThat(tree.get(key(3))).isEmpty();
+                tree.restoreFromCheckpoint(checkpoint1);
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isPresent());
+                    assertTrue(snap.get(key(2)).isEmpty());
+                    assertTrue(snap.get(key(3)).isEmpty());
+                }
 
-                tree.restore(snapshot2);
-                assertThat(tree.get(key(1))).isPresent();
-                assertThat(tree.get(key(2))).isPresent();
-                assertThat(tree.get(key(3))).isEmpty();
+                tree.restoreFromCheckpoint(checkpoint2);
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isPresent());
+                    assertTrue(snap.get(key(2)).isPresent());
+                    assertTrue(snap.get(key(3)).isEmpty());
+                }
             }
         }
 
         @Test
         void emptyTree() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
-                byte[] snapshot = tree.snapshot();
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                byte[] checkpoint = tree.checkpoint();
 
-                tree.put(key(1), value(10));
+                tree.put(key(1), value(10), nextTimestamp());
                 tree.flush();
-                assertThat(tree.get(key(1))).isPresent();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isPresent());
+                }
 
-                tree.restore(snapshot);
+                tree.restoreFromCheckpoint(checkpoint);
 
-                assertThat(tree.get(key(1))).isEmpty();
-                assertThat(tree.manifest().sstables()).isEmpty();
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isEmpty());
+                }
+                assertTrue(tree.manifest().sstables().isEmpty());
             }
         }
     }
@@ -680,119 +739,111 @@ class LSMTreeTest {
 
         @Test
         void concurrentReads() throws Exception {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
                 for (int i = 0; i < 100; i++) {
-                    tree.put(key(i), value(i));
+                    tree.put(key(i), value(i), nextTimestamp());
                 }
                 tree.flush();
 
                 int threadCount = 10;
                 int readsPerThread = 100;
-                ExecutorService executor = Executors.newFixedThreadPool(threadCount);
-                CountDownLatch latch = new CountDownLatch(threadCount);
                 AtomicBoolean failed = new AtomicBoolean(false);
 
-                for (int t = 0; t < threadCount; t++) {
-                    executor.submit(() -> {
-                        try {
-                            for (int i = 0; i < readsPerThread; i++) {
-                                int keyIndex = i % 100;
-                                Optional<ByteArray> result = tree.get(key(keyIndex));
-                                if (result.isEmpty() || !result.get().equals(value(keyIndex))) {
-                                    failed.set(true);
+                try (var executor = Executors.newFixedThreadPool(threadCount)) {
+                    for (int t = 0; t < threadCount; t++) {
+                        executor.submit(() -> {
+                            try (var snap = tree.snapshot(Timestamp.MAX)) {
+                                for (int i = 0; i < readsPerThread; i++) {
+                                    int keyIndex = i % 100;
+                                    Optional<KeyValue> result = snap.get(key(keyIndex));
+                                    if (result.isEmpty() || !result.get().value().equals(value(keyIndex))) {
+                                        failed.set(true);
+                                    }
                                 }
                             }
-                        } finally {
-                            latch.countDown();
-                        }
-                    });
+                        });
+                    }
+
+                    executor.shutdown();
+                    assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS),
+                        "Concurrent read tasks did not complete in time");
                 }
 
-                latch.await(10, TimeUnit.SECONDS);
-                executor.shutdown();
-
-                assertThat(failed.get()).isFalse();
+                assertFalse(failed.get());
             }
         }
 
         @Test
         void concurrentWrites() throws Exception {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
                 int threadCount = 10;
                 int writesPerThread = 100;
-                ExecutorService executor = Executors.newFixedThreadPool(threadCount);
-                CountDownLatch latch = new CountDownLatch(threadCount);
 
-                for (int t = 0; t < threadCount; t++) {
-                    int threadId = t;
-                    executor.submit(() -> {
-                        try {
+                try (var executor = Executors.newFixedThreadPool(threadCount)) {
+                    for (int t = 0; t < threadCount; t++) {
+                        int threadId = t;
+                        executor.submit(() -> {
                             for (int i = 0; i < writesPerThread; i++) {
                                 int keyIndex = threadId * writesPerThread + i;
-                                tree.put(key(keyIndex & 0xFF), value(keyIndex));
+                                tree.put(key(keyIndex & 0xFF), value(keyIndex), nextTimestamp());
                             }
-                        } finally {
-                            latch.countDown();
-                        }
-                    });
-                }
+                        });
+                    }
 
-                latch.await(10, TimeUnit.SECONDS);
-                executor.shutdown();
+                    executor.shutdown();
+                    assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS),
+                        "Concurrent write tasks did not complete in time");
+                }
 
                 tree.flush();
 
-                try (CloseableIterator<KeyValue> it = tree.scan(null, null)) {
-                    List<KeyValue> entries = collectEntries(it);
-                    assertThat(entries).isNotEmpty();
+                try (var snap = tree.snapshot(Timestamp.MAX);
+                     Stream<KeyValue> stream = snap.scan(null, null)) {
+                    List<KeyValue> entries = stream.toList();
+                    assertFalse(entries.isEmpty());
                 }
             }
         }
 
         @Test
         void concurrentReadsAndWrites() throws Exception {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
                 for (int i = 0; i < 50; i++) {
-                    tree.put(key(i), value(i));
+                    tree.put(key(i), value(i), nextTimestamp());
                 }
 
                 int writerCount = 5;
                 int readerCount = 5;
-                ExecutorService executor = Executors.newFixedThreadPool(writerCount + readerCount);
-                CountDownLatch latch = new CountDownLatch(writerCount + readerCount);
                 AtomicBoolean failed = new AtomicBoolean(false);
 
-                for (int t = 0; t < writerCount; t++) {
-                    int threadId = t;
-                    executor.submit(() -> {
-                        try {
+                try (var executor = Executors.newFixedThreadPool(writerCount + readerCount)) {
+                    for (int t = 0; t < writerCount; t++) {
+                        int threadId = t;
+                        executor.submit(() -> {
                             for (int i = 0; i < 100; i++) {
-                                tree.put(key((50 + threadId * 100 + i) & 0xFF), value(i));
+                                tree.put(key((50 + threadId * 100 + i) & 0xFF), value(i), nextTimestamp());
                             }
-                        } finally {
-                            latch.countDown();
-                        }
-                    });
+                        });
+                    }
+
+                    for (int t = 0; t < readerCount; t++) {
+                        executor.submit(() -> {
+                            try (var snap = tree.snapshot(Timestamp.MAX)) {
+                                for (int i = 0; i < 100; i++) {
+                                    snap.get(key(i % 50));
+                                }
+                            } catch (Exception e) {
+                                failed.set(true);
+                            }
+                        });
+                    }
+
+                    executor.shutdown();
+                    assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS),
+                        "Concurrent read/write tasks did not complete in time");
                 }
 
-                for (int t = 0; t < readerCount; t++) {
-                    executor.submit(() -> {
-                        try {
-                            for (int i = 0; i < 100; i++) {
-                                tree.get(key(i % 50));
-                            }
-                        } catch (Exception e) {
-                            failed.set(true);
-                        } finally {
-                            latch.countDown();
-                        }
-                    });
-                }
-
-                latch.await(10, TimeUnit.SECONDS);
-                executor.shutdown();
-
-                assertThat(failed.get()).isFalse();
+                assertFalse(failed.get());
             }
         }
 
@@ -802,51 +853,50 @@ class LSMTreeTest {
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < 50; i++) {
-                    tree.put(key(i), value(i));
+                    tree.put(key(i), value(i), nextTimestamp());
                 }
 
                 int readerCount = 5;
-                ExecutorService executor = Executors.newFixedThreadPool(readerCount + 1);
                 CountDownLatch startLatch = new CountDownLatch(1);
-                CountDownLatch doneLatch = new CountDownLatch(readerCount + 1);
                 AtomicBoolean failed = new AtomicBoolean(false);
 
-                for (int t = 0; t < readerCount; t++) {
+                try (var executor = Executors.newFixedThreadPool(readerCount + 1)) {
+                    for (int t = 0; t < readerCount; t++) {
+                        executor.submit(() -> {
+                            try {
+                                startLatch.await();
+                                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                                    for (int i = 0; i < 200; i++) {
+                                        snap.get(key(i % 50));
+                                    }
+                                }
+                            } catch (Exception e) {
+                                failed.set(true);
+                            }
+                        });
+                    }
+
                     executor.submit(() -> {
                         try {
                             startLatch.await();
-                            for (int i = 0; i < 200; i++) {
-                                tree.get(key(i % 50));
+                            for (int round = 0; round < 5; round++) {
+                                for (int i = 0; i < 20; i++) {
+                                    tree.put(key((100 + round * 20 + i) & 0xFF), largeValue(100), nextTimestamp());
+                                }
+                                tree.flush();
                             }
                         } catch (Exception e) {
                             failed.set(true);
-                        } finally {
-                            doneLatch.countDown();
                         }
                     });
+
+                    startLatch.countDown();
+                    executor.shutdown();
+                    assertTrue(executor.awaitTermination(30, TimeUnit.SECONDS),
+                        "Read/flush tasks did not complete in time");
                 }
 
-                executor.submit(() -> {
-                    try {
-                        startLatch.await();
-                        for (int round = 0; round < 5; round++) {
-                            for (int i = 0; i < 20; i++) {
-                                tree.put(key((100 + round * 20 + i) & 0xFF), largeValue(100));
-                            }
-                            tree.flush();
-                        }
-                    } catch (Exception e) {
-                        failed.set(true);
-                    } finally {
-                        doneLatch.countDown();
-                    }
-                });
-
-                startLatch.countDown();
-                doneLatch.await(30, TimeUnit.SECONDS);
-                executor.shutdown();
-
-                assertThat(failed.get()).isFalse();
+                assertFalse(failed.get());
             }
         }
 
@@ -857,40 +907,41 @@ class LSMTreeTest {
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int batch = 0; batch < 5; batch++) {
                     for (int i = 0; i < 50; i++) {
-                        tree.put(key(String.format("key-%03d", i)), value("v" + batch + "-" + i));
+                        tree.put(key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextTimestamp());
                     }
                     tree.flush();
                 }
 
                 int readerCount = 5;
-                ExecutorService executor = Executors.newFixedThreadPool(readerCount);
-                CountDownLatch latch = new CountDownLatch(readerCount);
                 AtomicBoolean failed = new AtomicBoolean(false);
 
-                for (int t = 0; t < readerCount; t++) {
-                    executor.submit(() -> {
-                        try {
-                            for (int round = 0; round < 50; round++) {
-                                for (int i = 0; i < 50; i++) {
-                                    Optional<ByteArray> result = tree.get(key(String.format("key-%03d", i)));
-                                    if (result.isEmpty()) {
-                                        failed.set(true);
+                try (var executor = Executors.newFixedThreadPool(readerCount)) {
+                    for (int t = 0; t < readerCount; t++) {
+                        executor.submit(() -> {
+                            try {
+                                for (int round = 0; round < 50; round++) {
+                                    try (var snap = tree.snapshot(Timestamp.MAX)) {
+                                        for (int i = 0; i < 50; i++) {
+                                            Optional<KeyValue> result = snap.get(key(String.format("key-%03d", i)));
+                                            if (result.isEmpty()) {
+                                                failed.set(true);
+                                            }
+                                        }
                                     }
+                                    Thread.sleep(10);
                                 }
-                                Thread.sleep(10);
+                            } catch (Exception e) {
+                                failed.set(true);
                             }
-                        } catch (Exception e) {
-                            failed.set(true);
-                        } finally {
-                            latch.countDown();
-                        }
-                    });
+                        });
+                    }
+
+                    executor.shutdown();
+                    assertTrue(executor.awaitTermination(30, TimeUnit.SECONDS),
+                        "Read tasks during compaction did not complete in time");
                 }
 
-                latch.await(30, TimeUnit.SECONDS);
-                executor.shutdown();
-
-                assertThat(failed.get()).isFalse();
+                assertFalse(failed.get());
             }
         }
 
@@ -900,198 +951,339 @@ class LSMTreeTest {
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < 50; i++) {
-                    tree.put(key(i), value(i));
+                    tree.put(key(i), value(i), nextTimestamp());
                 }
 
-                ExecutorService executor = Executors.newFixedThreadPool(2);
                 CountDownLatch startLatch = new CountDownLatch(1);
-                CountDownLatch doneLatch = new CountDownLatch(2);
                 AtomicBoolean failed = new AtomicBoolean(false);
 
-                executor.submit(() -> {
-                    try {
-                        startLatch.await();
-                        for (int round = 0; round < 10; round++) {
-                            try (CloseableIterator<KeyValue> it = tree.scan(null, null)) {
-                                while (it.hasNext()) {
-                                    it.next();
+                try (var executor = Executors.newFixedThreadPool(2)) {
+                    executor.submit(() -> {
+                        try {
+                            startLatch.await();
+                            for (int round = 0; round < 10; round++) {
+                                try (var snap = tree.snapshot(Timestamp.MAX);
+                                     Stream<KeyValue> stream = snap.scan(null, null)) {
+                                    stream.forEach(_ -> {});
                                 }
                             }
+                        } catch (Exception e) {
+                            failed.set(true);
                         }
-                    } catch (Exception e) {
-                        failed.set(true);
-                    } finally {
-                        doneLatch.countDown();
-                    }
-                });
+                    });
 
-                executor.submit(() -> {
-                    try {
-                        startLatch.await();
-                        for (int round = 0; round < 5; round++) {
-                            for (int i = 0; i < 20; i++) {
-                                tree.put(key((100 + round * 20 + i) & 0xFF), largeValue(100));
+                    executor.submit(() -> {
+                        try {
+                            startLatch.await();
+                            for (int round = 0; round < 5; round++) {
+                                for (int i = 0; i < 20; i++) {
+                                    tree.put(key((100 + round * 20 + i) & 0xFF), largeValue(100), nextTimestamp());
+                                }
+                                tree.flush();
                             }
-                            tree.flush();
+                        } catch (Exception e) {
+                            failed.set(true);
                         }
-                    } catch (Exception e) {
-                        failed.set(true);
-                    } finally {
-                        doneLatch.countDown();
-                    }
-                });
+                    });
 
-                startLatch.countDown();
-                doneLatch.await(30, TimeUnit.SECONDS);
-                executor.shutdown();
+                    startLatch.countDown();
+                    executor.shutdown();
+                    assertTrue(executor.awaitTermination(30, TimeUnit.SECONDS),
+                        "Scan/flush tasks did not complete in time");
+                }
 
-                assertThat(failed.get()).isFalse();
+                assertFalse(failed.get());
             }
         }
     }
 
     @Nested
-    class IteratorLifecycle {
+    class StreamLifecycle {
 
         @Test
         void closeReleasesResources() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
                 for (int i = 0; i < 10; i++) {
-                    tree.put(key(i), value(i));
+                    tree.put(key(i), value(i), nextTimestamp());
                 }
                 tree.flush();
 
-                CloseableIterator<KeyValue> it = tree.scan(null, null);
-                assertThat(it.hasNext()).isTrue();
-                it.next();
-                it.close();
+                try (var snap = tree.snapshot(Timestamp.MAX);
+                     Stream<KeyValue> stream = snap.scan(null, null)) {
+                    assertTrue(stream.findFirst().isPresent());
+                }
             }
         }
 
         @Test
-        void multipleIteratorsOnSameTree() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
+        void multipleStreamsOnSameTree() {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
                 for (int i = 0; i < 20; i++) {
-                    tree.put(key(i), value(i));
+                    tree.put(key(i), value(i), nextTimestamp());
                 }
                 tree.flush();
 
-                try (CloseableIterator<KeyValue> it1 = tree.scan(null, null);
-                     CloseableIterator<KeyValue> it2 = tree.scan(null, null);
-                     CloseableIterator<KeyValue> it3 = tree.scan(null, null)) {
+                try (var snap = tree.snapshot(Timestamp.MAX);
+                     Stream<KeyValue> stream1 = snap.scan(null, null);
+                     Stream<KeyValue> stream2 = snap.scan(null, null);
+                     Stream<KeyValue> stream3 = snap.scan(null, null)) {
 
-                    List<KeyValue> entries1 = collectEntries(it1);
-                    List<KeyValue> entries2 = collectEntries(it2);
-                    List<KeyValue> entries3 = collectEntries(it3);
+                    List<KeyValue> entries1 = stream1.toList();
+                    List<KeyValue> entries2 = stream2.toList();
+                    List<KeyValue> entries3 = stream3.toList();
 
-                    assertThat(entries1).hasSize(20);
-                    assertThat(entries2).hasSize(20);
-                    assertThat(entries3).hasSize(20);
+                    assertEquals(20, entries1.size());
+                    assertEquals(20, entries2.size());
+                    assertEquals(20, entries3.size());
                 }
             }
         }
 
         @Test
-        void iteratorSurvivesCompaction() throws Exception {
+        void streamSurvivesCompaction() throws Exception {
             LSMConfig config = smallMemtableConfig(1024);
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int batch = 0; batch < 5; batch++) {
                     for (int i = 0; i < 30; i++) {
-                        tree.put(key(String.format("key-%03d", i)), value("v" + batch + "-" + i));
+                        tree.put(key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextTimestamp());
                     }
                     tree.flush();
                 }
 
-                try (CloseableIterator<KeyValue> it = tree.scan(null, null)) {
+                try (var snap = tree.snapshot(Timestamp.MAX);
+                     Stream<KeyValue> stream = snap.scan(null, null)) {
                     Thread.sleep(1000);
 
-                    int count = 0;
-                    while (it.hasNext()) {
-                        KeyValue kv = it.next();
-                        assertThat(kv.key()).isNotNull();
-                        assertThat(kv.value()).isNotNull();
-                        count++;
+                    List<KeyValue> entries = stream.toList();
+                    assertEquals(30, entries.size());
+                    for (KeyValue kv : entries) {
+                        assertNotNull(kv.key());
+                        assertNotNull(kv.value());
                     }
-
-                    assertThat(count).isEqualTo(30);
                 }
             }
         }
 
         @Test
-        void iteratorSeesConsistentSnapshot() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
+        void streamSeesConsistentSnapshot() {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
                 for (int i = 0; i < 10; i++) {
-                    tree.put(key(i), value(i));
+                    tree.put(key(i), value(i), nextTimestamp());
                 }
                 tree.flush();
 
-                try (CloseableIterator<KeyValue> it = tree.scan(null, null)) {
+                Timestamp snapshotTs = new Timestamp(timestampCounter.get());
+                try (var snap = tree.snapshot(snapshotTs);
+                     Stream<KeyValue> stream = snap.scan(null, null)) {
                     for (int i = 10; i < 20; i++) {
-                        tree.put(key(i), value(i));
+                        tree.put(key(i), value(i), nextTimestamp());
                     }
                     tree.flush();
 
-                    List<KeyValue> entries = collectEntries(it);
+                    List<KeyValue> entries = stream.toList();
 
-                    assertThat(entries).hasSize(10);
+                    assertEquals(10, entries.size());
                     for (int i = 0; i < 10; i++) {
-                        assertThat(entries.get(i).key()).isEqualTo(key(i));
+                        assertEquals(key(i), entries.get(i).key());
                     }
                 }
             }
         }
 
         @Test
-        void unclosedIteratorPreventsReaderClose() throws Exception {
+        void unclosedStreamPreventsReaderClose() throws Exception {
             LSMConfig config = smallMemtableConfig(1024);
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < 30; i++) {
-                    tree.put(key(String.format("key-%03d", i)), value("initial-" + i));
+                    tree.put(key(String.format("key-%03d", i)), value("initial-" + i), nextTimestamp());
                 }
                 tree.flush();
 
-                CloseableIterator<KeyValue> it = tree.scan(null, null);
+                Timestamp snapshotTs = new Timestamp(timestampCounter.get());
+                var snap = tree.snapshot(snapshotTs);
+                Stream<KeyValue> stream = snap.scan(null, null);
 
                 for (int batch = 0; batch < 5; batch++) {
                     for (int i = 0; i < 30; i++) {
-                        tree.put(key(String.format("key-%03d", i)), value("v" + batch + "-" + i));
+                        tree.put(key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextTimestamp());
                     }
                     tree.flush();
                 }
                 Thread.sleep(1000);
 
-                int count = 0;
-                while (it.hasNext()) {
-                    KeyValue kv = it.next();
+                List<KeyValue> entries = stream.toList();
+                assertEquals(30, entries.size());
+                for (KeyValue kv : entries) {
                     String valueStr = new String(kv.value().toByteArray());
-                    assertThat(valueStr).startsWith("initial-");
-                    count++;
+                    assertTrue(valueStr.startsWith("initial-"));
                 }
-                assertThat(count).isEqualTo(30);
 
-                it.close();
+                stream.close();
+                snap.close();
             }
         }
 
         @Test
-        void closeAfterPartialIteration() {
-            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.create())) {
+        void closeAfterPartialConsumption() {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
                 for (int i = 0; i < 100; i++) {
-                    tree.put(key(i), value(i));
+                    tree.put(key(i), value(i), nextTimestamp());
                 }
                 tree.flush();
 
-                CloseableIterator<KeyValue> it = tree.scan(null, null);
-
-                for (int i = 0; i < 10; i++) {
-                    assertThat(it.hasNext()).isTrue();
-                    it.next();
+                try (var snap = tree.snapshot(Timestamp.MAX);
+                     Stream<KeyValue> stream = snap.scan(null, null)) {
+                    List<KeyValue> first10 = stream.limit(10).toList();
+                    assertEquals(10, first10.size());
                 }
+            }
+        }
+    }
 
-                it.close();
+    @Nested
+    class WriteBatchTests {
+
+        @Test
+        void writeBatchAppliesAtomically() {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                Timestamp ts = nextTimestamp();
+
+                WriteBatch batch = WriteBatch.builder()
+                    .put(key(1), value(10))
+                    .put(key(2), value(20))
+                    .put(key(3), value(30))
+                    .build();
+
+                tree.write(batch, ts);
+
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isPresent());
+                    assertEquals(value(10), snap.get(key(1)).get().value());
+                    assertTrue(snap.get(key(2)).isPresent());
+                    assertEquals(value(20), snap.get(key(2)).get().value());
+                    assertTrue(snap.get(key(3)).isPresent());
+                    assertEquals(value(30), snap.get(key(3)).get().value());
+                }
+            }
+        }
+
+        @Test
+        void writeBatchWithPutsAndDeletes() {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+                tree.put(key(2), value(20), nextTimestamp());
+
+                WriteBatch batch = WriteBatch.builder()
+                    .delete(key(1))
+                    .put(key(3), value(30))
+                    .build();
+
+                tree.write(batch, nextTimestamp());
+
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isEmpty());
+                    assertTrue(snap.get(key(2)).isPresent());
+                    assertTrue(snap.get(key(3)).isPresent());
+                }
+            }
+        }
+
+        @Test
+        void emptyWriteBatchIsNoop() {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+
+                WriteBatch batch = WriteBatch.builder().build();
+                assertTrue(batch.isEmpty());
+                assertEquals(0, batch.size());
+
+                tree.write(batch, nextTimestamp());
+
+                try (var snap = tree.snapshot(Timestamp.MAX)) {
+                    assertTrue(snap.get(key(1)).isPresent());
+                }
+            }
+        }
+
+        @Test
+        void writeBatchFluentApi() {
+            WriteBatch batch = WriteBatch.builder()
+                .put(key(1), value(10))
+                .put(key(2), value(20))
+                .delete(key(3))
+                .put(key(4), value(40))
+                .build();
+
+            assertEquals(4, batch.size());
+            assertFalse(batch.isEmpty());
+        }
+    }
+
+    @Nested
+    class SnapshotTests {
+
+        @Test
+        void snapshotSeesConsistentState() {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+                tree.put(key(2), value(20), nextTimestamp());
+
+                Timestamp snapTs = new Timestamp(timestampCounter.get());
+
+                try (var snap = tree.snapshot(snapTs)) {
+                    tree.put(key(3), value(30), nextTimestamp());
+                    tree.put(key(1), value(100), nextTimestamp());
+
+                    assertTrue(snap.get(key(1)).isPresent());
+                    assertEquals(value(10), snap.get(key(1)).get().value());
+                    assertTrue(snap.get(key(2)).isPresent());
+                    assertTrue(snap.get(key(3)).isEmpty());
+                }
+            }
+        }
+
+        @Test
+        void closedSnapshotThrows() {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+
+                var snap = tree.snapshot(Timestamp.MAX);
+                snap.close();
+
+                IllegalStateException ex = assertThrows(IllegalStateException.class, () -> snap.get(key(1)));
+                assertTrue(ex.getMessage().contains("closed"));
+            }
+        }
+
+        @Test
+        void multipleSnapshotsIndependent() {
+            try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+                tree.put(key(1), value(10), nextTimestamp());
+                Timestamp ts1 = new Timestamp(timestampCounter.get());
+
+                tree.put(key(2), value(20), nextTimestamp());
+                Timestamp ts2 = new Timestamp(timestampCounter.get());
+
+                tree.put(key(3), value(30), nextTimestamp());
+
+                try (var snap1 = tree.snapshot(ts1);
+                     var snap2 = tree.snapshot(ts2);
+                     var snap3 = tree.snapshot(Timestamp.MAX)) {
+
+                    assertTrue(snap1.get(key(1)).isPresent());
+                    assertTrue(snap1.get(key(2)).isEmpty());
+                    assertTrue(snap1.get(key(3)).isEmpty());
+
+                    assertTrue(snap2.get(key(1)).isPresent());
+                    assertTrue(snap2.get(key(2)).isPresent());
+                    assertTrue(snap2.get(key(3)).isEmpty());
+
+                    assertTrue(snap3.get(key(1)).isPresent());
+                    assertTrue(snap3.get(key(2)).isPresent());
+                    assertTrue(snap3.get(key(3)).isPresent());
+                }
             }
         }
     }

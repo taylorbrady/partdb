@@ -22,7 +22,7 @@ public record LeveledCompactionConfig(
         }
     }
 
-    public static LeveledCompactionConfig create() {
+    public static LeveledCompactionConfig defaults() {
         return new LeveledCompactionConfig(
             4,
             10 * 1024 * 1024,

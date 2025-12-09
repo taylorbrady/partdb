@@ -40,7 +40,7 @@ public record PartDbServerConfig(
             nodeId,
             peerSpecs,
             dataDirectory,
-            LSMConfig.create(),
+            LSMConfig.defaults(),
             RaftConfig.defaults(),
             Duration.ofMillis(10),
             raftPort,
