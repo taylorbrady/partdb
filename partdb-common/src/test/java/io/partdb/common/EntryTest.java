@@ -7,116 +7,57 @@ import static org.assertj.core.api.Assertions.*;
 class EntryTest {
 
     @Test
-    void putFactoryCreatesNonTombstoneEntry() {
-        byte[] key = new byte[]{1};
-        byte[] value = new byte[]{2};
-        long version = 1000L;
+    void recordAccessors() {
+        Slice key = Slice.of("key");
+        Slice value = Slice.of("value");
+        long revision = 1000L;
 
-        Entry entry = Entry.put(key, value, version);
+        Entry entry = new Entry(key, value, revision);
 
         assertThat(entry.key()).isEqualTo(key);
         assertThat(entry.value()).isEqualTo(value);
-        assertThat(entry.version()).isEqualTo(version);
-        assertThat(entry.tombstone()).isFalse();
-        assertThat(entry.leaseId()).isZero();
+        assertThat(entry.revision()).isEqualTo(revision);
     }
 
     @Test
-    void putWithLeaseAttachesLease() {
-        byte[] key = new byte[]{1};
-        byte[] value = new byte[]{2};
-        long version = 1000L;
-        long leaseId = 42L;
+    void equalsAndHashCode() {
+        Slice key = Slice.of("key");
+        Slice value = Slice.of("value");
 
-        Entry entry = Entry.putWithLease(key, value, version, leaseId);
-
-        assertThat(entry.leaseId()).isEqualTo(leaseId);
-        assertThat(entry.tombstone()).isFalse();
-    }
-
-    @Test
-    void deleteFactoryCreatesTombstoneEntry() {
-        byte[] key = new byte[]{1};
-        long version = 2000L;
-
-        Entry entry = Entry.delete(key, version);
-
-        assertThat(entry.key()).isEqualTo(key);
-        assertThat(entry.value()).isNull();
-        assertThat(entry.version()).isEqualTo(version);
-        assertThat(entry.tombstone()).isTrue();
-        assertThat(entry.leaseId()).isZero();
-    }
-
-    @Test
-    void constructorThrowsWhenKeyIsNull() {
-        byte[] value = new byte[]{1};
-
-        assertThatThrownBy(() -> new Entry(null, value, 1000L, false, 0))
-            .isInstanceOf(NullPointerException.class)
-            .hasMessageContaining("key cannot be null");
-    }
-
-    @Test
-    void constructorThrowsWhenNonTombstoneHasNullValue() {
-        byte[] key = new byte[]{1};
-
-        assertThatThrownBy(() -> new Entry(key, null, 1000L, false, 0))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("value cannot be null for non-tombstone");
-    }
-
-    @Test
-    void constructorAllowsNullValueForTombstone() {
-        byte[] key = new byte[]{1};
-
-        Entry entry = new Entry(key, null, 1000L, true, 0);
-
-        assertThat(entry.tombstone()).isTrue();
-        assertThat(entry.value()).isNull();
-    }
-
-    @Test
-    void equalsWorksForSameContent() {
-        byte[] key = new byte[]{1};
-        byte[] value = new byte[]{2};
-
-        Entry entry1 = Entry.put(key, value, 1000L);
-        Entry entry2 = Entry.put(key, value, 1000L);
+        Entry entry1 = new Entry(key, value, 1000L);
+        Entry entry2 = new Entry(key, value, 1000L);
 
         assertThat(entry1).isEqualTo(entry2);
         assertThat(entry1.hashCode()).isEqualTo(entry2.hashCode());
     }
 
     @Test
-    void notEqualWhenTimestampDiffers() {
-        byte[] key = new byte[]{1};
-        byte[] value = new byte[]{2};
+    void notEqualWhenRevisionDiffers() {
+        Slice key = Slice.of("key");
+        Slice value = Slice.of("value");
 
-        Entry entry1 = Entry.put(key, value, 1000L);
-        Entry entry2 = Entry.put(key, value, 2000L);
-
-        assertThat(entry1).isNotEqualTo(entry2);
-    }
-
-    @Test
-    void notEqualWhenTombstoneFlagDiffers() {
-        byte[] key = new byte[]{1};
-        byte[] value = new byte[]{2};
-
-        Entry entry1 = Entry.put(key, value, 1000L);
-        Entry entry2 = Entry.delete(key, 1000L);
+        Entry entry1 = new Entry(key, value, 1000L);
+        Entry entry2 = new Entry(key, value, 2000L);
 
         assertThat(entry1).isNotEqualTo(entry2);
     }
 
     @Test
-    void notEqualWhenLeaseIdDiffers() {
-        byte[] key = new byte[]{1};
-        byte[] value = new byte[]{2};
+    void notEqualWhenKeyDiffers() {
+        Slice value = Slice.of("value");
 
-        Entry entry1 = Entry.put(key, value, 1000L);
-        Entry entry2 = Entry.putWithLease(key, value, 1000L, 42L);
+        Entry entry1 = new Entry(Slice.of("key1"), value, 1000L);
+        Entry entry2 = new Entry(Slice.of("key2"), value, 1000L);
+
+        assertThat(entry1).isNotEqualTo(entry2);
+    }
+
+    @Test
+    void notEqualWhenValueDiffers() {
+        Slice key = Slice.of("key");
+
+        Entry entry1 = new Entry(key, Slice.of("value1"), 1000L);
+        Entry entry2 = new Entry(key, Slice.of("value2"), 1000L);
 
         assertThat(entry1).isNotEqualTo(entry2);
     }

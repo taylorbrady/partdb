@@ -1,7 +1,6 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.common.Timestamp;
-import io.partdb.storage.Slice;
+import io.partdb.common.Slice;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -17,8 +16,8 @@ record SSTableFooter(
     int blockCount,
     Slice smallestKey,
     Slice largestKey,
-    Timestamp smallestTimestamp,
-    Timestamp largestTimestamp,
+    long smallestRevision,
+    long largestRevision,
     long entryCount,
     int checksum
 ) {
@@ -26,8 +25,6 @@ record SSTableFooter(
     SSTableFooter {
         Objects.requireNonNull(smallestKey, "smallestKey cannot be null");
         Objects.requireNonNull(largestKey, "largestKey cannot be null");
-        Objects.requireNonNull(smallestTimestamp, "smallestTimestamp cannot be null");
-        Objects.requireNonNull(largestTimestamp, "largestTimestamp cannot be null");
     }
 
     byte[] serialize() {
@@ -45,8 +42,8 @@ record SSTableFooter(
         buffer.putInt(largestKey.length());
         buffer.put(largestKey.toByteArray());
 
-        buffer.putLong(smallestTimestamp.value());
-        buffer.putLong(largestTimestamp.value());
+        buffer.putLong(smallestRevision);
+        buffer.putLong(largestRevision);
 
         buffer.putLong(entryCount);
 
@@ -81,9 +78,9 @@ record SSTableFooter(
         Slice largestKey = Slice.wrap(segment.asSlice(offset, largestKeySize));
         offset += largestKeySize;
 
-        Timestamp smallestTimestamp = new Timestamp(segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset));
+        long smallestRevision = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
         offset += 8;
-        Timestamp largestTimestamp = new Timestamp(segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset));
+        long largestRevision = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
         offset += 8;
 
         long entryCount = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
@@ -105,7 +102,7 @@ record SSTableFooter(
 
         return new SSTableFooter(
             bloomFilterOffset, bloomFilterSize, indexOffset, blockCount,
-            smallestKey, largestKey, smallestTimestamp, largestTimestamp,
+            smallestKey, largestKey, smallestRevision, largestRevision,
             entryCount, expectedChecksum
         );
     }

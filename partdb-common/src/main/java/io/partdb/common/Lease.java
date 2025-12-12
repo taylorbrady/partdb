@@ -6,7 +6,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class Lease {
     private final long id;
     private final long ttlNanos;
-    private final Set<KeyBytes> keys = ConcurrentHashMap.newKeySet();
+    private final Set<Slice> keys = ConcurrentHashMap.newKeySet();
     private volatile long expiresAtNanos;
 
     public Lease(long id, long ttlNanos) {
@@ -39,7 +39,7 @@ public final class Lease {
         return expiresAtNanos;
     }
 
-    public Set<KeyBytes> keys() {
+    public Set<Slice> keys() {
         return keys;
     }
 

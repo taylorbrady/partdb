@@ -1,27 +1,29 @@
 package io.partdb.storage;
 
+import io.partdb.common.Slice;
+
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.PriorityQueue;
 
-public final class MergingIterator implements Iterator<Entry> {
+public final class MergingIterator implements Iterator<Mutation> {
 
     private final PriorityQueue<IteratorEntry> heap;
-    private final List<Iterator<Entry>> iterators;
+    private final List<Iterator<Mutation>> iterators;
     private Slice lastKey;
-    private Entry nextEntry;
+    private Mutation nextMutation;
 
-    public MergingIterator(List<Iterator<Entry>> iterators) {
+    public MergingIterator(List<Iterator<Mutation>> iterators) {
         this.iterators = iterators;
         this.heap = new PriorityQueue<>(Comparator
-            .comparing((IteratorEntry e) -> e.entry.key())
-            .thenComparing((IteratorEntry e) -> e.entry.timestamp(), Comparator.reverseOrder())
+            .comparing((IteratorEntry e) -> e.mutation.key())
+            .thenComparingLong((IteratorEntry e) -> -e.mutation.revision())
             .thenComparingInt(e -> e.iteratorIndex));
 
         for (int i = 0; i < iterators.size(); i++) {
-            Iterator<Entry> it = iterators.get(i);
+            Iterator<Mutation> it = iterators.get(i);
             if (it.hasNext()) {
                 heap.offer(new IteratorEntry(it.next(), i));
             }
@@ -36,36 +38,36 @@ public final class MergingIterator implements Iterator<Entry> {
             IteratorEntry current = heap.poll();
 
             if (iterators.get(current.iteratorIndex).hasNext()) {
-                Entry next = iterators.get(current.iteratorIndex).next();
+                Mutation next = iterators.get(current.iteratorIndex).next();
                 heap.offer(new IteratorEntry(next, current.iteratorIndex));
             }
 
-            if (lastKey != null && current.entry.key().equals(lastKey)) {
+            if (lastKey != null && current.mutation.key().equals(lastKey)) {
                 continue;
             }
 
-            lastKey = current.entry.key();
-            nextEntry = current.entry;
+            lastKey = current.mutation.key();
+            nextMutation = current.mutation;
             return;
         }
 
-        nextEntry = null;
+        nextMutation = null;
     }
 
     @Override
     public boolean hasNext() {
-        return nextEntry != null;
+        return nextMutation != null;
     }
 
     @Override
-    public Entry next() {
-        if (nextEntry == null) {
+    public Mutation next() {
+        if (nextMutation == null) {
             throw new NoSuchElementException();
         }
-        Entry result = nextEntry;
+        Mutation result = nextMutation;
         advance();
         return result;
     }
 
-    private record IteratorEntry(Entry entry, int iteratorIndex) {}
+    private record IteratorEntry(Mutation mutation, int iteratorIndex) {}
 }

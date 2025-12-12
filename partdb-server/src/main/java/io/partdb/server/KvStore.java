@@ -2,12 +2,10 @@ package io.partdb.server;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.partdb.common.Entry;
-import io.partdb.common.KeyBytes;
 import io.partdb.common.Leases;
-import io.partdb.common.Timestamp;
+import io.partdb.common.Slice;
 import io.partdb.raft.StateMachine;
 import io.partdb.server.command.proto.CommandProto.Command;
-import io.partdb.storage.KeyValue;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
 
@@ -56,20 +54,20 @@ public final class KvStore implements StateMachine, AutoCloseable {
         switch (command.getOpCase()) {
             case PUT -> {
                 var put = command.getPut();
-                byte[] key = put.getKey().toByteArray();
+                Slice key = Slice.of(put.getKey().toByteArray());
                 byte[] value = put.getValue().toByteArray();
                 long leaseId = put.getLeaseId();
                 StoredValue stored = new StoredValue(value, index, leaseId);
-                store.put(key, stored.encode(), Timestamp.of(index, 0));
+                store.put(key, Slice.of(stored.encode()), index);
                 if (leaseId != 0) {
                     leases.attachKey(leaseId, key);
                 }
             }
             case DELETE -> {
                 var delete = command.getDelete();
-                byte[] key = delete.getKey().toByteArray();
+                Slice key = Slice.of(delete.getKey().toByteArray());
                 detachKeyFromLease(key);
-                store.delete(key, Timestamp.of(index, 0));
+                store.delete(key, index);
             }
             case GRANT_LEASE -> {
                 var grant = command.getGrantLease();
@@ -77,9 +75,9 @@ public final class KvStore implements StateMachine, AutoCloseable {
             }
             case REVOKE_LEASE -> {
                 var revoke = command.getRevokeLease();
-                Set<KeyBytes> keys = leases.getKeys(revoke.getLeaseId());
-                for (KeyBytes key : keys) {
-                    store.delete(key.data(), Timestamp.of(index, 0));
+                Set<Slice> keys = leases.getKeys(revoke.getLeaseId());
+                for (Slice key : keys) {
+                    store.delete(key, index);
                 }
                 leases.revoke(revoke.getLeaseId());
             }
@@ -95,45 +93,41 @@ public final class KvStore implements StateMachine, AutoCloseable {
         }
     }
 
-    private void detachKeyFromLease(byte[] key) {
-        try (var snap = store.snapshot(Timestamp.MAX)) {
-            Optional<KeyValue> existing = snap.get(key);
-            if (existing.isPresent()) {
-                StoredValue stored = StoredValue.decode(existing.get().value());
-                if (stored.leaseId() != 0) {
-                    leases.detachKey(stored.leaseId(), key);
-                }
+    private void detachKeyFromLease(Slice key) {
+        Optional<Entry> existing = store.get(key);
+        if (existing.isPresent()) {
+            StoredValue stored = StoredValue.decode(existing.get().value().toByteArray());
+            if (stored.leaseId() != 0) {
+                leases.detachKey(stored.leaseId(), key);
             }
         }
     }
 
-    public Optional<byte[]> get(byte[] key) {
-        try (var snap = store.snapshot(Timestamp.MAX)) {
-            Optional<KeyValue> raw = snap.get(key);
-            if (raw.isEmpty()) {
-                return Optional.empty();
-            }
-            StoredValue stored = StoredValue.decode(raw.get().value());
-            if (stored.leaseId() != 0 && !leases.isLeaseActive(stored.leaseId())) {
-                return Optional.empty();
-            }
-            return Optional.of(stored.value());
+    public Optional<byte[]> get(Slice key) {
+        Optional<Entry> raw = store.get(key);
+        if (raw.isEmpty()) {
+            return Optional.empty();
         }
+        StoredValue stored = StoredValue.decode(raw.get().value().toByteArray());
+        if (stored.leaseId() != 0 && !leases.isLeaseActive(stored.leaseId())) {
+            return Optional.empty();
+        }
+        return Optional.of(stored.value());
     }
 
-    public Stream<Entry> scan(byte[] startKey, byte[] endKey) {
-        var snap = store.snapshot(Timestamp.MAX);
-        Stream<KeyValue> raw = snap.scan(startKey, endKey);
+    public Stream<KvEntry> scan(Slice startKey, Slice endKey) {
+        Stream<Entry> raw = store.scan(startKey, endKey);
 
         return raw
-            .<Entry>mapMulti((kv, consumer) -> {
-                StoredValue stored = StoredValue.decode(kv.value());
+            .<KvEntry>mapMulti((entry, consumer) -> {
+                StoredValue stored = StoredValue.decode(entry.value().toByteArray());
                 if (stored.leaseId() == 0 || leases.isLeaseActive(stored.leaseId())) {
-                    consumer.accept(Entry.putWithLease(kv.key(), stored.value(), stored.version(), stored.leaseId()));
+                    consumer.accept(new KvEntry(entry.key(), stored.value(), stored.version(), stored.leaseId()));
                 }
-            })
-            .onClose(snap::close);
+            });
     }
+
+    public record KvEntry(Slice key, byte[] value, long version, long leaseId) {}
 
     @Override
     public byte[] snapshot() {

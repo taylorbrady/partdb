@@ -1,8 +1,7 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.common.Timestamp;
-import io.partdb.storage.Entry;
-import io.partdb.storage.Slice;
+import io.partdb.common.Slice;
+import io.partdb.storage.Mutation;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -15,7 +14,7 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.zip.CRC32C;
 
-public final class Block implements Iterable<Entry> {
+public final class Block implements Iterable<Mutation> {
 
     private static final int TRAILER_SIZE = 12;
 
@@ -52,26 +51,12 @@ public final class Block implements Iterable<Entry> {
         return new Block(segment, entryCount, offsetTableStart);
     }
 
-    public Optional<Entry> find(Slice key, Timestamp readTimestamp) {
+    public Optional<Mutation> find(Slice key) {
         int index = binarySearchKey(key);
         if (index < 0) {
             return Optional.empty();
         }
-
-        Entry best = null;
-        for (int i = index; i < entryCount; i++) {
-            Entry entry = entry(i);
-            if (!entry.key().equals(key)) {
-                break;
-            }
-            if (entry.timestamp().compareTo(readTimestamp) <= 0) {
-                if (best == null || entry.timestamp().compareTo(best.timestamp()) > 0) {
-                    best = entry;
-                }
-            }
-        }
-
-        return Optional.ofNullable(best);
+        return Optional.of(entry(index));
     }
 
     public int entryCount() {
@@ -82,7 +67,7 @@ public final class Block implements Iterable<Entry> {
         return segment.byteSize();
     }
 
-    public Entry entry(int index) {
+    public Mutation entry(int index) {
         if (index < 0 || index >= entryCount) {
             throw new IndexOutOfBoundsException("index: " + index + ", entryCount: " + entryCount);
         }
@@ -104,7 +89,7 @@ public final class Block implements Iterable<Entry> {
     }
 
     @Override
-    public Iterator<Entry> iterator() {
+    public Iterator<Mutation> iterator() {
         return new BlockIterator();
     }
 
@@ -141,12 +126,11 @@ public final class Block implements Iterable<Entry> {
         return result;
     }
 
-    private Entry parseEntryAt(int offset) {
+    private Mutation parseEntryAt(int offset) {
         byte flags = segment.get(ValueLayout.JAVA_BYTE, offset);
         boolean tombstone = (flags & 0x01) != 0;
 
-        long timestampValue = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 1);
-        Timestamp timestamp = new Timestamp(timestampValue);
+        long revision = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 1);
 
         int keyLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 9);
         Slice key = Slice.wrap(segment.asSlice(offset + 13, keyLength));
@@ -155,14 +139,14 @@ public final class Block implements Iterable<Entry> {
         int valueLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, valueOffset);
 
         if (tombstone) {
-            return new Entry.Tombstone(key, timestamp);
+            return new Mutation.Tombstone(key, revision);
         } else {
             Slice value = Slice.wrap(segment.asSlice(valueOffset + 4, valueLength));
-            return new Entry.Put(key, timestamp, value);
+            return new Mutation.Put(key, value, revision);
         }
     }
 
-    private final class BlockIterator implements Iterator<Entry> {
+    private final class BlockIterator implements Iterator<Mutation> {
         private int index = 0;
 
         @Override
@@ -171,7 +155,7 @@ public final class Block implements Iterable<Entry> {
         }
 
         @Override
-        public Entry next() {
+        public Mutation next() {
             if (!hasNext()) {
                 throw new NoSuchElementException();
             }
@@ -181,14 +165,14 @@ public final class Block implements Iterable<Entry> {
 
     public static final class Builder {
 
-        private final List<Entry> entries = new ArrayList<>();
+        private final List<Mutation> entries = new ArrayList<>();
         private final List<Integer> offsets = new ArrayList<>();
         private int currentOffset = 0;
 
-        public Builder add(Entry entry) {
+        public Builder add(Mutation mutation) {
             offsets.add(currentOffset);
-            entries.add(entry);
-            currentOffset += entrySize(entry);
+            entries.add(mutation);
+            currentOffset += entrySize(mutation);
             return this;
         }
 
@@ -228,8 +212,8 @@ public final class Block implements Iterable<Entry> {
 
             ByteBuffer buffer = ByteBuffer.allocate(totalSize).order(ByteOrder.nativeOrder());
 
-            for (Entry entry : entries) {
-                writeEntry(buffer, entry);
+            for (Mutation mutation : entries) {
+                writeEntry(buffer, mutation);
             }
 
             for (int offset : offsets) {
@@ -253,18 +237,18 @@ public final class Block implements Iterable<Entry> {
             return this;
         }
 
-        private void writeEntry(ByteBuffer buffer, Entry entry) {
-            switch (entry) {
-                case Entry.Tombstone t -> {
+        private void writeEntry(ByteBuffer buffer, Mutation mutation) {
+            switch (mutation) {
+                case Mutation.Tombstone t -> {
                     buffer.put((byte) 0x01);
-                    buffer.putLong(t.timestamp().value());
+                    buffer.putLong(t.revision());
                     buffer.putInt(t.key().length());
                     buffer.put(t.key().toByteArray());
                     buffer.putInt(0);
                 }
-                case Entry.Put p -> {
+                case Mutation.Put p -> {
                     buffer.put((byte) 0x00);
-                    buffer.putLong(p.timestamp().value());
+                    buffer.putLong(p.revision());
                     buffer.putInt(p.key().length());
                     buffer.put(p.key().toByteArray());
                     buffer.putInt(p.value().length());
@@ -273,10 +257,10 @@ public final class Block implements Iterable<Entry> {
             }
         }
 
-        private int entrySize(Entry entry) {
-            return switch (entry) {
-                case Entry.Put p -> 1 + 8 + 4 + entry.key().length() + 4 + p.value().length();
-                case Entry.Tombstone _ -> 1 + 8 + 4 + entry.key().length() + 4;
+        private int entrySize(Mutation mutation) {
+            return switch (mutation) {
+                case Mutation.Put p -> 1 + 8 + 4 + mutation.key().length() + 4 + p.value().length();
+                case Mutation.Tombstone _ -> 1 + 8 + 4 + mutation.key().length() + 4;
             };
         }
     }

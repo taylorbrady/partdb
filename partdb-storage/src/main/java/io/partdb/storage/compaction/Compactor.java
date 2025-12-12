@@ -1,8 +1,7 @@
 package io.partdb.storage.compaction;
 
-import io.partdb.common.Timestamp;
-import io.partdb.storage.Entry;
 import io.partdb.storage.MergingIterator;
+import io.partdb.storage.Mutation;
 import io.partdb.storage.manifest.SSTableInfo;
 import io.partdb.storage.sstable.SSTable;
 import io.partdb.storage.sstable.SSTableConfig;
@@ -40,68 +39,69 @@ public final class Compactor {
     public List<SSTableInfo> execute(
         List<SSTable> sources,
         int targetLevel,
-        boolean gcTombstones,
-        Timestamp oldestActiveSnapshot
+        boolean gcTombstones
     ) {
-        List<Iterator<Entry>> iterators = sources.stream()
-            .map(table -> table.scan().allVersions().iterator())
+        List<Iterator<Mutation>> iterators = sources.stream()
+            .map(table -> table.scan().iterator())
             .toList();
 
-        Iterator<Entry> merged = new MergingIterator(iterators);
-        Iterator<Entry> filtered = gcTombstones
-            ? new TombstoneFilter(merged, oldestActiveSnapshot)
+        Iterator<Mutation> merged = new MergingIterator(iterators);
+        Iterator<Mutation> filtered = gcTombstones
+            ? new TombstoneFilter(merged)
             : merged;
 
         return writeOutputs(filtered, targetLevel);
     }
 
-    private List<SSTableInfo> writeOutputs(Iterator<Entry> entries, int targetLevel) {
+    private List<SSTableInfo> writeOutputs(Iterator<Mutation> entries, int targetLevel) {
         List<SSTableInfo> outputs = new ArrayList<>();
 
         while (entries.hasNext()) {
             long id = idAllocator.getAsLong();
             Path path = pathResolver.apply(id);
 
-            Timestamps timestamps = writeSSTable(entries, path);
-            SSTableInfo info = readInfo(id, path, targetLevel, timestamps);
+            Revisions revisions = writeSSTable(entries, path);
+            SSTableInfo info = readInfo(id, path, targetLevel, revisions);
             outputs.add(info);
         }
 
         return outputs;
     }
 
-    private Timestamps writeSSTable(Iterator<Entry> entries, Path path) {
-        Timestamp smallest = null;
-        Timestamp largest = null;
+    private Revisions writeSSTable(Iterator<Mutation> entries, Path path) {
+        long smallest = Long.MAX_VALUE;
+        long largest = Long.MIN_VALUE;
         long bytesWritten = 0;
+        boolean hasEntry = false;
 
         try (SSTable.Writer writer = SSTable.Writer.create(path, sstableConfig)) {
             while (entries.hasNext() && bytesWritten < config.targetSSTableSize()) {
-                Entry entry = entries.next();
-                writer.add(entry);
-                bytesWritten += estimateEntrySize(entry);
+                Mutation mutation = entries.next();
+                writer.add(mutation);
+                bytesWritten += estimateEntrySize(mutation);
 
-                if (smallest == null || entry.timestamp().compareTo(smallest) < 0) {
-                    smallest = entry.timestamp();
+                if (mutation.revision() < smallest) {
+                    smallest = mutation.revision();
                 }
-                if (largest == null || entry.timestamp().compareTo(largest) > 0) {
-                    largest = entry.timestamp();
+                if (mutation.revision() > largest) {
+                    largest = mutation.revision();
                 }
+                hasEntry = true;
             }
         }
 
-        return new Timestamps(smallest, largest);
+        return hasEntry ? new Revisions(smallest, largest) : new Revisions(0, 0);
     }
 
-    private SSTableInfo readInfo(long id, Path path, int level, Timestamps timestamps) {
+    private SSTableInfo readInfo(long id, Path path, int level, Revisions revisions) {
         try (SSTable table = SSTable.open(path)) {
             return new SSTableInfo(
                 id,
                 level,
                 table.smallestKey().toByteArray(),
                 table.largestKey().toByteArray(),
-                timestamps.smallest(),
-                timestamps.largest(),
+                revisions.smallest(),
+                revisions.largest(),
                 Files.size(path),
                 table.entryCount()
             );
@@ -110,25 +110,23 @@ public final class Compactor {
         }
     }
 
-    private static long estimateEntrySize(Entry entry) {
-        int keySize = entry.key().length();
-        return switch (entry) {
-            case Entry.Put put -> 1 + 8 + 4 + keySize + 4 + put.value().length();
-            case Entry.Tombstone _ -> 1 + 8 + 4 + keySize + 4;
+    private static long estimateEntrySize(Mutation mutation) {
+        int keySize = mutation.key().length();
+        return switch (mutation) {
+            case Mutation.Put put -> 1 + 8 + 4 + keySize + 4 + put.value().length();
+            case Mutation.Tombstone _ -> 1 + 8 + 4 + keySize + 4;
         };
     }
 
-    private record Timestamps(Timestamp smallest, Timestamp largest) {}
+    private record Revisions(long smallest, long largest) {}
 
-    private static final class TombstoneFilter implements Iterator<Entry> {
+    private static final class TombstoneFilter implements Iterator<Mutation> {
 
-        private final Iterator<Entry> source;
-        private final Timestamp oldestActiveSnapshot;
-        private Entry next;
+        private final Iterator<Mutation> source;
+        private Mutation next;
 
-        TombstoneFilter(Iterator<Entry> source, Timestamp oldestActiveSnapshot) {
+        TombstoneFilter(Iterator<Mutation> source) {
             this.source = source;
-            this.oldestActiveSnapshot = oldestActiveSnapshot;
             advance();
         }
 
@@ -138,28 +136,22 @@ public final class Compactor {
         }
 
         @Override
-        public Entry next() {
+        public Mutation next() {
             if (next == null) {
                 throw new NoSuchElementException();
             }
-            Entry result = next;
+            Mutation result = next;
             advance();
             return result;
         }
 
         private void advance() {
             while (source.hasNext()) {
-                Entry entry = source.next();
-
-                boolean isTombstone = entry instanceof Entry.Tombstone;
-                boolean safeToGC = entry.timestamp().compareTo(oldestActiveSnapshot) < 0;
-
-                if (isTombstone && safeToGC) {
-                    continue;
+                Mutation mutation = source.next();
+                if (!(mutation instanceof Mutation.Tombstone)) {
+                    next = mutation;
+                    return;
                 }
-
-                next = entry;
-                return;
             }
             next = null;
         }

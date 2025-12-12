@@ -1,9 +1,7 @@
 package io.partdb.storage;
 
-import io.partdb.common.Timestamp;
-
-import io.partdb.storage.sstable.SSTableSetRef;
-import io.partdb.storage.sstable.SSTableSetRef.AcquireResult;
+import io.partdb.common.Entry;
+import io.partdb.common.Slice;
 import io.partdb.storage.compaction.CompactionStrategy;
 import io.partdb.storage.compaction.CompactionTask;
 import io.partdb.storage.compaction.Compactor;
@@ -15,6 +13,8 @@ import io.partdb.storage.memtable.SkipListMemtable;
 import io.partdb.storage.sstable.BlockCache;
 import io.partdb.storage.sstable.S3FifoBlockCache;
 import io.partdb.storage.sstable.SSTable;
+import io.partdb.storage.sstable.SSTableSetRef;
+import io.partdb.storage.sstable.SSTableSetRef.AcquireResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,8 +24,22 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Iterator;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.Optional;
+import java.util.Set;
+import java.util.Spliterator;
+import java.util.Spliterators;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -49,7 +63,6 @@ public final class LSMTree implements AutoCloseable {
 
     private final Path dataDirectory;
     private final LSMConfig config;
-    private final SnapshotRegistry snapshotRegistry;
     private final AtomicReference<Memtable> activeMemtable;
     private final ReentrantLock immutableMemtablesLock;
     private volatile List<Memtable> immutableMemtables;
@@ -81,7 +94,6 @@ public final class LSMTree implements AutoCloseable {
     ) {
         this.dataDirectory = dataDirectory;
         this.config = config;
-        this.snapshotRegistry = new SnapshotRegistry();
         this.activeMemtable = new AtomicReference<>(activeMemtable);
         this.immutableMemtablesLock = new ReentrantLock();
         this.immutableMemtables = List.of();
@@ -152,30 +164,98 @@ public final class LSMTree implements AutoCloseable {
         }
     }
 
-    public void put(byte[] key, byte[] value, Timestamp timestamp) {
-        Entry entry = new Entry.Put(Slice.copyOf(key), timestamp, Slice.copyOf(value));
-        putEntry(entry);
+    public void put(Slice key, Slice value, long revision) {
+        Mutation mutation = new Mutation.Put(key, value, revision);
+        putMutation(mutation);
     }
 
-    public void delete(byte[] key, Timestamp timestamp) {
-        Entry entry = new Entry.Tombstone(Slice.copyOf(key), timestamp);
-        putEntry(entry);
+    public void delete(Slice key, long revision) {
+        Mutation mutation = new Mutation.Tombstone(key, revision);
+        putMutation(mutation);
     }
 
-    public void write(WriteBatch batch, Timestamp timestamp) {
-        for (WriteBatch.BatchEntry entry : batch.entries()) {
-            switch (entry) {
-                case WriteBatch.BatchEntry.Put p ->
-                    putEntry(new Entry.Put(Slice.copyOf(p.key()), timestamp, Slice.copyOf(p.value())));
-                case WriteBatch.BatchEntry.Delete d ->
-                    putEntry(new Entry.Tombstone(Slice.copyOf(d.key()), timestamp));
+    public Optional<Entry> get(Slice key) {
+        Optional<Mutation> result = activeMemtable.get().get(key);
+        if (result.isPresent()) {
+            return toEntry(result.get());
+        }
+
+        for (Memtable immutable : immutableMemtables) {
+            result = immutable.get(key);
+            if (result.isPresent()) {
+                return toEntry(result.get());
             }
+        }
+
+        SSTableSetRef acquired = acquireSSTableSetRef();
+        try {
+            for (SSTable sstable : acquired.readers()) {
+                result = sstable.get(key);
+                if (result.isPresent()) {
+                    return toEntry(result.get());
+                }
+            }
+            return Optional.empty();
+        } finally {
+            acquired.release();
         }
     }
 
-    public Snapshot snapshot(Timestamp readTimestamp) {
-        snapshotRegistry.register(readTimestamp);
-        return new Snapshot(readTimestamp);
+    public Stream<Entry> scan(Slice startKey, Slice endKey) {
+        List<Iterator<Mutation>> iterators = new ArrayList<>();
+
+        iterators.add(activeMemtable.get().scan(startKey, endKey));
+
+        for (Memtable immutable : immutableMemtables) {
+            iterators.add(immutable.scan(startKey, endKey));
+        }
+
+        SSTableSetRef acquired = acquireSSTableSetRef();
+        for (SSTable sstable : acquired.readers()) {
+            SSTable.Scan scan = sstable.scan();
+            if (startKey != null) {
+                scan = scan.from(startKey);
+            }
+            if (endKey != null) {
+                scan = scan.until(endKey);
+            }
+            iterators.add(scan.iterator());
+        }
+
+        MergingIterator merged = new MergingIterator(iterators);
+
+        Iterator<Entry> entryIterator = new Iterator<>() {
+            private Entry next = advance();
+
+            private Entry advance() {
+                while (merged.hasNext()) {
+                    if (merged.next() instanceof Mutation.Put p) {
+                        return new Entry(p.key(), p.value(), p.revision());
+                    }
+                }
+                return null;
+            }
+
+            @Override
+            public boolean hasNext() {
+                return next != null;
+            }
+
+            @Override
+            public Entry next() {
+                if (next == null) {
+                    throw new NoSuchElementException();
+                }
+                Entry result = next;
+                next = advance();
+                return result;
+            }
+        };
+
+        return StreamSupport.stream(
+                Spliterators.spliteratorUnknownSize(entryIterator, Spliterator.ORDERED | Spliterator.NONNULL),
+                false)
+            .onClose(acquired::release);
     }
 
     public void flush() {
@@ -330,9 +410,9 @@ public final class LSMTree implements AutoCloseable {
         awaitDrain(finalSet, SHUTDOWN_DRAIN_TIMEOUT);
     }
 
-    private void putEntry(Entry entry) {
+    private void putMutation(Mutation mutation) {
         Memtable memtable = activeMemtable.get();
-        memtable.put(entry);
+        memtable.put(mutation);
 
         if (memtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes()) {
             maybeRotateMemtable(memtable);
@@ -376,10 +456,10 @@ public final class LSMTree implements AutoCloseable {
         }
     }
 
-    private Optional<KeyValue> toKeyValue(Entry entry) {
-        return switch (entry) {
-            case Entry.Tombstone _ -> Optional.empty();
-            case Entry.Put p -> Optional.of(new KeyValue(p.key().toByteArray(), p.value().toByteArray(), p.timestamp()));
+    private Optional<Entry> toEntry(Mutation mutation) {
+        return switch (mutation) {
+            case Mutation.Tombstone _ -> Optional.empty();
+            case Mutation.Put p -> Optional.of(new Entry(p.key(), p.value(), p.revision()));
         };
     }
 
@@ -468,19 +548,19 @@ public final class LSMTree implements AutoCloseable {
             long sstableId = sstableIdCounter.incrementAndGet();
             Path sstablePath = dataDirectory.resolve(String.format("%06d.sst", sstableId));
 
-            Timestamp smallestTs;
-            Timestamp largestTs;
+            long smallestRev;
+            long largestRev;
             try (SSTable.Writer writer = SSTable.Writer.create(sstablePath, config.sstableConfig())) {
-                Iterator<Entry> it = memtable.scan(new ScanMode.AllVersions(), null, null);
+                Iterator<Mutation> it = memtable.scan(null, null);
                 while (it.hasNext()) {
                     writer.add(it.next());
                 }
-                smallestTs = writer.smallestTimestamp();
-                largestTs = writer.largestTimestamp();
+                smallestRev = writer.smallestRevision();
+                largestRev = writer.largestRevision();
             }
 
             SSTable reader = SSTable.open(sstablePath, blockCache);
-            SSTableInfo metadata = buildMetadata(reader, sstableId, 0, smallestTs, largestTs);
+            SSTableInfo metadata = buildMetadata(reader, sstableId, 0, smallestRev, largestRev);
 
             manifestLock.lock();
             try {
@@ -539,8 +619,7 @@ public final class LSMTree implements AutoCloseable {
             List<SSTableInfo> outputs = compactor.execute(
                 readers,
                 t.targetLevel(),
-                t.gcTombstones(),
-                snapshotRegistry.gcWatermark()
+                t.gcTombstones()
             );
 
             commitCompaction(t.inputs(), outputs);
@@ -611,17 +690,6 @@ public final class LSMTree implements AutoCloseable {
         }
     }
 
-    private long allocateSSTableId() {
-        manifestLock.lock();
-        try {
-            long nextId = sstableIdCounter.incrementAndGet();
-            manifest = new Manifest(nextId, manifest.sstables());
-            return nextId;
-        } finally {
-            manifestLock.unlock();
-        }
-    }
-
     private Path resolvePath(long id) {
         return dataDirectory.resolve(String.format("%06d.sst", id));
     }
@@ -685,137 +753,15 @@ public final class LSMTree implements AutoCloseable {
     }
 
     private static SSTableInfo buildMetadata(SSTable reader, long id, int level) throws IOException {
-        return buildMetadata(reader, id, level, reader.smallestTimestamp(), reader.largestTimestamp());
+        return buildMetadata(reader, id, level, reader.smallestRevision(), reader.largestRevision());
     }
 
-    private static SSTableInfo buildMetadata(SSTable reader, long id, int level, Timestamp smallestTs, Timestamp largestTs) throws IOException {
+    private static SSTableInfo buildMetadata(SSTable reader, long id, int level, long smallestRev, long largestRev) throws IOException {
         byte[] smallestKey = reader.smallestKey().toByteArray();
         byte[] largestKey = reader.largestKey().toByteArray();
         long fileSize = Files.size(reader.path());
         long entryCount = reader.entryCount();
 
-        return new SSTableInfo(id, level, smallestKey, largestKey, smallestTs, largestTs, fileSize, entryCount);
+        return new SSTableInfo(id, level, smallestKey, largestKey, smallestRev, largestRev, fileSize, entryCount);
     }
-
-    public final class Snapshot implements AutoCloseable {
-
-        private final Timestamp readTimestamp;
-        private final AtomicBoolean closed = new AtomicBoolean(false);
-
-        private Snapshot(Timestamp readTimestamp) {
-            this.readTimestamp = readTimestamp;
-        }
-
-        public Timestamp readTimestamp() {
-            return readTimestamp;
-        }
-
-        public Optional<KeyValue> get(byte[] key) {
-            ensureOpen();
-
-            Slice sliceKey = Slice.copyOf(key);
-
-            Optional<Entry> result = activeMemtable.get().get(sliceKey, readTimestamp);
-            if (result.isPresent()) {
-                return toKeyValue(result.get());
-            }
-
-            for (Memtable immutable : immutableMemtables) {
-                result = immutable.get(sliceKey, readTimestamp);
-                if (result.isPresent()) {
-                    return toKeyValue(result.get());
-                }
-            }
-
-            SSTableSetRef acquired = acquireSSTableSetRef();
-            try {
-                for (SSTable sstable : acquired.readers()) {
-                    result = sstable.get(sliceKey, readTimestamp);
-                    if (result.isPresent()) {
-                        return toKeyValue(result.get());
-                    }
-                }
-                return Optional.empty();
-            } finally {
-                acquired.release();
-            }
-        }
-
-        public Stream<KeyValue> scan(byte[] startKey, byte[] endKey) {
-            ensureOpen();
-
-            Slice sliceStartKey = startKey != null ? Slice.copyOf(startKey) : null;
-            Slice sliceEndKey = endKey != null ? Slice.copyOf(endKey) : null;
-
-            ScanMode mode = new ScanMode.Snapshot(readTimestamp);
-            List<Iterator<Entry>> iterators = new ArrayList<>();
-
-            iterators.add(activeMemtable.get().scan(mode, sliceStartKey, sliceEndKey));
-
-            for (Memtable immutable : immutableMemtables) {
-                iterators.add(immutable.scan(mode, sliceStartKey, sliceEndKey));
-            }
-
-            SSTableSetRef acquired = acquireSSTableSetRef();
-            for (SSTable sstable : acquired.readers()) {
-                SSTable.Scan scan = sstable.scan();
-                if (sliceStartKey != null) {
-                    scan = scan.from(sliceStartKey);
-                }
-                if (sliceEndKey != null) {
-                    scan = scan.until(sliceEndKey);
-                }
-                iterators.add(scan.asOf(readTimestamp).iterator());
-            }
-
-            MergingIterator merged = new MergingIterator(iterators);
-
-            Iterator<KeyValue> kvIterator = new Iterator<>() {
-                private KeyValue next = advance();
-
-                private KeyValue advance() {
-                    while (merged.hasNext()) {
-                        if (merged.next() instanceof Entry.Put p) {
-                            return new KeyValue(p.key().toByteArray(), p.value().toByteArray(), p.timestamp());
-                        }
-                    }
-                    return null;
-                }
-
-                @Override
-                public boolean hasNext() {
-                    return next != null;
-                }
-
-                @Override
-                public KeyValue next() {
-                    if (next == null) {
-                        throw new NoSuchElementException();
-                    }
-                    KeyValue result = next;
-                    next = advance();
-                    return result;
-                }
-            };
-
-            return StreamSupport.stream(
-                    Spliterators.spliteratorUnknownSize(kvIterator, Spliterator.ORDERED | Spliterator.NONNULL),
-                    false)
-                .onClose(acquired::release);
-        }
-
-        private void ensureOpen() {
-            if (closed.get()) {
-                throw new IllegalStateException("Snapshot is closed");
-            }
-        }
-
-        @Override
-        public void close() {
-            if (closed.compareAndSet(false, true)) {
-                snapshotRegistry.release(readTimestamp);
-            }
-        }
-    }
-
 }

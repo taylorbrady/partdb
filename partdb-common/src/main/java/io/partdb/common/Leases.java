@@ -36,21 +36,21 @@ public final class Leases {
         byId.remove(leaseId);
     }
 
-    public void attachKey(long leaseId, byte[] key) {
+    public void attachKey(long leaseId, Slice key) {
         var lease = byId.get(leaseId);
         if (lease != null) {
-            lease.keys().add(new KeyBytes(key));
+            lease.keys().add(key);
         }
     }
 
-    public void detachKey(long leaseId, byte[] key) {
+    public void detachKey(long leaseId, Slice key) {
         var lease = byId.get(leaseId);
         if (lease != null) {
-            lease.keys().remove(new KeyBytes(key));
+            lease.keys().remove(key);
         }
     }
 
-    public Set<KeyBytes> getKeys(long leaseId) {
+    public Set<Slice> getKeys(long leaseId) {
         var lease = byId.get(leaseId);
         return lease != null ? Collections.unmodifiableSet(lease.keys()) : Set.of();
     }

@@ -1,7 +1,5 @@
 package io.partdb.storage.manifest;
 
-import io.partdb.common.Timestamp;
-
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Objects;
@@ -11,8 +9,8 @@ public record SSTableInfo(
     int level,
     byte[] smallestKey,
     byte[] largestKey,
-    Timestamp smallestTimestamp,
-    Timestamp largestTimestamp,
+    long smallestRevision,
+    long largestRevision,
     long fileSizeBytes,
     long entryCount
 ) {
@@ -20,8 +18,6 @@ public record SSTableInfo(
     public SSTableInfo {
         Objects.requireNonNull(smallestKey, "smallestKey");
         Objects.requireNonNull(largestKey, "largestKey");
-        Objects.requireNonNull(smallestTimestamp, "smallestTimestamp");
-        Objects.requireNonNull(largestTimestamp, "largestTimestamp");
 
         smallestKey = smallestKey.clone();
         largestKey = largestKey.clone();
@@ -41,8 +37,8 @@ public record SSTableInfo(
         if (Arrays.compareUnsigned(smallestKey, largestKey) > 0) {
             throw new IllegalArgumentException("smallestKey must be <= largestKey");
         }
-        if (smallestTimestamp.compareTo(largestTimestamp) > 0) {
-            throw new IllegalArgumentException("smallestTimestamp must be <= largestTimestamp");
+        if (smallestRevision > largestRevision) {
+            throw new IllegalArgumentException("smallestRevision must be <= largestRevision");
         }
     }
 
@@ -63,8 +59,8 @@ public record SSTableInfo(
         buffer.put(smallestKey);
         buffer.putInt(largestKey.length);
         buffer.put(largestKey);
-        buffer.putLong(smallestTimestamp.value());
-        buffer.putLong(largestTimestamp.value());
+        buffer.putLong(smallestRevision);
+        buffer.putLong(largestRevision);
         buffer.putLong(fileSizeBytes);
         buffer.putLong(entryCount);
     }
@@ -81,12 +77,12 @@ public record SSTableInfo(
         byte[] largestKey = new byte[largestKeySize];
         buffer.get(largestKey);
 
-        Timestamp smallestTimestamp = new Timestamp(buffer.getLong());
-        Timestamp largestTimestamp = new Timestamp(buffer.getLong());
+        long smallestRevision = buffer.getLong();
+        long largestRevision = buffer.getLong();
 
         long fileSizeBytes = buffer.getLong();
         long entryCount = buffer.getLong();
 
-        return new SSTableInfo(id, level, smallestKey, largestKey, smallestTimestamp, largestTimestamp, fileSizeBytes, entryCount);
+        return new SSTableInfo(id, level, smallestKey, largestKey, smallestRevision, largestRevision, fileSizeBytes, entryCount);
     }
 }

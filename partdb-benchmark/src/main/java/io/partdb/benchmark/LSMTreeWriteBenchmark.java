@@ -1,9 +1,8 @@
 package io.partdb.benchmark;
 
-import io.partdb.common.Timestamp;
+import io.partdb.common.Slice;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
-import io.partdb.storage.WriteBatch;
 import org.openjdk.jmh.annotations.*;
 
 import java.io.IOException;
@@ -29,17 +28,18 @@ public class LSMTreeWriteBenchmark {
     private Path tempDir;
     private LSMTree tree;
     private AtomicLong keyCounter;
-    private AtomicLong timestampCounter;
-    private byte[] valueTemplate;
+    private AtomicLong revisionCounter;
+    private Slice valueTemplate;
 
     @Setup(Level.Trial)
     public void setup() throws IOException {
         tempDir = Files.createTempDirectory("lsm-write-bench");
         tree = LSMTree.open(tempDir, LSMConfig.defaults());
         keyCounter = new AtomicLong(0);
-        timestampCounter = new AtomicLong(0);
-        valueTemplate = new byte[valueSize];
-        ThreadLocalRandom.current().nextBytes(valueTemplate);
+        revisionCounter = new AtomicLong(0);
+        byte[] valueBytes = new byte[valueSize];
+        ThreadLocalRandom.current().nextBytes(valueBytes);
+        valueTemplate = Slice.of(valueBytes);
     }
 
     @TearDown(Level.Trial)
@@ -51,47 +51,44 @@ public class LSMTreeWriteBenchmark {
     @Benchmark
     public void putSequential() {
         long seq = keyCounter.incrementAndGet();
-        byte[] key = formatKey(seq);
-        Timestamp ts = Timestamp.of(timestampCounter.incrementAndGet(), 0);
-        tree.put(key, valueTemplate, ts);
+        Slice key = formatKey(seq);
+        long revision = revisionCounter.incrementAndGet();
+        tree.put(key, valueTemplate, revision);
     }
 
     @Benchmark
     public void putRandom() {
-        byte[] key = new byte[16];
-        ThreadLocalRandom.current().nextBytes(key);
-        Timestamp ts = Timestamp.of(timestampCounter.incrementAndGet(), 0);
-        tree.put(key, valueTemplate, ts);
+        byte[] keyBytes = new byte[16];
+        ThreadLocalRandom.current().nextBytes(keyBytes);
+        Slice key = Slice.of(keyBytes);
+        long revision = revisionCounter.incrementAndGet();
+        tree.put(key, valueTemplate, revision);
     }
 
     @Benchmark
     @OperationsPerInvocation(10)
-    public void writeBatch10() {
-        WriteBatch.Builder builder = WriteBatch.builder();
+    public void putBatch10() {
         long base = keyCounter.addAndGet(10);
+        long revision = revisionCounter.incrementAndGet();
         for (int i = 0; i < 10; i++) {
-            byte[] key = formatKey(base + i);
-            builder.put(key, valueTemplate);
+            Slice key = formatKey(base + i);
+            tree.put(key, valueTemplate, revision + i);
         }
-        Timestamp ts = Timestamp.of(timestampCounter.incrementAndGet(), 0);
-        tree.write(builder.build(), ts);
     }
 
     @Benchmark
     @OperationsPerInvocation(100)
-    public void writeBatch100() {
-        WriteBatch.Builder builder = WriteBatch.builder();
+    public void putBatch100() {
         long base = keyCounter.addAndGet(100);
+        long revision = revisionCounter.incrementAndGet();
         for (int i = 0; i < 100; i++) {
-            byte[] key = formatKey(base + i);
-            builder.put(key, valueTemplate);
+            Slice key = formatKey(base + i);
+            tree.put(key, valueTemplate, revision + i);
         }
-        Timestamp ts = Timestamp.of(timestampCounter.incrementAndGet(), 0);
-        tree.write(builder.build(), ts);
     }
 
-    private static byte[] formatKey(long keyNum) {
-        return ("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8);
+    private static Slice formatKey(long keyNum) {
+        return Slice.of(("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8));
     }
 
     private static void deleteDirectory(Path dir) throws IOException {

@@ -1,20 +1,18 @@
 package io.partdb.storage.memtable;
 
-import io.partdb.common.Timestamp;
-import io.partdb.storage.Entry;
-import io.partdb.storage.ScanMode;
-import io.partdb.storage.Slice;
+import io.partdb.common.Slice;
+import io.partdb.storage.Mutation;
 
 import java.util.Iterator;
 import java.util.Optional;
 
 public interface Memtable {
 
-    void put(Entry entry);
+    void put(Mutation mutation);
 
-    Optional<Entry> get(Slice key, Timestamp readTimestamp);
+    Optional<Mutation> get(Slice key);
 
-    Iterator<Entry> scan(ScanMode mode, Slice startKey, Slice endKey);
+    Iterator<Mutation> scan(Slice startKey, Slice endKey);
 
     long sizeInBytes();
 

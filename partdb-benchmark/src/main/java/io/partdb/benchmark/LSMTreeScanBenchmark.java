@@ -1,7 +1,7 @@
 package io.partdb.benchmark;
 
-import io.partdb.common.Timestamp;
-import io.partdb.storage.KeyValue;
+import io.partdb.common.Entry;
+import io.partdb.common.Slice;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
 import org.openjdk.jmh.annotations.*;
@@ -27,33 +27,29 @@ public class LSMTreeScanBenchmark {
 
     private Path tempDir;
     private LSMTree tree;
-    private LSMTree.Snapshot snapshot;
-    private byte[][] existingKeys;
-    private Timestamp readTimestamp;
+    private Slice[] existingKeys;
 
     @Setup(Level.Trial)
     public void setup() throws IOException {
         tempDir = Files.createTempDirectory("lsm-scan-bench");
         tree = LSMTree.open(tempDir, LSMConfig.defaults());
-        existingKeys = new byte[KEY_COUNT][];
+        existingKeys = new Slice[KEY_COUNT];
 
-        byte[] value = new byte[VALUE_SIZE];
-        ThreadLocalRandom.current().nextBytes(value);
+        byte[] valueBytes = new byte[VALUE_SIZE];
+        ThreadLocalRandom.current().nextBytes(valueBytes);
+        Slice value = Slice.of(valueBytes);
 
         for (int i = 0; i < KEY_COUNT; i++) {
-            byte[] key = formatKey(i);
+            Slice key = formatKey(i);
             existingKeys[i] = key;
-            tree.put(key, value, Timestamp.of(i, 0));
+            tree.put(key, value, i);
         }
 
         tree.flush();
-        readTimestamp = Timestamp.of(KEY_COUNT, 0);
-        snapshot = tree.snapshot(readTimestamp);
     }
 
     @TearDown(Level.Trial)
     public void tearDown() throws IOException {
-        snapshot.close();
         tree.close();
         deleteDirectory(tempDir);
     }
@@ -62,7 +58,7 @@ public class LSMTreeScanBenchmark {
     @BenchmarkMode(Mode.AverageTime)
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
     public long scanFull() {
-        try (Stream<KeyValue> stream = snapshot.scan(null, null)) {
+        try (Stream<Entry> stream = tree.scan(null, null)) {
             return stream.count();
         }
     }
@@ -73,9 +69,9 @@ public class LSMTreeScanBenchmark {
     @OperationsPerInvocation(100)
     public void scanRange100(Blackhole bh) {
         int start = ThreadLocalRandom.current().nextInt(KEY_COUNT - 100);
-        byte[] startKey = existingKeys[start];
-        byte[] endKey = existingKeys[start + 100];
-        try (Stream<KeyValue> stream = snapshot.scan(startKey, endKey)) {
+        Slice startKey = existingKeys[start];
+        Slice endKey = existingKeys[start + 100];
+        try (Stream<Entry> stream = tree.scan(startKey, endKey)) {
             stream.forEach(bh::consume);
         }
     }
@@ -86,15 +82,15 @@ public class LSMTreeScanBenchmark {
     @OperationsPerInvocation(1000)
     public void scanRange1000(Blackhole bh) {
         int start = ThreadLocalRandom.current().nextInt(KEY_COUNT - 1000);
-        byte[] startKey = existingKeys[start];
-        byte[] endKey = existingKeys[start + 1000];
-        try (Stream<KeyValue> stream = snapshot.scan(startKey, endKey)) {
+        Slice startKey = existingKeys[start];
+        Slice endKey = existingKeys[start + 1000];
+        try (Stream<Entry> stream = tree.scan(startKey, endKey)) {
             stream.forEach(bh::consume);
         }
     }
 
-    private static byte[] formatKey(long keyNum) {
-        return ("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8);
+    private static Slice formatKey(long keyNum) {
+        return Slice.of(("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8));
     }
 
     private static void deleteDirectory(Path dir) throws IOException {

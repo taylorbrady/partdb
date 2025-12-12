@@ -1,10 +1,7 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.common.Timestamp;
-import io.partdb.storage.Entry;
-import io.partdb.storage.ScanMode;
-import io.partdb.storage.Slice;
-import io.partdb.storage.VersionedKey;
+import io.partdb.common.Slice;
+import io.partdb.storage.Mutation;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
@@ -78,7 +75,7 @@ public final class SSTable implements AutoCloseable {
         }
     }
 
-    public Optional<Entry> get(Slice key, Timestamp readTimestamp) {
+    public Optional<Mutation> get(Slice key) {
         if (!bloomFilter.mightContain(key)) {
             return Optional.empty();
         }
@@ -89,7 +86,7 @@ public final class SSTable implements AutoCloseable {
         }
 
         Block block = loadBlock(blockEntry.get().handle());
-        return block.find(key, readTimestamp);
+        return block.find(key);
     }
 
     public Scan scan() {
@@ -112,12 +109,12 @@ public final class SSTable implements AutoCloseable {
         return footer.entryCount();
     }
 
-    public Timestamp smallestTimestamp() {
-        return footer.smallestTimestamp();
+    public long smallestRevision() {
+        return footer.smallestRevision();
     }
 
-    public Timestamp largestTimestamp() {
-        return footer.largestTimestamp();
+    public long largestRevision() {
+        return footer.largestRevision();
     }
 
     @Override
@@ -172,11 +169,10 @@ public final class SSTable implements AutoCloseable {
         return BlockIndex.deserialize(indexSegment, footer.blockCount());
     }
 
-    public final class Scan implements Iterable<Entry> {
+    public final class Scan implements Iterable<Mutation> {
 
         private Slice startKey;
         private Slice endKey;
-        private ScanMode mode = new ScanMode.AllVersions();
 
         public Scan from(Slice startKey) {
             this.startKey = startKey;
@@ -188,39 +184,26 @@ public final class SSTable implements AutoCloseable {
             return this;
         }
 
-        public Scan asOf(Timestamp timestamp) {
-            this.mode = new ScanMode.Snapshot(timestamp);
-            return this;
-        }
-
-        public Scan allVersions() {
-            this.mode = new ScanMode.AllVersions();
-            return this;
-        }
-
         @Override
-        public Iterator<Entry> iterator() {
-            return new ScanIterator(mode, startKey, endKey);
+        public Iterator<Mutation> iterator() {
+            return new ScanIterator(startKey, endKey);
         }
 
-        public Stream<Entry> stream() {
+        public Stream<Mutation> stream() {
             return StreamSupport.stream(spliterator(), false);
         }
     }
 
-    private class ScanIterator implements Iterator<Entry> {
+    private class ScanIterator implements Iterator<Mutation> {
 
         private final Slice startKey;
         private final Slice endKey;
-        private final ScanMode mode;
         private final List<BlockIndex.Entry> blocks;
         private int currentBlockIndex;
-        private Iterator<Entry> currentBlockIterator;
-        private Slice lastKey;
-        private Entry nextEntry;
+        private Iterator<Mutation> currentBlockIterator;
+        private Mutation nextMutation;
 
-        ScanIterator(ScanMode mode, Slice startKey, Slice endKey) {
-            this.mode = mode;
+        ScanIterator(Slice startKey, Slice endKey) {
             this.startKey = startKey;
             this.endKey = endKey;
 
@@ -232,21 +215,20 @@ public final class SSTable implements AutoCloseable {
 
             this.currentBlockIndex = 0;
             this.currentBlockIterator = null;
-            this.lastKey = null;
             advance();
         }
 
         @Override
         public boolean hasNext() {
-            return nextEntry != null;
+            return nextMutation != null;
         }
 
         @Override
-        public Entry next() {
-            if (nextEntry == null) {
+        public Mutation next() {
+            if (nextMutation == null) {
                 throw new NoSuchElementException();
             }
-            Entry result = nextEntry;
+            Mutation result = nextMutation;
             advance();
             return result;
         }
@@ -254,33 +236,20 @@ public final class SSTable implements AutoCloseable {
         private void advance() {
             while (true) {
                 if (currentBlockIterator != null && currentBlockIterator.hasNext()) {
-                    Entry entry = currentBlockIterator.next();
+                    Mutation mutation = currentBlockIterator.next();
 
-                    boolean afterStart = startKey == null || entry.key().compareTo(startKey) >= 0;
-                    boolean beforeEnd = endKey == null || entry.key().compareTo(endKey) < 0;
+                    boolean afterStart = startKey == null || mutation.key().compareTo(startKey) >= 0;
+                    boolean beforeEnd = endKey == null || mutation.key().compareTo(endKey) < 0;
 
                     if (!afterStart) {
                         continue;
                     }
                     if (!beforeEnd) {
-                        nextEntry = null;
+                        nextMutation = null;
                         return;
                     }
 
-                    switch (mode) {
-                        case ScanMode.Snapshot(var readTimestamp) -> {
-                            if (entry.timestamp().compareTo(readTimestamp) > 0) {
-                                continue;
-                            }
-                            if (lastKey != null && entry.key().equals(lastKey)) {
-                                continue;
-                            }
-                            lastKey = entry.key();
-                        }
-                        case ScanMode.AllVersions() -> {}
-                    }
-
-                    nextEntry = entry;
+                    nextMutation = mutation;
                     return;
                 } else if (currentBlockIndex < blocks.size()) {
                     BlockIndex.Entry blockEntry = blocks.get(currentBlockIndex);
@@ -288,7 +257,7 @@ public final class SSTable implements AutoCloseable {
                     currentBlockIterator = block.iterator();
                     currentBlockIndex++;
                 } else {
-                    nextEntry = null;
+                    nextMutation = null;
                     return;
                 }
             }
@@ -304,14 +273,14 @@ public final class SSTable implements AutoCloseable {
         private final Block.Builder currentBlock;
         private final List<Slice> keys;
 
-        private VersionedKey lastVersionedKey;
-        private Slice firstKey;
         private Slice lastKey;
-        private Timestamp smallestTimestamp;
-        private Timestamp largestTimestamp;
+        private Slice firstKey;
+        private long smallestRevision;
+        private long largestRevision;
         private long filePosition;
         private boolean closed;
         private long totalEntryCount;
+        private boolean hasRevision;
 
         private Writer(Path path, SSTableConfig config, FileChannel channel) {
             this.path = path;
@@ -320,14 +289,14 @@ public final class SSTable implements AutoCloseable {
             this.indexEntries = new ArrayList<>();
             this.currentBlock = new Block.Builder();
             this.keys = new ArrayList<>();
-            this.lastVersionedKey = null;
-            this.firstKey = null;
             this.lastKey = null;
-            this.smallestTimestamp = null;
-            this.largestTimestamp = null;
+            this.firstKey = null;
+            this.smallestRevision = 0;
+            this.largestRevision = 0;
             this.filePosition = SSTableHeader.HEADER_SIZE;
             this.closed = false;
             this.totalEntryCount = 0;
+            this.hasRevision = false;
         }
 
         public static Writer create(Path path, SSTableConfig config) {
@@ -348,55 +317,51 @@ public final class SSTable implements AutoCloseable {
             return create(path, SSTableConfig.defaults());
         }
 
-        public void add(Entry entry) {
+        public void add(Mutation mutation) {
             if (closed) {
                 throw new SSTableException("Cannot add to closed writer");
             }
 
-            VersionedKey currentVersionedKey = new VersionedKey(entry.key(), entry.timestamp());
-
-            if (lastVersionedKey != null && currentVersionedKey.compareTo(lastVersionedKey) <= 0) {
+            if (lastKey != null && mutation.key().compareTo(lastKey) <= 0) {
                 throw new SSTableException(
-                    "Entries must be added in strictly ascending order: " +
-                    "last=(%s, %s), current=(%s, %s)".formatted(
-                        lastVersionedKey.key(), lastVersionedKey.timestamp(),
-                        entry.key(), entry.timestamp())
+                    "Entries must be added in strictly ascending key order: last=%s, current=%s"
+                        .formatted(lastKey, mutation.key())
                 );
             }
 
-            lastVersionedKey = currentVersionedKey;
+            lastKey = mutation.key();
             if (firstKey == null) {
-                firstKey = entry.key();
-            }
-            lastKey = entry.key();
-
-            if (smallestTimestamp == null || entry.timestamp().compareTo(smallestTimestamp) < 0) {
-                smallestTimestamp = entry.timestamp();
-            }
-            if (largestTimestamp == null || entry.timestamp().compareTo(largestTimestamp) > 0) {
-                largestTimestamp = entry.timestamp();
+                firstKey = mutation.key();
             }
 
-            keys.add(entry.key());
+            if (!hasRevision || mutation.revision() < smallestRevision) {
+                smallestRevision = mutation.revision();
+            }
+            if (!hasRevision || mutation.revision() > largestRevision) {
+                largestRevision = mutation.revision();
+            }
+            hasRevision = true;
+
+            keys.add(mutation.key());
             totalEntryCount++;
 
             if (currentBlock.estimatedSize() > config.blockSize() && !currentBlock.isEmpty()) {
                 flushCurrentBlock();
             }
 
-            currentBlock.add(entry);
+            currentBlock.add(mutation);
         }
 
         public Path path() {
             return path;
         }
 
-        public Timestamp smallestTimestamp() {
-            return smallestTimestamp;
+        public long smallestRevision() {
+            return smallestRevision;
         }
 
-        public Timestamp largestTimestamp() {
-            return largestTimestamp;
+        public long largestRevision() {
+            return largestRevision;
         }
 
         @Override
@@ -439,8 +404,8 @@ public final class SSTable implements AutoCloseable {
                     indexEntries.size(),
                     firstKey != null ? firstKey : Slice.empty(),
                     lastKey != null ? lastKey : Slice.empty(),
-                    smallestTimestamp != null ? smallestTimestamp : Timestamp.ZERO,
-                    largestTimestamp != null ? largestTimestamp : Timestamp.ZERO,
+                    smallestRevision,
+                    largestRevision,
                     totalEntryCount,
                     0
                 );

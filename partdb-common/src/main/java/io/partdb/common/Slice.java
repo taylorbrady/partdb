@@ -1,7 +1,9 @@
-package io.partdb.storage;
+package io.partdb.common;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 
 public final class Slice implements Comparable<Slice> {
@@ -18,11 +20,25 @@ public final class Slice implements Comparable<Slice> {
         this.segment = segment.isReadOnly() ? segment : segment.asReadOnly();
     }
 
-    public static Slice copyOf(byte[] bytes) {
+    public static Slice of(byte[] bytes) {
         if (bytes.length == 0) {
             return EMPTY;
         }
         return new Slice(MemorySegment.ofArray(bytes.clone()));
+    }
+
+    public static Slice of(String s) {
+        if (s.isEmpty()) {
+            return EMPTY;
+        }
+        return of(s.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static Slice of(ByteBuffer buffer) {
+        if (buffer.remaining() == 0) {
+            return EMPTY;
+        }
+        return new Slice(MemorySegment.ofBuffer(buffer));
     }
 
     public static Slice wrap(MemorySegment segment) {
@@ -40,6 +56,10 @@ public final class Slice implements Comparable<Slice> {
         return (int) segment.byteSize();
     }
 
+    public boolean isEmpty() {
+        return segment.byteSize() == 0;
+    }
+
     public MemorySegment segment() {
         return segment;
     }
@@ -48,11 +68,22 @@ public final class Slice implements Comparable<Slice> {
         return segment.toArray(ValueLayout.JAVA_BYTE);
     }
 
+    public ByteBuffer asByteBuffer() {
+        return segment.asByteBuffer();
+    }
+
     public Slice slice(long offset, long length) {
         if (length == 0) {
             return EMPTY;
         }
         return new Slice(segment.asSlice(offset, length));
+    }
+
+    public boolean startsWith(Slice prefix) {
+        if (prefix.length() > length()) {
+            return false;
+        }
+        return segment.asSlice(0, prefix.length()).mismatch(prefix.segment) == -1;
     }
 
     @Override

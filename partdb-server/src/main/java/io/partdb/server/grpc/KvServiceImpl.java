@@ -2,8 +2,11 @@ package io.partdb.server.grpc;
 
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
-import io.partdb.common.Entry;
+import io.partdb.common.Slice;
+import io.partdb.server.KvStore;
+import io.partdb.server.Lessor;
 import io.partdb.server.NotLeaderException;
+import io.partdb.server.Proposer;
 import io.partdb.protocol.kv.proto.KvProto;
 import io.partdb.protocol.kv.proto.KvProto.BatchGetRequest;
 import io.partdb.protocol.kv.proto.KvProto.BatchGetResponse;
@@ -29,9 +32,6 @@ import io.partdb.protocol.kv.proto.KvProto.RevokeLeaseResponse;
 import io.partdb.protocol.kv.proto.KvProto.ScanRequest;
 import io.partdb.protocol.kv.proto.KvProto.ScanResponse;
 import io.partdb.protocol.kv.proto.KvServiceGrpc;
-import io.partdb.server.KvStore;
-import io.partdb.server.Lessor;
-import io.partdb.server.Proposer;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -61,7 +61,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void get(GetRequest request, StreamObserver<GetResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
-        byte[] key = toBytes(request.getKey());
+        Slice key = toSlice(request.getKey());
 
         CompletableFuture<Optional<byte[]>> future;
         if (request.getConsistency() == ReadConsistency.STALE) {
@@ -142,11 +142,11 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     public void scan(ScanRequest request, StreamObserver<ScanResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
 
-        byte[] startKey = request.getStartKey().isEmpty() ? null : toBytes(request.getStartKey());
-        byte[] endKey = request.getEndKey().isEmpty() ? null : toBytes(request.getEndKey());
+        Slice startKey = request.getStartKey().isEmpty() ? null : toSlice(request.getStartKey());
+        Slice endKey = request.getEndKey().isEmpty() ? null : toSlice(request.getEndKey());
         int limit = request.getLimit() > 0 ? request.getLimit() : Integer.MAX_VALUE;
 
-        CompletableFuture<Stream<Entry>> future;
+        CompletableFuture<Stream<KvStore.KvEntry>> future;
         if (request.getConsistency() == ReadConsistency.STALE) {
             future = CompletableFuture.completedFuture(kvStore.scan(startKey, endKey));
         } else {
@@ -189,7 +189,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         List<CompletableFuture<KeyValue>> futures = new ArrayList<>();
 
         for (ByteString keyBytes : request.getKeysList()) {
-            byte[] key = toBytes(keyBytes);
+            Slice key = toSlice(keyBytes);
             Optional<byte[]> value = kvStore.get(key);
             CompletableFuture<KeyValue> kvFuture = CompletableFuture.completedFuture(buildKeyValue(keyBytes, value));
             futures.add(kvFuture);
@@ -332,8 +332,16 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         return bytes.toByteArray();
     }
 
+    private static Slice toSlice(ByteString bytes) {
+        return Slice.of(bytes.toByteArray());
+    }
+
     private static ByteString toByteString(byte[] bytes) {
         return ByteString.copyFrom(bytes);
+    }
+
+    private static ByteString toByteString(Slice slice) {
+        return ByteString.copyFrom(slice.asByteBuffer());
     }
 
     private static KeyValue buildKeyValue(ByteString key, Optional<byte[]> value) {

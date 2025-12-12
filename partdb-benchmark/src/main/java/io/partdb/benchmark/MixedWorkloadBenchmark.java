@@ -1,7 +1,7 @@
 package io.partdb.benchmark;
 
-import io.partdb.common.Timestamp;
-import io.partdb.storage.KeyValue;
+import io.partdb.common.Entry;
+import io.partdb.common.Slice;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
 import org.openjdk.jmh.annotations.*;
@@ -36,35 +36,31 @@ public class MixedWorkloadBenchmark {
 
     private Path tempDir;
     private LSMTree tree;
-    private LSMTree.Snapshot readSnapshot;
     private AtomicLong keyCounter;
-    private AtomicLong timestampCounter;
-    private byte[] valueTemplate;
+    private AtomicLong revisionCounter;
+    private Slice valueTemplate;
 
     @Setup(Level.Trial)
     public void setup() throws IOException {
         tempDir = Files.createTempDirectory("mixed-workload-bench");
         tree = LSMTree.open(tempDir, LSMConfig.defaults());
         keyCounter = new AtomicLong(0);
-        timestampCounter = new AtomicLong(0);
-        valueTemplate = new byte[valueSize];
-        ThreadLocalRandom.current().nextBytes(valueTemplate);
+        revisionCounter = new AtomicLong(0);
+        byte[] valueBytes = new byte[valueSize];
+        ThreadLocalRandom.current().nextBytes(valueBytes);
+        valueTemplate = Slice.of(valueBytes);
 
         for (int i = 0; i < initialKeyCount; i++) {
-            byte[] key = formatKey(i);
-            Timestamp ts = Timestamp.of(timestampCounter.incrementAndGet(), 0);
-            tree.put(key, valueTemplate, ts);
+            Slice key = formatKey(i);
+            long revision = revisionCounter.incrementAndGet();
+            tree.put(key, valueTemplate, revision);
         }
         keyCounter.set(initialKeyCount);
         tree.flush();
-
-        Timestamp readTs = Timestamp.of(timestampCounter.get(), 0);
-        readSnapshot = tree.snapshot(readTs);
     }
 
     @TearDown(Level.Trial)
     public void tearDown() throws IOException {
-        readSnapshot.close();
         tree.close();
         deleteDirectory(tempDir);
     }
@@ -89,11 +85,11 @@ public class MixedWorkloadBenchmark {
         }
     }
 
-    private Optional<KeyValue> doRead() {
+    private Optional<Entry> doRead() {
         long maxKey = keyCounter.get();
         long keyNum = ThreadLocalRandom.current().nextLong(maxKey);
-        byte[] key = formatKey(keyNum);
-        return readSnapshot.get(key);
+        Slice key = formatKey(keyNum);
+        return tree.get(key);
     }
 
     private void doWrite() {
@@ -104,13 +100,13 @@ public class MixedWorkloadBenchmark {
         } else {
             keyNum = ThreadLocalRandom.current().nextLong(maxKey);
         }
-        byte[] key = formatKey(keyNum);
-        Timestamp ts = Timestamp.of(timestampCounter.incrementAndGet(), 0);
-        tree.put(key, valueTemplate, ts);
+        Slice key = formatKey(keyNum);
+        long revision = revisionCounter.incrementAndGet();
+        tree.put(key, valueTemplate, revision);
     }
 
-    private static byte[] formatKey(long keyNum) {
-        return ("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8);
+    private static Slice formatKey(long keyNum) {
+        return Slice.of(("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8));
     }
 
     private static void deleteDirectory(Path dir) throws IOException {
