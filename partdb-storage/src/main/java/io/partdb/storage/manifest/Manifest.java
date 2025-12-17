@@ -1,5 +1,8 @@
 package io.partdb.storage.manifest;
 
+import io.partdb.storage.StorageException;
+import io.partdb.storage.sstable.SSTableDescriptor;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -14,7 +17,7 @@ import java.util.zip.CRC32C;
 
 public record Manifest(
     long nextSSTableId,
-    List<SSTableInfo> sstables
+    List<SSTableDescriptor> sstables
 ) {
 
     private static final int MAGIC_NUMBER = 0x4D414E46;
@@ -42,9 +45,9 @@ public record Manifest(
             byte[] bytes = Files.readAllBytes(manifestPath);
             ByteBuffer buffer = ByteBuffer.wrap(bytes);
 
-            return deserialize(buffer);
+            return fromByteBuffer(buffer);
         } catch (IOException e) {
-            throw new ManifestException("Failed to read manifest", e);
+            throw new StorageException.IO("Failed to read manifest", e);
         }
     }
 
@@ -53,7 +56,7 @@ public record Manifest(
             Path manifestPath = dataDirectory.resolve(MANIFEST_FILENAME);
             Path tempPath = dataDirectory.resolve(MANIFEST_TEMP_FILENAME);
 
-            byte[] serialized = serialize();
+            byte[] serialized = toBytes();
 
             try (FileChannel channel = FileChannel.open(tempPath,
                 StandardOpenOption.CREATE,
@@ -69,11 +72,11 @@ public record Manifest(
 
             Files.move(tempPath, manifestPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
-            throw new ManifestException("Failed to write manifest", e);
+            throw new StorageException.IO("Failed to write manifest", e);
         }
     }
 
-    public List<SSTableInfo> level(int level) {
+    public List<SSTableDescriptor> level(int level) {
         return sstables.stream()
             .filter(sst -> sst.level() == level)
             .toList();
@@ -82,18 +85,18 @@ public record Manifest(
     public long levelSize(int level) {
         return sstables.stream()
             .filter(sst -> sst.level() == level)
-            .mapToLong(SSTableInfo::fileSizeBytes)
+            .mapToLong(SSTableDescriptor::fileSizeBytes)
             .sum();
     }
 
     public int maxLevel() {
         return sstables.stream()
-            .mapToInt(SSTableInfo::level)
+            .mapToInt(SSTableDescriptor::level)
             .max()
             .orElse(0);
     }
 
-    private byte[] serialize() {
+    public byte[] toBytes() {
         int size = calculateSize();
         ByteBuffer buffer = ByteBuffer.allocate(size);
 
@@ -102,7 +105,7 @@ public record Manifest(
         buffer.putLong(nextSSTableId);
         buffer.putInt(sstables.size());
 
-        for (SSTableInfo sst : sstables) {
+        for (SSTableDescriptor sst : sstables) {
             sst.writeTo(buffer);
         }
 
@@ -113,15 +116,19 @@ public record Manifest(
         return buffer.array();
     }
 
-    private static Manifest deserialize(ByteBuffer buffer) {
+    public static Manifest fromBytes(byte[] data) {
+        return fromByteBuffer(ByteBuffer.wrap(data));
+    }
+
+    private static Manifest fromByteBuffer(ByteBuffer buffer) {
         int magic = buffer.getInt();
         if (magic != MAGIC_NUMBER) {
-            throw new ManifestException("Invalid manifest magic number: " + Integer.toHexString(magic));
+            throw new StorageException.Corruption("Invalid manifest magic number: " + Integer.toHexString(magic));
         }
 
         int version = buffer.getInt();
         if (version != VERSION) {
-            throw new ManifestException("Unsupported manifest version: " + version);
+            throw new StorageException.Corruption("Unsupported manifest version: " + version);
         }
 
         int checksumPosition = buffer.limit() - 4;
@@ -132,15 +139,15 @@ public record Manifest(
         int actualChecksum = (int) crc.getValue();
 
         if (actualChecksum != expectedChecksum) {
-            throw new ManifestException("Manifest checksum mismatch");
+            throw new StorageException.Corruption("Manifest checksum mismatch");
         }
 
         long nextSSTableId = buffer.getLong();
         int sstableCount = buffer.getInt();
 
-        List<SSTableInfo> sstables = new ArrayList<>(sstableCount);
+        List<SSTableDescriptor> sstables = new ArrayList<>(sstableCount);
         for (int i = 0; i < sstableCount; i++) {
-            sstables.add(SSTableInfo.readFrom(buffer));
+            sstables.add(SSTableDescriptor.readFrom(buffer));
         }
 
         return new Manifest(nextSSTableId, sstables);
@@ -148,7 +155,7 @@ public record Manifest(
 
     private int calculateSize() {
         int size = 4 + 4 + 8 + 4 + 4;
-        for (SSTableInfo sst : sstables) {
+        for (SSTableDescriptor sst : sstables) {
             size += sst.serializedSize();
         }
         return size;

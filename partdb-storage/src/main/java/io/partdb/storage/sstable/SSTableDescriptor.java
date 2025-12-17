@@ -1,27 +1,24 @@
-package io.partdb.storage.manifest;
+package io.partdb.storage.sstable;
+
+import io.partdb.common.Slice;
 
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.Objects;
 
-public record SSTableInfo(
+public record SSTableDescriptor(
     long id,
     int level,
-    byte[] smallestKey,
-    byte[] largestKey,
+    Slice smallestKey,
+    Slice largestKey,
     long smallestRevision,
     long largestRevision,
     long fileSizeBytes,
     long entryCount
 ) {
 
-    public SSTableInfo {
+    public SSTableDescriptor {
         Objects.requireNonNull(smallestKey, "smallestKey");
         Objects.requireNonNull(largestKey, "largestKey");
-
-        smallestKey = smallestKey.clone();
-        largestKey = largestKey.clone();
-
         if (id < 0) {
             throw new IllegalArgumentException("id must be non-negative");
         }
@@ -34,7 +31,7 @@ public record SSTableInfo(
         if (entryCount < 0) {
             throw new IllegalArgumentException("entryCount must be non-negative");
         }
-        if (Arrays.compareUnsigned(smallestKey, largestKey) > 0) {
+        if (smallestKey.compareTo(largestKey) > 0) {
             throw new IllegalArgumentException("smallestKey must be <= largestKey");
         }
         if (smallestRevision > largestRevision) {
@@ -42,47 +39,59 @@ public record SSTableInfo(
         }
     }
 
-    public boolean overlaps(byte[] startKey, byte[] endKey) {
-        boolean afterStart = startKey == null || Arrays.compareUnsigned(largestKey, startKey) >= 0;
-        boolean beforeEnd = endKey == null || Arrays.compareUnsigned(smallestKey, endKey) <= 0;
+    public boolean overlaps(Slice startKey, Slice endKey) {
+        boolean afterStart = startKey == null || largestKey.compareTo(startKey) >= 0;
+        boolean beforeEnd = endKey == null || smallestKey.compareTo(endKey) <= 0;
         return afterStart && beforeEnd;
     }
 
+    public boolean mightContain(Slice key) {
+        return key.compareTo(smallestKey) >= 0 && key.compareTo(largestKey) <= 0;
+    }
+
     public int serializedSize() {
-        return 8 + 4 + 4 + smallestKey.length + 4 + largestKey.length + 8 + 8 + 8 + 8;
+        return 8 + 4 + 4 + smallestKey.length() + 4 + largestKey.length() + 8 + 8 + 8 + 8;
     }
 
     public void writeTo(ByteBuffer buffer) {
         buffer.putLong(id);
         buffer.putInt(level);
-        buffer.putInt(smallestKey.length);
-        buffer.put(smallestKey);
-        buffer.putInt(largestKey.length);
-        buffer.put(largestKey);
+        buffer.putInt(smallestKey.length());
+        buffer.put(smallestKey.toByteArray());
+        buffer.putInt(largestKey.length());
+        buffer.put(largestKey.toByteArray());
         buffer.putLong(smallestRevision);
         buffer.putLong(largestRevision);
         buffer.putLong(fileSizeBytes);
         buffer.putLong(entryCount);
     }
 
-    public static SSTableInfo readFrom(ByteBuffer buffer) {
+    public static SSTableDescriptor readFrom(ByteBuffer buffer) {
         long id = buffer.getLong();
         int level = buffer.getInt();
 
         int smallestKeySize = buffer.getInt();
-        byte[] smallestKey = new byte[smallestKeySize];
-        buffer.get(smallestKey);
+        byte[] smallestKeyBytes = new byte[smallestKeySize];
+        buffer.get(smallestKeyBytes);
 
         int largestKeySize = buffer.getInt();
-        byte[] largestKey = new byte[largestKeySize];
-        buffer.get(largestKey);
+        byte[] largestKeyBytes = new byte[largestKeySize];
+        buffer.get(largestKeyBytes);
 
         long smallestRevision = buffer.getLong();
         long largestRevision = buffer.getLong();
-
         long fileSizeBytes = buffer.getLong();
         long entryCount = buffer.getLong();
 
-        return new SSTableInfo(id, level, smallestKey, largestKey, smallestRevision, largestRevision, fileSizeBytes, entryCount);
+        return new SSTableDescriptor(
+            id,
+            level,
+            Slice.of(smallestKeyBytes),
+            Slice.of(largestKeyBytes),
+            smallestRevision,
+            largestRevision,
+            fileSizeBytes,
+            entryCount
+        );
     }
 }

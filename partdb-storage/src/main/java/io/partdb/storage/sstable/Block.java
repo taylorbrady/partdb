@@ -2,6 +2,7 @@ package io.partdb.storage.sstable;
 
 import io.partdb.common.Slice;
 import io.partdb.storage.Mutation;
+import io.partdb.storage.StorageException;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -31,7 +32,7 @@ public final class Block implements Iterable<Mutation> {
     public static Block from(MemorySegment segment) {
         long size = segment.byteSize();
         if (size < TRAILER_SIZE) {
-            throw new SSTableException("Block too small: " + size);
+            throw new StorageException.Corruption("Block too small: " + size);
         }
 
         long trailerOffset = size - TRAILER_SIZE;
@@ -45,7 +46,7 @@ public final class Block implements Iterable<Mutation> {
         int computedChecksum = (int) crc.getValue();
 
         if (storedChecksum != computedChecksum) {
-            throw new SSTableException("Block checksum mismatch");
+            throw new StorageException.Corruption("Block checksum mismatch");
         }
 
         return new Block(segment, entryCount, offsetTableStart);

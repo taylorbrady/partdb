@@ -2,6 +2,7 @@ package io.partdb.storage.sstable;
 
 import io.partdb.common.Slice;
 import io.partdb.storage.Mutation;
+import io.partdb.storage.StorageException;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
@@ -10,6 +11,7 @@ import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
@@ -22,6 +24,8 @@ import java.util.stream.StreamSupport;
 
 public final class SSTable implements AutoCloseable {
 
+    private final long id;
+    private final int level;
     private final Path path;
     private final Arena arena;
     private final MemorySegment segment;
@@ -29,16 +33,24 @@ public final class SSTable implements AutoCloseable {
     private final BlockIndex index;
     private final SSTableFooter footer;
     private final BlockCache cache;
+    private final BlockCodec codec;
+    private final long fileSizeBytes;
 
     private SSTable(
+        long id,
+        int level,
         Path path,
         Arena arena,
         MemorySegment segment,
         BloomFilter bloomFilter,
         BlockIndex index,
         SSTableFooter footer,
-        BlockCache cache
+        BlockCache cache,
+        BlockCodec codec,
+        long fileSizeBytes
     ) {
+        this.id = id;
+        this.level = level;
         this.path = path;
         this.arena = arena;
         this.segment = segment;
@@ -46,13 +58,11 @@ public final class SSTable implements AutoCloseable {
         this.index = index;
         this.footer = footer;
         this.cache = cache;
+        this.codec = codec;
+        this.fileSizeBytes = fileSizeBytes;
     }
 
-    public static SSTable open(Path path) {
-        return open(path, null);
-    }
-
-    public static SSTable open(Path path, BlockCache cache) {
+    static SSTable open(long id, int level, Path path, BlockCache cache) {
         Arena arena = Arena.ofShared();
         try {
             long fileSize;
@@ -63,16 +73,40 @@ public final class SSTable implements AutoCloseable {
                 segment = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize, arena);
             }
 
-            validateHeader(segment);
+            SSTableHeader header = readHeader(segment);
+            BlockCodec codec = BlockCodec.fromId(header.codecId());
             SSTableFooter footer = readFooter(segment, fileSize);
             BloomFilter bloomFilter = readBloomFilter(segment, footer);
             BlockIndex index = readIndex(segment, footer, fileSize);
 
-            return new SSTable(path, arena, segment, bloomFilter, index, footer, cache);
+            return new SSTable(id, level, path, arena, segment, bloomFilter, index, footer, cache, codec, fileSize);
         } catch (IOException e) {
             arena.close();
-            throw new SSTableException("Failed to open SSTable: " + path, e);
+            throw new StorageException.IO("Failed to open SSTable: " + path, e);
         }
+    }
+
+    static Builder builder(long id, int level, Path path, SSTableConfig config) {
+        try {
+            FileChannel channel = FileChannel.open(path,
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.READ);
+
+            Builder builder = new Builder(id, level, path, config, channel);
+            builder.writeHeader();
+            return builder;
+        } catch (IOException e) {
+            throw new StorageException.IO("Failed to create SSTable: " + path, e);
+        }
+    }
+
+    public long id() {
+        return id;
+    }
+
+    public int level() {
+        return level;
     }
 
     public Optional<Mutation> get(Slice key) {
@@ -117,36 +151,54 @@ public final class SSTable implements AutoCloseable {
         return footer.largestRevision();
     }
 
+    public long fileSizeBytes() {
+        return fileSizeBytes;
+    }
+
+    public SSTableDescriptor descriptor() {
+        return new SSTableDescriptor(
+            id,
+            level,
+            smallestKey(),
+            largestKey(),
+            smallestRevision(),
+            largestRevision(),
+            fileSizeBytes,
+            entryCount()
+        );
+    }
+
+    public boolean mightContain(Slice key) {
+        return key.compareTo(smallestKey()) >= 0 && key.compareTo(largestKey()) <= 0;
+    }
+
     @Override
     public void close() {
-        if (cache != null) {
-            cache.invalidate(path);
-        }
+        cache.invalidate(id);
         arena.close();
     }
 
     private Block loadBlock(BlockHandle handle) {
-        if (cache != null) {
-            Optional<Block> cached = cache.get(path, handle);
-            if (cached.isPresent()) {
-                return cached.get();
-            }
+        Block cached = cache.get(id, handle.offset());
+        if (cached != null) {
+            return cached;
         }
 
         MemorySegment blockSegment = segment.asSlice(handle.offset(), handle.size());
-        Block block = Block.from(blockSegment);
+        CompressedBlock compressed = CompressedBlock.deserialize(blockSegment);
+        byte[] decompressed = codec.decompress(compressed.data(), compressed.uncompressedSize());
+        Block block = Block.from(MemorySegment.ofArray(decompressed));
 
-        if (cache != null) {
-            cache.put(path, handle, block);
-        }
+        cache.put(id, handle.offset(), block);
 
         return block;
     }
 
-    private static void validateHeader(MemorySegment segment) {
+    private static SSTableHeader readHeader(MemorySegment segment) {
         int magic = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 0);
         int version = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 4);
-        new SSTableHeader(magic, version);
+        byte codecId = segment.get(ValueLayout.JAVA_BYTE, 8);
+        return new SSTableHeader(magic, version, codecId);
     }
 
     private static SSTableFooter readFooter(MemorySegment segment, long fileSize) {
@@ -264,8 +316,10 @@ public final class SSTable implements AutoCloseable {
         }
     }
 
-    public static final class Writer implements AutoCloseable {
+    public static final class Builder implements AutoCloseable {
 
+        private final long id;
+        private final int level;
         private final Path path;
         private final SSTableConfig config;
         private final FileChannel channel;
@@ -278,11 +332,14 @@ public final class SSTable implements AutoCloseable {
         private long smallestRevision;
         private long largestRevision;
         private long filePosition;
-        private boolean closed;
         private long totalEntryCount;
+        private long uncompressedBytes;
         private boolean hasRevision;
+        private boolean finished;
 
-        private Writer(Path path, SSTableConfig config, FileChannel channel) {
+        private Builder(long id, int level, Path path, SSTableConfig config, FileChannel channel) {
+            this.id = id;
+            this.level = level;
             this.path = path;
             this.config = config;
             this.channel = channel;
@@ -294,36 +351,27 @@ public final class SSTable implements AutoCloseable {
             this.smallestRevision = 0;
             this.largestRevision = 0;
             this.filePosition = SSTableHeader.HEADER_SIZE;
-            this.closed = false;
             this.totalEntryCount = 0;
+            this.uncompressedBytes = 0;
             this.hasRevision = false;
+            this.finished = false;
         }
 
-        public static Writer create(Path path, SSTableConfig config) {
-            try {
-                FileChannel channel = FileChannel.open(path,
-                    StandardOpenOption.CREATE_NEW,
-                    StandardOpenOption.WRITE);
-
-                Writer writer = new Writer(path, config, channel);
-                writer.writeHeader();
-                return writer;
-            } catch (IOException e) {
-                throw new SSTableException("Failed to create SSTable: " + path, e);
-            }
+        public long id() {
+            return id;
         }
 
-        public static Writer create(Path path) {
-            return create(path, SSTableConfig.defaults());
+        public int level() {
+            return level;
         }
 
         public void add(Mutation mutation) {
-            if (closed) {
-                throw new SSTableException("Cannot add to closed writer");
+            if (finished) {
+                throw new IllegalStateException("Cannot add to finished builder");
             }
 
             if (lastKey != null && mutation.key().compareTo(lastKey) <= 0) {
-                throw new SSTableException(
+                throw new IllegalArgumentException(
                     "Entries must be added in strictly ascending key order: last=%s, current=%s"
                         .formatted(lastKey, mutation.key())
                 );
@@ -344,6 +392,7 @@ public final class SSTable implements AutoCloseable {
 
             keys.add(mutation.key());
             totalEntryCount++;
+            uncompressedBytes += entrySize(mutation);
 
             if (currentBlock.estimatedSize() > config.blockSize() && !currentBlock.isEmpty()) {
                 flushCurrentBlock();
@@ -352,21 +401,31 @@ public final class SSTable implements AutoCloseable {
             currentBlock.add(mutation);
         }
 
-        public Path path() {
-            return path;
+        public long uncompressedBytes() {
+            return uncompressedBytes;
         }
 
-        public long smallestRevision() {
-            return smallestRevision;
+        public SSTableDescriptor finish() {
+            if (finished) {
+                throw new IllegalStateException("Builder already finished");
+            }
+
+            finishWriting();
+
+            return new SSTableDescriptor(
+                id,
+                level,
+                firstKey != null ? firstKey : Slice.empty(),
+                lastKey != null ? lastKey : Slice.empty(),
+                smallestRevision,
+                largestRevision,
+                filePosition,
+                totalEntryCount
+            );
         }
 
-        public long largestRevision() {
-            return largestRevision;
-        }
-
-        @Override
-        public void close() {
-            if (closed) {
+        private void finishWriting() {
+            if (finished) {
                 return;
             }
 
@@ -416,18 +475,35 @@ public final class SSTable implements AutoCloseable {
                 while (buffer.hasRemaining()) {
                     channel.write(buffer);
                 }
+                filePosition += footerData.length;
 
                 channel.force(true);
-                closed = true;
+                finished = true;
             } catch (IOException e) {
-                throw new SSTableException("Failed to close SSTable writer", e);
-            } finally {
-                try {
-                    channel.close();
-                } catch (IOException e) {
-                    throw new SSTableException("Failed to close file channel", e);
-                }
+                throw new StorageException.IO("Failed to finish SSTable builder", e);
             }
+        }
+
+        @Override
+        public void close() {
+            try {
+                if (channel.isOpen()) {
+                    channel.close();
+                }
+                if (!finished) {
+                    Files.deleteIfExists(path);
+                }
+            } catch (IOException e) {
+                throw new StorageException.IO("Failed to close file channel", e);
+            }
+        }
+
+        private static int entrySize(Mutation mutation) {
+            int base = 1 + 8 + 4 + mutation.key().length() + 4;
+            return switch (mutation) {
+                case Mutation.Put put -> base + put.value().length();
+                case Mutation.Tombstone _ -> base;
+            };
         }
 
         private void writeHeader() {
@@ -435,6 +511,7 @@ public final class SSTable implements AutoCloseable {
                 ByteBuffer buffer = ByteBuffer.allocate(SSTableHeader.HEADER_SIZE).order(ByteOrder.nativeOrder());
                 buffer.putInt(SSTableHeader.MAGIC_NUMBER);
                 buffer.putInt(SSTableHeader.CURRENT_VERSION);
+                buffer.put(config.codec().id());
                 buffer.putInt(0);
                 buffer.flip();
 
@@ -443,7 +520,7 @@ public final class SSTable implements AutoCloseable {
                     channel.write(buffer);
                 }
             } catch (IOException e) {
-                throw new SSTableException("Failed to write header", e);
+                throw new StorageException.IO("Failed to write header", e);
             }
         }
 
@@ -453,7 +530,15 @@ public final class SSTable implements AutoCloseable {
             }
 
             Slice blockFirstKey = currentBlock.firstKey();
-            byte[] blockData = currentBlock.build();
+            byte[] uncompressedData = currentBlock.build();
+
+            byte[] compressedData = config.codec().compress(uncompressedData);
+            CompressedBlock compressedBlock = new CompressedBlock(
+                config.codec().id(),
+                uncompressedData.length,
+                compressedData
+            );
+            byte[] blockData = compressedBlock.serialize();
 
             try {
                 ByteBuffer buffer = ByteBuffer.wrap(blockData);
@@ -469,7 +554,7 @@ public final class SSTable implements AutoCloseable {
 
                 currentBlock.reset();
             } catch (IOException e) {
-                throw new SSTableException("Failed to write data block", e);
+                throw new StorageException.IO("Failed to write data block", e);
             }
         }
     }

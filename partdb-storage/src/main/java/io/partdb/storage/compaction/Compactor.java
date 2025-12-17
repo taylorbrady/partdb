@@ -2,44 +2,71 @@ package io.partdb.storage.compaction;
 
 import io.partdb.storage.MergingIterator;
 import io.partdb.storage.Mutation;
-import io.partdb.storage.manifest.SSTableInfo;
 import io.partdb.storage.sstable.SSTable;
 import io.partdb.storage.sstable.SSTableConfig;
+import io.partdb.storage.sstable.SSTableDescriptor;
+import io.partdb.storage.sstable.SSTableStore;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
-import java.util.function.LongFunction;
-import java.util.function.LongSupplier;
 
 public final class Compactor {
 
-    private final LongSupplier idAllocator;
-    private final LongFunction<Path> pathResolver;
-    private final SSTableConfig sstableConfig;
-    private final CompactionConfig config;
+    private static final Logger logger = LoggerFactory.getLogger(Compactor.class);
 
-    public Compactor(
-        LongSupplier idAllocator,
-        LongFunction<Path> pathResolver,
-        SSTableConfig sstableConfig,
-        CompactionConfig config
-    ) {
-        this.idAllocator = Objects.requireNonNull(idAllocator, "idAllocator");
-        this.pathResolver = Objects.requireNonNull(pathResolver, "pathResolver");
-        this.sstableConfig = Objects.requireNonNull(sstableConfig, "sstableConfig");
+    private final SSTableStore sstableStore;
+    private final SSTableConfig config;
+
+    public Compactor(SSTableStore sstableStore, SSTableConfig config) {
+        this.sstableStore = Objects.requireNonNull(sstableStore, "sstableStore");
         this.config = Objects.requireNonNull(config, "config");
     }
 
-    public List<SSTableInfo> execute(
+    public CompactionResult compact(CompactionTask task) {
+        List<SSTable> inputs = null;
+        List<SSTableDescriptor> completedOutputs = new ArrayList<>();
+
+        try {
+            inputs = openSSTables(task.inputs());
+
+            List<SSTableDescriptor> outputs = merge(inputs, task.targetLevel(), task.gcTombstones(), completedOutputs);
+
+            return new CompactionResult.Success(task, outputs);
+        } catch (Exception e) {
+            logger.error("Compaction failed for task targeting level {}", task.targetLevel(), e);
+            cleanupOutputs(completedOutputs);
+            return new CompactionResult.Failure(task, e);
+        } finally {
+            if (inputs != null) {
+                closeAll(inputs);
+            }
+        }
+    }
+
+    private List<SSTable> openSSTables(List<SSTableDescriptor> descriptors) {
+        List<SSTable> readers = new ArrayList<>();
+        try {
+            for (SSTableDescriptor desc : descriptors) {
+                readers.add(sstableStore.openForCompaction(desc));
+            }
+            return readers;
+        } catch (Exception e) {
+            closeAll(readers);
+            throw e;
+        }
+    }
+
+    private List<SSTableDescriptor> merge(
         List<SSTable> sources,
         int targetLevel,
-        boolean gcTombstones
+        boolean gcTombstones,
+        List<SSTableDescriptor> completedOutputs
     ) {
         List<Iterator<Mutation>> iterators = sources.stream()
             .map(table -> table.scan().iterator())
@@ -50,75 +77,45 @@ public final class Compactor {
             ? new TombstoneFilter(merged)
             : merged;
 
-        return writeOutputs(filtered, targetLevel);
+        return writeOutputs(filtered, targetLevel, completedOutputs);
     }
 
-    private List<SSTableInfo> writeOutputs(Iterator<Mutation> entries, int targetLevel) {
-        List<SSTableInfo> outputs = new ArrayList<>();
-
+    private List<SSTableDescriptor> writeOutputs(
+        Iterator<Mutation> entries,
+        int targetLevel,
+        List<SSTableDescriptor> completedOutputs
+    ) {
         while (entries.hasNext()) {
-            long id = idAllocator.getAsLong();
-            Path path = pathResolver.apply(id);
-
-            Revisions revisions = writeSSTable(entries, path);
-            SSTableInfo info = readInfo(id, path, targetLevel, revisions);
-            outputs.add(info);
-        }
-
-        return outputs;
-    }
-
-    private Revisions writeSSTable(Iterator<Mutation> entries, Path path) {
-        long smallest = Long.MAX_VALUE;
-        long largest = Long.MIN_VALUE;
-        long bytesWritten = 0;
-        boolean hasEntry = false;
-
-        try (SSTable.Writer writer = SSTable.Writer.create(path, sstableConfig)) {
-            while (entries.hasNext() && bytesWritten < config.targetSSTableSize()) {
-                Mutation mutation = entries.next();
-                writer.add(mutation);
-                bytesWritten += estimateEntrySize(mutation);
-
-                if (mutation.revision() < smallest) {
-                    smallest = mutation.revision();
+            try (SSTable.Builder builder = sstableStore.createBuilder(targetLevel)) {
+                while (entries.hasNext() && builder.uncompressedBytes() < config.targetUncompressedSize()) {
+                    builder.add(entries.next());
                 }
-                if (mutation.revision() > largest) {
-                    largest = mutation.revision();
-                }
-                hasEntry = true;
+                completedOutputs.add(builder.finish());
             }
         }
 
-        return hasEntry ? new Revisions(smallest, largest) : new Revisions(0, 0);
+        return completedOutputs;
     }
 
-    private SSTableInfo readInfo(long id, Path path, int level, Revisions revisions) {
-        try (SSTable table = SSTable.open(path)) {
-            return new SSTableInfo(
-                id,
-                level,
-                table.smallestKey().toByteArray(),
-                table.largestKey().toByteArray(),
-                revisions.smallest(),
-                revisions.largest(),
-                Files.size(path),
-                table.entryCount()
-            );
-        } catch (IOException e) {
-            throw new CompactionException("Failed to read SSTable info: " + path, e);
+    private void cleanupOutputs(List<SSTableDescriptor> outputs) {
+        for (SSTableDescriptor desc : outputs) {
+            try {
+                sstableStore.delete(desc.id());
+            } catch (IOException e) {
+                logger.warn("Failed to clean up compaction output: {}", desc.id(), e);
+            }
         }
     }
 
-    private static long estimateEntrySize(Mutation mutation) {
-        int keySize = mutation.key().length();
-        return switch (mutation) {
-            case Mutation.Put put -> 1 + 8 + 4 + keySize + 4 + put.value().length();
-            case Mutation.Tombstone _ -> 1 + 8 + 4 + keySize + 4;
-        };
+    private void closeAll(List<SSTable> tables) {
+        for (SSTable table : tables) {
+            try {
+                table.close();
+            } catch (Exception e) {
+                logger.warn("Failed to close SSTable", e);
+            }
+        }
     }
-
-    private record Revisions(long smallest, long largest) {}
 
     private static final class TombstoneFilter implements Iterator<Mutation> {
 

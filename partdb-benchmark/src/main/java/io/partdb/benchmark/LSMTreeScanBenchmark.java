@@ -45,7 +45,7 @@ public class LSMTreeScanBenchmark {
             tree.put(key, value, i);
         }
 
-        tree.flush();
+        tree.checkpoint();
     }
 
     @TearDown(Level.Trial)

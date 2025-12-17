@@ -1,15 +1,12 @@
 package io.partdb.storage.sstable;
 
-import java.nio.file.Path;
-import java.util.Optional;
+public sealed interface BlockCache permits S3FifoBlockCache, NoOpBlockCache {
 
-public interface BlockCache {
+    Block get(long sstableId, long offset);
 
-    Optional<Block> get(Path sstable, BlockHandle handle);
+    void put(long sstableId, long offset, Block block);
 
-    void put(Path sstable, BlockHandle handle, Block block);
-
-    void invalidate(Path sstable);
+    void invalidate(long sstableId);
 
     Stats stats();
 

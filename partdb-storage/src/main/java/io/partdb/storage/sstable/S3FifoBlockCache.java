@@ -1,12 +1,11 @@
 package io.partdb.storage.sstable;
 
-import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -17,7 +16,7 @@ public final class S3FifoBlockCache implements BlockCache {
     private static final double SMALL_QUEUE_RATIO = 0.1;
     private static final int GHOST_CAPACITY = 10_000;
 
-    private record CacheKey(Path sstable, long offset) {}
+    private record CacheKey(long sstableId, long offset) {}
 
     private static final class CacheEntry {
         final Block block;
@@ -49,8 +48,9 @@ public final class S3FifoBlockCache implements BlockCache {
     private final Map<CacheKey, CacheEntry> mainMap = new HashMap<>();
     private long mainBytes = 0;
 
-    private final Deque<CacheKey> ghostQueue = new ArrayDeque<>();
-    private final Set<CacheKey> ghostSet = new HashSet<>();
+    private final LinkedHashSet<CacheKey> ghost = new LinkedHashSet<>();
+
+    private final Map<Long, Set<CacheKey>> sstableIndex = new HashMap<>();
 
     private final AtomicLong hits = new AtomicLong();
     private final AtomicLong misses = new AtomicLong();
@@ -68,8 +68,8 @@ public final class S3FifoBlockCache implements BlockCache {
     }
 
     @Override
-    public Optional<Block> get(Path sstable, BlockHandle handle) {
-        CacheKey key = new CacheKey(sstable, handle.offset());
+    public Block get(long sstableId, long offset) {
+        CacheKey key = new CacheKey(sstableId, offset);
 
         lock.readLock().lock();
         try {
@@ -77,26 +77,26 @@ public final class S3FifoBlockCache implements BlockCache {
             if (entry != null) {
                 entry.access();
                 hits.incrementAndGet();
-                return Optional.of(entry.block);
+                return entry.block;
             }
 
             entry = mainMap.get(key);
             if (entry != null) {
                 entry.access();
                 hits.incrementAndGet();
-                return Optional.of(entry.block);
+                return entry.block;
             }
 
             misses.incrementAndGet();
-            return Optional.empty();
+            return null;
         } finally {
             lock.readLock().unlock();
         }
     }
 
     @Override
-    public void put(Path sstable, BlockHandle handle, Block block) {
-        CacheKey key = new CacheKey(sstable, handle.offset());
+    public void put(long sstableId, long offset, Block block) {
+        CacheKey key = new CacheKey(sstableId, offset);
         long blockSize = block.sizeInBytes();
 
         if (blockSize > maxTotalBytes) {
@@ -109,43 +109,40 @@ public final class S3FifoBlockCache implements BlockCache {
                 return;
             }
 
-            if (ghostSet.remove(key)) {
-                ghostQueue.remove(key);
+            if (ghost.remove(key)) {
                 insertToMain(key, new CacheEntry(block));
             } else {
                 insertToSmall(key, new CacheEntry(block));
             }
+
+            sstableIndex.computeIfAbsent(sstableId, _ -> new HashSet<>()).add(key);
         } finally {
             lock.writeLock().unlock();
         }
     }
 
     @Override
-    public void invalidate(Path sstable) {
+    public void invalidate(long sstableId) {
         lock.writeLock().lock();
         try {
-            var smallIt = smallMap.entrySet().iterator();
-            while (smallIt.hasNext()) {
-                var entry = smallIt.next();
-                if (entry.getKey().sstable().equals(sstable)) {
-                    smallBytes -= entry.getValue().sizeInBytes;
-                    smallIt.remove();
-                }
+            Set<CacheKey> keys = sstableIndex.remove(sstableId);
+            if (keys == null) {
+                return;
             }
-            smallQueue.removeIf(k -> k.sstable().equals(sstable));
 
-            var mainIt = mainMap.entrySet().iterator();
-            while (mainIt.hasNext()) {
-                var entry = mainIt.next();
-                if (entry.getKey().sstable().equals(sstable)) {
-                    mainBytes -= entry.getValue().sizeInBytes;
-                    mainIt.remove();
+            for (CacheKey key : keys) {
+                CacheEntry smallEntry = smallMap.remove(key);
+                if (smallEntry != null) {
+                    smallBytes -= smallEntry.sizeInBytes;
                 }
-            }
-            mainQueue.removeIf(k -> k.sstable().equals(sstable));
 
-            ghostQueue.removeIf(k -> k.sstable().equals(sstable));
-            ghostSet.removeIf(k -> k.sstable().equals(sstable));
+                CacheEntry mainEntry = mainMap.remove(key);
+                if (mainEntry != null) {
+                    mainBytes -= mainEntry.sizeInBytes;
+                }
+
+                ghost.remove(key);
+            }
         } finally {
             lock.writeLock().unlock();
         }
@@ -197,10 +194,12 @@ public final class S3FifoBlockCache implements BlockCache {
             }
 
             smallBytes -= entry.sizeInBytes;
+            removeFromIndex(key);
 
             if (entry.frequency > 0) {
                 entry.frequency = 0;
                 insertToMain(key, entry);
+                sstableIndex.computeIfAbsent(key.sstableId(), _ -> new HashSet<>()).add(key);
             } else {
                 addToGhost(key);
                 evictions.incrementAndGet();
@@ -224,20 +223,29 @@ public final class S3FifoBlockCache implements BlockCache {
             } else {
                 mainMap.remove(key);
                 mainBytes -= entry.sizeInBytes;
+                removeFromIndex(key);
                 evictions.incrementAndGet();
                 return;
             }
         }
     }
 
-    private void addToGhost(CacheKey key) {
-        while (ghostSet.size() >= GHOST_CAPACITY) {
-            CacheKey old = ghostQueue.pollFirst();
-            if (old != null) {
-                ghostSet.remove(old);
+    private void removeFromIndex(CacheKey key) {
+        Set<CacheKey> keys = sstableIndex.get(key.sstableId());
+        if (keys != null) {
+            keys.remove(key);
+            if (keys.isEmpty()) {
+                sstableIndex.remove(key.sstableId());
             }
         }
-        ghostQueue.addLast(key);
-        ghostSet.add(key);
+    }
+
+    private void addToGhost(CacheKey key) {
+        if (ghost.size() >= GHOST_CAPACITY) {
+            var it = ghost.iterator();
+            it.next();
+            it.remove();
+        }
+        ghost.add(key);
     }
 }

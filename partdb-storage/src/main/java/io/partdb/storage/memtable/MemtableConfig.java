@@ -13,4 +13,8 @@ public record MemtableConfig(long maxSizeInBytes) {
     public static MemtableConfig defaults() {
         return new MemtableConfig(DEFAULT_MAX_SIZE);
     }
+
+    public MemtableConfig withMaxSizeInBytes(long maxSizeInBytes) {
+        return new MemtableConfig(maxSizeInBytes);
+    }
 }

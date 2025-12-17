@@ -56,7 +56,7 @@ public class MixedWorkloadBenchmark {
             tree.put(key, valueTemplate, revision);
         }
         keyCounter.set(initialKeyCount);
-        tree.flush();
+        tree.checkpoint();
     }
 
     @TearDown(Level.Trial)

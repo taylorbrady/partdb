@@ -1,6 +1,7 @@
 package io.partdb.storage.sstable;
 
 import io.partdb.common.Slice;
+import io.partdb.storage.StorageException;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -97,7 +98,7 @@ record SSTableFooter(
         int actualChecksum = (int) crc.getValue();
 
         if (actualChecksum != expectedChecksum) {
-            throw new SSTableException("Footer checksum mismatch");
+            throw new StorageException.Corruption("Footer checksum mismatch");
         }
 
         return new SSTableFooter(

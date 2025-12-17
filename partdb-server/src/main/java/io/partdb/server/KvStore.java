@@ -131,8 +131,6 @@ public final class KvStore implements StateMachine, AutoCloseable {
 
     @Override
     public byte[] snapshot() {
-        store.flush();
-
         try {
             byte[] storageData = store.checkpoint();
             byte[] leaseData = leases.toSnapshot();

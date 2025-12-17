@@ -1,34 +1,32 @@
 package io.partdb.storage;
 
-import io.partdb.storage.compaction.CompactionConfig;
-import io.partdb.storage.compaction.LeveledCompactionConfig;
 import io.partdb.storage.memtable.MemtableConfig;
-import io.partdb.storage.sstable.BlockCacheConfig;
 import io.partdb.storage.sstable.SSTableConfig;
 
 import java.util.Objects;
 
 public record LSMConfig(
     MemtableConfig memtableConfig,
-    SSTableConfig sstableConfig,
-    CompactionConfig compactionConfig,
-    LeveledCompactionConfig leveledCompactionConfig,
-    BlockCacheConfig blockCacheConfig
+    SSTableConfig sstableConfig
 ) {
+
     public LSMConfig {
         Objects.requireNonNull(memtableConfig, "memtableConfig");
         Objects.requireNonNull(sstableConfig, "sstableConfig");
-        Objects.requireNonNull(compactionConfig, "compactionConfig");
-        Objects.requireNonNull(leveledCompactionConfig, "leveledCompactionConfig");
     }
 
     public static LSMConfig defaults() {
         return new LSMConfig(
             MemtableConfig.defaults(),
-            SSTableConfig.defaults(),
-            CompactionConfig.defaults(),
-            LeveledCompactionConfig.defaults(),
-            BlockCacheConfig.defaults()
+            SSTableConfig.defaults()
         );
+    }
+
+    public LSMConfig withMemtableConfig(MemtableConfig memtableConfig) {
+        return new LSMConfig(memtableConfig, sstableConfig);
+    }
+
+    public LSMConfig withSSTableConfig(SSTableConfig sstableConfig) {
+        return new LSMConfig(memtableConfig, sstableConfig);
     }
 }

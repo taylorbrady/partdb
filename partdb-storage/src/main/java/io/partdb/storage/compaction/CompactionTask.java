@@ -1,12 +1,12 @@
 package io.partdb.storage.compaction;
 
-import io.partdb.storage.manifest.SSTableInfo;
+import io.partdb.storage.sstable.SSTableDescriptor;
 
 import java.util.List;
 import java.util.Objects;
 
 public record CompactionTask(
-    List<SSTableInfo> inputs,
+    List<SSTableDescriptor> inputs,
     int targetLevel,
     boolean gcTombstones
 ) {

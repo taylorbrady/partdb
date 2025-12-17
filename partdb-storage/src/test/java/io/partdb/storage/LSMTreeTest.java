@@ -3,13 +3,10 @@ package io.partdb.storage;
 import io.partdb.common.Entry;
 import io.partdb.common.Slice;
 
-import io.partdb.storage.compaction.CompactionConfig;
-import io.partdb.storage.compaction.LeveledCompactionConfig;
 import io.partdb.storage.manifest.Manifest;
-import io.partdb.storage.manifest.SSTableInfo;
 import io.partdb.storage.memtable.MemtableConfig;
-import io.partdb.storage.sstable.BlockCacheConfig;
 import io.partdb.storage.sstable.SSTableConfig;
+import io.partdb.storage.sstable.SSTableDescriptor;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -56,10 +53,7 @@ class LSMTreeTest {
     private static LSMConfig smallMemtableConfig(int sizeBytes) {
         return new LSMConfig(
             new MemtableConfig(sizeBytes),
-            SSTableConfig.defaults(),
-            CompactionConfig.defaults(),
-            LeveledCompactionConfig.defaults(),
-            BlockCacheConfig.defaults()
+            SSTableConfig.defaults()
         );
     }
 
@@ -332,8 +326,8 @@ class LSMTreeTest {
                 Thread.sleep(500);
 
                 Manifest manifest = tree.manifest();
-                List<SSTableInfo> l0Files = manifest.level(0);
-                List<SSTableInfo> l1Files = manifest.level(1);
+                List<SSTableDescriptor> l0Files = manifest.level(0);
+                List<SSTableDescriptor> l1Files = manifest.level(1);
 
                 assertTrue(l0Files.size() < 4);
                 assertTrue(l1Files.size() > 0);
@@ -400,11 +394,11 @@ class LSMTreeTest {
                 Thread.sleep(2000);
 
                 Manifest manifest = tree.manifest();
-                LeveledCompactionConfig compactionConfig = LeveledCompactionConfig.defaults();
+                SSTableConfig sstableConfig = SSTableConfig.defaults();
 
                 for (int level = 1; level < manifest.maxLevel(); level++) {
                     long levelSize = manifest.levelSize(level);
-                    long maxSize = compactionConfig.maxBytesForLevel(level);
+                    long maxSize = sstableConfig.maxBytesForLevel(level);
 
                     assertTrue(levelSize <= maxSize * 2);
                 }
@@ -453,13 +447,13 @@ class LSMTreeTest {
                 Manifest manifest = tree.manifest();
 
                 long totalEntries = 0;
-                for (SSTableInfo meta : manifest.sstables()) {
-                    totalEntries += meta.entryCount();
-                    assertTrue(meta.id() > 0);
-                    assertTrue(meta.level() >= 0);
-                    assertTrue(meta.fileSizeBytes() > 0);
-                    assertNotNull(meta.smallestKey());
-                    assertNotNull(meta.largestKey());
+                for (SSTableDescriptor desc : manifest.sstables()) {
+                    totalEntries += desc.entryCount();
+                    assertTrue(desc.id() > 0);
+                    assertTrue(desc.level() >= 0);
+                    assertTrue(desc.fileSizeBytes() > 0);
+                    assertNotNull(desc.smallestKey());
+                    assertNotNull(desc.largestKey());
                 }
 
                 assertTrue(totalEntries >= 80);
