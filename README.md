@@ -4,28 +4,26 @@ A distributed key-value store in Java, implementing Raft consensus and a custom 
 
 ## Status
 
-This project is in active development. Core modules (storage engine, Raft consensus, lease system) are implemented. Server integration, client, and CLI modules are planned.
+In active development. Core functionality is implemented; working toward production readiness.
 
 ## Architecture
 
-- **Consensus**: Raft replication for linearizable reads and writes
-- **Storage**: Custom LSM tree (WAL, memtable, SSTables, compaction)
-- **Leases**: Lease-based expiration for deterministic TTL
-- **Protocols**: Protocol Buffers for serialization and gRPC for transport
+- **Consensus**: Raft for linearizable reads and writes
+- **Storage**: LSM tree (WAL, memtable, SSTables, compaction)
+- **Leases**: TTL-based expiration with heartbeat
+- **Transport**: gRPC with Protocol Buffers
 
 ## Modules
 
-**Implemented:**
-- **partdb-common**: Core abstractions (Entry, Operation, StateMachine, Lease)
-- **partdb-storage**: LSM storage engine with lease-aware filtering
-- **partdb-raft**: Raft consensus implementation with log replication and snapshots
-- **partdb-protocol**: Protocol Buffer definitions for client-server communication
-- **partdb-server**: Lessor for lease lifecycle management
-
-**Planned:**
-- **partdb-server**: Full KV server integration (in progress)
+- **partdb-common**: Core types (Slice, Entry, Lease, HybridClock)
+- **partdb-storage**: LSM storage engine with bloom filters and block cache
+- **partdb-raft**: Raft consensus with log replication and snapshots
+- **partdb-protocol**: Protobuf definitions for KV and Raft RPCs
+- **partdb-server**: KV server with Raft integration and lease management
 - **partdb-client**: Java client library
-- **partdb-cli**: Command-line interface
+- **partdb-cli**: Server startup CLI
+- **partdb-ctl**: Admin tool (get, put, delete)
+- **partdb-benchmark**: JMH benchmarks
 
 ## Building
 
