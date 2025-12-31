@@ -15,27 +15,24 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.LongConsumer;
 import java.util.stream.Stream;
 
 public final class KvStore implements StateMachine, AutoCloseable {
 
     private final LSMTree store;
     private final Leases leases;
-    private final LongConsumer requestCompleter;
     private volatile long lastApplied;
 
-    private KvStore(LSMTree store, Leases leases, LongConsumer requestCompleter) {
+    private KvStore(LSMTree store, Leases leases) {
         this.store = store;
         this.leases = leases;
-        this.requestCompleter = requestCompleter;
         this.lastApplied = 0;
     }
 
-    public static KvStore open(Path dataDirectory, LSMConfig config, LongConsumer requestCompleter) {
+    public static KvStore open(Path dataDirectory, LSMConfig config) {
         LSMTree store = LSMTree.open(dataDirectory, config);
         Leases leases = new Leases();
-        return new KvStore(store, leases, requestCompleter);
+        return new KvStore(store, leases);
     }
 
     @Override
@@ -84,10 +81,6 @@ public final class KvStore implements StateMachine, AutoCloseable {
                 leases.keepAlive(keepAlive.getLeaseId());
             }
             case OP_NOT_SET -> throw new IllegalArgumentException("Command operation not set");
-        }
-
-        if (command.getRequestId() != 0) {
-            requestCompleter.accept(command.getRequestId());
         }
     }
 

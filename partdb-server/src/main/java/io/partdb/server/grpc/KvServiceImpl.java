@@ -218,10 +218,10 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     public void batchWrite(BatchWriteRequest request, StreamObserver<BatchWriteResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
 
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        List<CompletableFuture<Long>> futures = new ArrayList<>();
 
         for (KvProto.WriteOp writeOp : request.getOpsList()) {
-            CompletableFuture<Void> opFuture = switch (writeOp.getOpCase()) {
+            CompletableFuture<Long> opFuture = switch (writeOp.getOpCase()) {
                 case PUT -> {
                     KvProto.PutOp put = writeOp.getPut();
                     yield proposer.put(

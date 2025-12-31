@@ -21,7 +21,6 @@ public final class PartDbServer implements AutoCloseable {
     private final RaftTransport raftTransport;
     private final RaftStorage raftStorage;
     private final RaftNode raftNode;
-    private final PendingRequests pending;
     private final Proposer proposer;
     private final Lessor lessor;
     private final KvServer kvServer;
@@ -32,11 +31,9 @@ public final class PartDbServer implements AutoCloseable {
 
     public PartDbServer(PartDbServerConfig config, RaftTransport transport, RaftStorage storage) {
         this.config = config;
-        this.pending = new PendingRequests();
         this.kvStore = KvStore.open(
             config.dataDirectory().resolve("db"),
-            config.storeConfig(),
-            pending::complete
+            config.storeConfig()
         );
 
         var membership = Membership.ofVoters(config.peers().toArray(String[]::new));
@@ -53,8 +50,8 @@ public final class PartDbServer implements AutoCloseable {
             .tickInterval(config.tickInterval())
             .build();
 
-        this.proposer = new Proposer(raftNode, pending);
-        this.lessor = new Lessor(proposer, kvStore.leases());
+        this.proposer = new Proposer(raftNode);
+        this.lessor = new Lessor(raftNode, proposer, kvStore.leases());
         this.kvServer = new KvServer(proposer, lessor, kvStore, config.kvServerConfig());
     }
 

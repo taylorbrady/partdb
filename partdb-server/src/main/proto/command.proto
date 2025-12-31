@@ -5,7 +5,6 @@ option java_package = "io.partdb.server.command.proto";
 option java_outer_classname = "CommandProto";
 
 message Command {
-  int64 request_id = 10;
   oneof op {
     Put put = 1;
     Delete delete = 2;

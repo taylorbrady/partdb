@@ -9,28 +9,29 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class ApplyTracker {
     private final AtomicLong lastApplied = new AtomicLong();
-    private final ConcurrentNavigableMap<Long, List<CompletableFuture<Void>>> waiters =
+    private final ConcurrentNavigableMap<Long, List<CompletableFuture<Long>>> waiters =
         new ConcurrentSkipListMap<>();
 
     public void advance(long index) {
         lastApplied.set(index);
         var satisfied = waiters.headMap(index, true);
-        for (var futures : satisfied.values()) {
-            for (var future : futures) {
-                future.complete(null);
+        for (var entry : satisfied.entrySet()) {
+            long waitedIndex = entry.getKey();
+            for (var future : entry.getValue()) {
+                future.complete(waitedIndex);
             }
         }
         satisfied.clear();
     }
 
-    public CompletableFuture<Void> waitFor(long index) {
+    public CompletableFuture<Long> waitFor(long index) {
         if (lastApplied.get() >= index) {
-            return CompletableFuture.completedFuture(null);
+            return CompletableFuture.completedFuture(index);
         }
-        var future = new CompletableFuture<Void>();
+        var future = new CompletableFuture<Long>();
         waiters.computeIfAbsent(index, _ -> new CopyOnWriteArrayList<>()).add(future);
         if (lastApplied.get() >= index) {
-            future.complete(null);
+            future.complete(index);
         }
         return future;
     }

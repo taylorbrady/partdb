@@ -36,13 +36,22 @@ import java.util.function.IntUnaryOperator;
 public final class RaftNode implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(RaftNode.class);
 
+    private sealed interface NodeEvent {
+        record Proposal(long id, byte[] data) implements NodeEvent {}
+        record Raft(RaftEvent event) implements NodeEvent {}
+    }
+
     private final Raft raft;
     private final RaftTransport transport;
     private final RaftStorage storage;
     private final StateMachine stateMachine;
 
-    private final BlockingQueue<RaftEvent> events = new LinkedBlockingQueue<>();
+    private final BlockingQueue<NodeEvent> events = new LinkedBlockingQueue<>();
     private final Map<RpcKey, Deque<CompletableFuture<RaftMessage.Response>>> pendingRpcs = new ConcurrentHashMap<>();
+
+    private final AtomicLong proposalCounter = new AtomicLong();
+    private final ConcurrentHashMap<Long, CompletableFuture<Long>> pendingProposals = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<Long>> pendingCommits = new ConcurrentHashMap<>();
 
     private final AtomicLong readContextCounter = new AtomicLong();
     private final ConcurrentHashMap<Long, CompletableFuture<Long>> pendingReads = new ConcurrentHashMap<>();
@@ -76,7 +85,7 @@ public final class RaftNode implements AutoCloseable {
             .start(this::runEventLoop);
 
         tickScheduler.scheduleAtFixedRate(
-            () -> events.offer(new RaftEvent.Tick()),
+            () -> events.offer(new NodeEvent.Raft(new RaftEvent.Tick())),
             tickInterval.toMillis(),
             tickInterval.toMillis(),
             TimeUnit.MILLISECONDS
@@ -89,31 +98,35 @@ public final class RaftNode implements AutoCloseable {
         return new Builder();
     }
 
-    public void propose(byte[] data) {
+    public CompletableFuture<Long> propose(byte[] data) {
         if (!running) {
-            throw new RaftException.Stopped();
+            return CompletableFuture.failedFuture(new RaftException.Stopped());
         }
-        events.offer(new RaftEvent.Propose(data));
+        long id = proposalCounter.incrementAndGet();
+        var future = new CompletableFuture<Long>();
+        pendingProposals.put(id, future);
+        events.offer(new NodeEvent.Proposal(id, data));
+        return future;
     }
 
     public CompletableFuture<Long> readIndex() {
         if (!running) {
-            throw new RaftException.Stopped();
+            return CompletableFuture.failedFuture(new RaftException.Stopped());
         }
         long id = readContextCounter.incrementAndGet();
         var future = new CompletableFuture<Long>();
         pendingReads.put(id, future);
-        events.offer(new RaftEvent.ReadIndex(longToBytes(id)));
+        events.offer(new NodeEvent.Raft(new RaftEvent.ReadIndex(longToBytes(id))));
         return future;
     }
 
-    public CompletableFuture<Void> waitForApplied(long index) {
+    public CompletableFuture<Long> waitForApplied(long index) {
         return applyTracker.waitFor(index);
     }
 
-    public CompletableFuture<Void> linearizableBarrier() {
+    public CompletableFuture<Long> linearizableBarrier() {
         if (!running) {
-            throw new RaftException.Stopped();
+            return CompletableFuture.failedFuture(new RaftException.Stopped());
         }
         return readIndex().thenCompose(this::waitForApplied);
     }
@@ -134,8 +147,13 @@ public final class RaftNode implements AutoCloseable {
         while (running) {
             try {
                 var event = events.take();
-                var ready = raft.step(event);
-                processReady(ready);
+                switch (event) {
+                    case NodeEvent.Proposal(long id, byte[] data) -> handleProposal(id, data);
+                    case NodeEvent.Raft(RaftEvent re) -> {
+                        var ready = raft.step(re);
+                        processReady(ready);
+                    }
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
@@ -145,6 +163,29 @@ public final class RaftNode implements AutoCloseable {
         }
     }
 
+    private void handleProposal(long proposalId, byte[] data) {
+        var future = pendingProposals.remove(proposalId);
+        if (future == null) {
+            return;
+        }
+
+        if (!raft.isLeader()) {
+            future.completeExceptionally(new RaftException.NotLeader(raft.leaderId().orElse(null)));
+            return;
+        }
+
+        var ready = raft.step(new RaftEvent.Propose(data));
+
+        if (!ready.persist().entries().isEmpty()) {
+            long index = ready.persist().entries().getLast().index();
+            pendingCommits.put(index, future);
+        } else {
+            future.completeExceptionally(new RaftException.NotLeader(raft.leaderId().orElse(null)));
+        }
+
+        processReady(ready);
+    }
+
     private CompletableFuture<RaftMessage.Response> handleIncomingRpc(String from, RaftMessage.Request request) {
         var responseFuture = new CompletableFuture<RaftMessage.Response>();
 
@@ -152,7 +193,7 @@ public final class RaftNode implements AutoCloseable {
         pendingRpcs.computeIfAbsent(key, _ -> new ConcurrentLinkedDeque<>())
             .addLast(responseFuture);
 
-        events.offer(new RaftEvent.Receive(from, request));
+        events.offer(new NodeEvent.Raft(new RaftEvent.Receive(from, request)));
 
         return responseFuture;
     }
@@ -191,6 +232,10 @@ public final class RaftNode implements AutoCloseable {
         long lastAppliedIndex = 0;
         long lastAppliedTerm = 0;
         for (var entry : ready.apply().entries()) {
+            var commitFuture = pendingCommits.remove(entry.index());
+            if (commitFuture != null) {
+                commitFuture.complete(entry.index());
+            }
             stateMachine.apply(entry.index(), entry.data());
             lastAppliedIndex = entry.index();
             lastAppliedTerm = entry.term();
@@ -238,7 +283,7 @@ public final class RaftNode implements AutoCloseable {
 
         try {
             var response = transport.send(request.peer(), msg).join();
-            events.offer(new RaftEvent.Receive(request.peer(), response));
+            events.offer(new NodeEvent.Raft(new RaftEvent.Receive(request.peer(), response)));
         } catch (Exception e) {
             log.debug("Failed to send snapshot to {}: {}", request.peer(), e.getMessage());
         }
@@ -247,7 +292,7 @@ public final class RaftNode implements AutoCloseable {
     private void sendRequest(String to, RaftMessage.Request request) {
         try {
             var response = transport.send(to, request).join();
-            events.offer(new RaftEvent.Receive(to, response));
+            events.offer(new NodeEvent.Raft(new RaftEvent.Receive(to, response)));
         } catch (Exception e) {
             log.debug("Failed to send to {}: {}", to, e.getMessage());
         }

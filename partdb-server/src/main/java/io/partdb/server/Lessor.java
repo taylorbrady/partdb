@@ -1,6 +1,7 @@
 package io.partdb.server;
 
 import io.partdb.common.Leases;
+import io.partdb.server.raft.RaftNode;
 import io.partdb.server.command.proto.CommandProto.Command;
 import io.partdb.server.command.proto.CommandProto.GrantLease;
 import io.partdb.server.command.proto.CommandProto.KeepAliveLease;
@@ -16,13 +17,15 @@ public final class Lessor implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(Lessor.class);
     private static final int MAX_REVOCATIONS_PER_BATCH = 500;
 
+    private final RaftNode raftNode;
     private final Proposer proposer;
     private final Leases leases;
     private final AtomicLong nextLeaseId = new AtomicLong(1);
     private final Thread expirerThread;
     private volatile boolean running = true;
 
-    public Lessor(Proposer proposer, Leases leases) {
+    public Lessor(RaftNode raftNode, Proposer proposer, Leases leases) {
+        this.raftNode = raftNode;
         this.proposer = proposer;
         this.leases = leases;
         this.expirerThread = Thread.ofVirtual()
@@ -39,13 +42,13 @@ public final class Lessor implements AutoCloseable {
             .thenApply(_ -> leaseId);
     }
 
-    public CompletableFuture<Void> revoke(long leaseId) {
+    public CompletableFuture<Long> revoke(long leaseId) {
         return proposer.propose(Command.newBuilder()
             .setRevokeLease(RevokeLease.newBuilder()
                 .setLeaseId(leaseId)));
     }
 
-    public CompletableFuture<Void> keepAlive(long leaseId) {
+    public CompletableFuture<Long> keepAlive(long leaseId) {
         return proposer.propose(Command.newBuilder()
             .setKeepAliveLease(KeepAliveLease.newBuilder()
                 .setLeaseId(leaseId)));
@@ -54,7 +57,7 @@ public final class Lessor implements AutoCloseable {
     private void runExpirer() {
         while (running) {
             try {
-                if (!proposer.isLeader()) {
+                if (!raftNode.isLeader()) {
                     Thread.sleep(Duration.ofMillis(500));
                     continue;
                 }
