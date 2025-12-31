@@ -1,7 +1,8 @@
-package io.partdb.server.storage;
+package io.partdb.server.raft;
+
+import io.partdb.storage.StorageException;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -13,7 +14,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.function.Consumer;
 import java.util.zip.CRC32C;
 
-import static io.partdb.server.storage.LogCodec.BYTE_ORDER;
+import static io.partdb.server.raft.LogCodec.BYTE_ORDER;
 
 public final class SegmentScanner {
 
@@ -38,7 +39,7 @@ public final class SegmentScanner {
             return scanMapped(mapped, consumer);
 
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            throw new StorageException.IO("Failed to scan WAL segment: " + path, e);
         }
     }
 
@@ -92,7 +93,7 @@ public final class SegmentScanner {
                 long term = buf.getLong();
                 yield new LogRecord.SnapshotMarker(index, term);
             }
-            default -> throw new CorruptedStorageException("Unknown record type: " + type);
+            default -> throw new StorageException.Corruption("Unknown record type: " + type);
         };
     }
 
@@ -101,7 +102,7 @@ public final class SegmentScanner {
             channel.truncate(truncateToOffset);
             channel.force(true);
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            throw new StorageException.IO("Failed to repair WAL segment: " + path, e);
         }
     }
 

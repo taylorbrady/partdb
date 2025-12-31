@@ -1,7 +1,8 @@
 package io.partdb.server;
 
 import com.google.protobuf.ByteString;
-import io.partdb.raft.RaftNode;
+import io.partdb.raft.RaftException;
+import io.partdb.server.raft.RaftNode;
 import io.partdb.server.command.proto.CommandProto.Command;
 import io.partdb.server.command.proto.CommandProto.Delete;
 import io.partdb.server.command.proto.CommandProto.Put;
@@ -17,33 +18,38 @@ public final class Proposer {
         this.pending = pending;
     }
 
+    public boolean isLeader() {
+        return raftNode.isLeader();
+    }
+
     public CompletableFuture<Void> put(byte[] key, byte[] value, long leaseId) {
-        var tracked = pending.track();
-        var command = Command.newBuilder()
-            .setRequestId(tracked.requestId())
+        return propose(Command.newBuilder()
             .setPut(Put.newBuilder()
                 .setKey(ByteString.copyFrom(key))
                 .setValue(ByteString.copyFrom(value))
-                .setLeaseId(leaseId))
-            .build();
-        return propose(tracked, command);
+                .setLeaseId(leaseId)));
     }
 
     public CompletableFuture<Void> delete(byte[] key) {
-        var tracked = pending.track();
-        var command = Command.newBuilder()
-            .setRequestId(tracked.requestId())
+        return propose(Command.newBuilder()
             .setDelete(Delete.newBuilder()
-                .setKey(ByteString.copyFrom(key)))
-            .build();
-        return propose(tracked, command);
+                .setKey(ByteString.copyFrom(key))));
     }
 
-    private CompletableFuture<Void> propose(PendingRequests.Tracked tracked, Command command) {
+    public CompletableFuture<Void> readIndex() {
+        return raftNode.linearizableBarrier();
+    }
+
+    public CompletableFuture<Void> propose(Command.Builder commandBuilder) {
+        var tracked = pending.track();
+        var command = commandBuilder
+            .setRequestId(tracked.requestId())
+            .build();
+
         if (!raftNode.isLeader()) {
             pending.cancel(tracked.requestId());
             return CompletableFuture.failedFuture(
-                new NotLeaderException(raftNode.leaderId().orElse(null))
+                new RaftException.NotLeader(raftNode.leaderId().orElse(null))
             );
         }
         raftNode.propose(command.toByteArray());

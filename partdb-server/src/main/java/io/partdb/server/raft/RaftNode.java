@@ -1,11 +1,25 @@
-package io.partdb.raft;
+package io.partdb.server.raft;
 
+import io.partdb.raft.HardState;
+import io.partdb.raft.Membership;
+import io.partdb.raft.Raft;
+import io.partdb.raft.RaftConfig;
+import io.partdb.raft.RaftEvent;
+import io.partdb.raft.RaftMessage;
+import io.partdb.raft.RaftStorage;
+import io.partdb.raft.RaftTransport;
+import io.partdb.raft.Ready;
+import io.partdb.raft.Snapshot;
+import io.partdb.raft.RaftException;
+import io.partdb.raft.StateMachine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.Deque;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,7 +28,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntUnaryOperator;
 
 public final class RaftNode implements AutoCloseable {
@@ -27,6 +43,10 @@ public final class RaftNode implements AutoCloseable {
 
     private final BlockingQueue<RaftEvent> events = new LinkedBlockingQueue<>();
     private final Map<RpcKey, Deque<CompletableFuture<RaftMessage.Response>>> pendingRpcs = new ConcurrentHashMap<>();
+
+    private final AtomicLong readContextCounter = new AtomicLong();
+    private final ConcurrentHashMap<Long, CompletableFuture<Long>> pendingReads = new ConcurrentHashMap<>();
+    private final ApplyTracker applyTracker = new ApplyTracker();
 
     private final ExecutorService ioExecutor;
     private final ScheduledExecutorService tickScheduler;
@@ -70,14 +90,39 @@ public final class RaftNode implements AutoCloseable {
     }
 
     public void propose(byte[] data) {
+        if (!running) {
+            throw new RaftException.Stopped();
+        }
         events.offer(new RaftEvent.Propose(data));
+    }
+
+    public CompletableFuture<Long> readIndex() {
+        if (!running) {
+            throw new RaftException.Stopped();
+        }
+        long id = readContextCounter.incrementAndGet();
+        var future = new CompletableFuture<Long>();
+        pendingReads.put(id, future);
+        events.offer(new RaftEvent.ReadIndex(longToBytes(id)));
+        return future;
+    }
+
+    public CompletableFuture<Void> waitForApplied(long index) {
+        return applyTracker.waitFor(index);
+    }
+
+    public CompletableFuture<Void> linearizableBarrier() {
+        if (!running) {
+            throw new RaftException.Stopped();
+        }
+        return readIndex().thenCompose(this::waitForApplied);
     }
 
     public boolean isLeader() {
         return raft.isLeader();
     }
 
-    public java.util.Optional<String> leaderId() {
+    public Optional<String> leaderId() {
         return raft.leaderId();
     }
 
@@ -152,6 +197,19 @@ public final class RaftNode implements AutoCloseable {
         }
         if (lastAppliedIndex > 0) {
             raft.advance(lastAppliedIndex, lastAppliedTerm);
+            applyTracker.advance(lastAppliedIndex);
+        }
+
+        for (var readState : ready.apply().readStates()) {
+            long id = bytesToLong(readState.context());
+            var future = pendingReads.remove(id);
+            if (future != null) {
+                if (readState.index() == 0) {
+                    future.completeExceptionally(new RaftException.NotLeader(raft.leaderId().orElse(null)));
+                } else {
+                    future.complete(readState.index());
+                }
+            }
         }
 
         if (ready.snapshotToSend() != null) {
@@ -165,7 +223,7 @@ public final class RaftNode implements AutoCloseable {
             byte[] data = stateMachine.snapshot();
             var newSnapshot = new Snapshot(request.index(), request.term(), raft.membership(), data);
             storage.saveSnapshot(newSnapshot);
-            snapshot = java.util.Optional.of(newSnapshot);
+            snapshot = Optional.of(newSnapshot);
         }
 
         var snap = snapshot.get();
@@ -231,6 +289,14 @@ public final class RaftNode implements AutoCloseable {
         }
     }
 
+    private static byte[] longToBytes(long value) {
+        return ByteBuffer.allocate(8).putLong(value).array();
+    }
+
+    private static long bytesToLong(byte[] bytes) {
+        return ByteBuffer.wrap(bytes).getLong();
+    }
+
     private record RpcKey(String peerId, Class<? extends RaftMessage.Request> requestType) {}
 
     public static final class Builder {
@@ -291,7 +357,7 @@ public final class RaftNode implements AutoCloseable {
             if (storage == null) throw new IllegalStateException("storage is required");
             if (stateMachine == null) throw new IllegalStateException("stateMachine is required");
             if (config == null) config = RaftConfig.defaults();
-            if (random == null) random = bound -> java.util.concurrent.ThreadLocalRandom.current().nextInt(bound);
+            if (random == null) random = bound -> ThreadLocalRandom.current().nextInt(bound);
 
             var initialState = storage.initialState();
             var effectiveMembership = initialState.membership() != null

@@ -3,9 +3,9 @@ package io.partdb.server.grpc;
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
 import io.partdb.common.Slice;
+import io.partdb.raft.RaftException;
 import io.partdb.server.KvStore;
 import io.partdb.server.Lessor;
-import io.partdb.server.NotLeaderException;
 import io.partdb.server.Proposer;
 import io.partdb.protocol.kv.proto.KvProto;
 import io.partdb.protocol.kv.proto.KvProto.BatchGetRequest;
@@ -362,10 +362,14 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         Throwable cause = unwrap(ex);
 
         return switch (cause) {
-            case NotLeaderException e -> Error.newBuilder()
+            case RaftException.NotLeader e -> Error.newBuilder()
                 .setCode(ErrorCode.NOT_LEADER)
                 .setMessage("Not the leader")
                 .setLeaderHint(e.leaderId().orElse(""))
+                .build();
+            case RaftException.Stopped _ -> Error.newBuilder()
+                .setCode(ErrorCode.INTERNAL_ERROR)
+                .setMessage("Server shutting down")
                 .build();
             case TimeoutException _ -> Error.newBuilder()
                 .setCode(ErrorCode.INTERNAL_ERROR)

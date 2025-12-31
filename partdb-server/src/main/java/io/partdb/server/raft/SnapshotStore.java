@@ -1,10 +1,10 @@
-package io.partdb.server.storage;
+package io.partdb.server.raft;
 
 import io.partdb.raft.Membership;
 import io.partdb.raft.Snapshot;
+import io.partdb.storage.StorageException;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
@@ -17,7 +17,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.zip.CRC32C;
 
-import static io.partdb.server.storage.LogCodec.BYTE_ORDER;
+import static io.partdb.server.raft.LogCodec.BYTE_ORDER;
 
 public final class SnapshotStore implements AutoCloseable {
 
@@ -35,7 +35,7 @@ public final class SnapshotStore implements AutoCloseable {
         try {
             Files.createDirectories(directory);
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            throw new StorageException.IO("Failed to create snapshot directory: " + directory, e);
         }
         return new SnapshotStore(directory);
     }
@@ -79,13 +79,13 @@ public final class SnapshotStore implements AutoCloseable {
             channel.force(true);
 
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            throw new StorageException.IO("Failed to write snapshot: " + tempPath, e);
         }
 
         try {
             Files.move(tempPath, finalPath, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            throw new StorageException.IO("Failed to finalize snapshot: " + finalPath, e);
         }
     }
 
@@ -112,7 +112,7 @@ public final class SnapshotStore implements AutoCloseable {
                     .sorted(Comparator.comparingLong(SnapshotInfo::index))
                     .toList();
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            throw new StorageException.IO("Failed to list snapshots in: " + directory, e);
         }
     }
 
@@ -122,7 +122,7 @@ public final class SnapshotStore implements AutoCloseable {
                 try {
                     Files.deleteIfExists(info.path());
                 } catch (IOException e) {
-                    throw new UncheckedIOException(e);
+                    throw new StorageException.IO("Failed to delete snapshot: " + info.path(), e);
                 }
             }
         }
@@ -142,12 +142,12 @@ public final class SnapshotStore implements AutoCloseable {
 
             int magic = headerBuf.getInt();
             if (magic != MAGIC) {
-                throw new CorruptedStorageException("Invalid snapshot magic: " + Integer.toHexString(magic));
+                throw new StorageException.Corruption("Invalid snapshot magic: " + Integer.toHexString(magic));
             }
 
             int version = headerBuf.getInt();
             if (version != VERSION) {
-                throw new CorruptedStorageException("Unsupported snapshot version: " + version);
+                throw new StorageException.Corruption("Unsupported snapshot version: " + version);
             }
 
             long term = headerBuf.getLong();
@@ -177,13 +177,13 @@ public final class SnapshotStore implements AutoCloseable {
             crc.update(data);
 
             if ((int) crc.getValue() != storedCrc) {
-                throw new CorruptedStorageException("Snapshot CRC mismatch");
+                throw new StorageException.Corruption("Snapshot CRC mismatch: " + path);
             }
 
             return new Snapshot(index, term, membership, data);
 
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            throw new StorageException.IO("Failed to load snapshot: " + path, e);
         }
     }
 

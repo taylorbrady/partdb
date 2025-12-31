@@ -1,12 +1,13 @@
-package io.partdb.server.storage;
+package io.partdb.server.raft;
 
 import io.partdb.raft.HardState;
 import io.partdb.raft.LogEntry;
+import io.partdb.raft.RaftException;
+import io.partdb.storage.StorageException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -51,7 +52,7 @@ public final class WriteAheadLog implements AutoCloseable {
         try {
             Files.createDirectories(directory);
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            throw new StorageException.IO("Failed to create WAL directory: " + directory, e);
         }
 
         WriteAheadLog wal = new WriteAheadLog(directory, segmentSize);
@@ -93,6 +94,9 @@ public final class WriteAheadLog implements AutoCloseable {
     }
 
     public List<LogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
+        if (fromIndex < firstIndex) {
+            throw new RaftException.LogCompacted(fromIndex, firstIndex);
+        }
         List<LogEntry> result = new ArrayList<>();
         long bytes = 0;
 
@@ -117,6 +121,9 @@ public final class WriteAheadLog implements AutoCloseable {
     }
 
     public long term(long idx) {
+        if (idx > 0 && idx < firstIndex) {
+            throw new RaftException.LogCompacted(idx, firstIndex);
+        }
         EntryLocation loc = index.get(idx);
         if (loc == null) {
             return 0;
@@ -160,7 +167,7 @@ public final class WriteAheadLog implements AutoCloseable {
                 segment.close();
                 Files.deleteIfExists(segment.path());
             } catch (IOException e) {
-                throw new UncheckedIOException(e);
+                throw new StorageException.IO("Failed to delete WAL segment: " + segment.path(), e);
             }
 
             for (long i = segment.firstIndex(); i <= segment.lastIndex(); i++) {
@@ -241,7 +248,7 @@ public final class WriteAheadLog implements AutoCloseable {
 
         switch (result) {
             case SegmentScanner.ScanResult.Incomplete incomplete ->
-                    throw new CorruptedStorageException(
+                    throw new StorageException.Corruption(
                             "Sealed segment " + path + " is corrupt: " + incomplete.reason() +
                             " at offset " + incomplete.problemOffset());
             case SegmentScanner.ScanResult.Complete _ -> {}
@@ -294,7 +301,7 @@ public final class WriteAheadLog implements AutoCloseable {
                     .filter(p -> p.getFileName().toString().endsWith(".log"))
                     .toList();
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            throw new StorageException.IO("Failed to list WAL segment files in: " + directory, e);
         }
     }
 

@@ -1,11 +1,11 @@
 package io.partdb.server;
 
 import io.partdb.raft.Membership;
-import io.partdb.raft.RaftNode;
 import io.partdb.raft.RaftStorage;
+import io.partdb.server.raft.RaftNode;
 import io.partdb.raft.RaftTransport;
 import io.partdb.server.grpc.KvServer;
-import io.partdb.server.storage.DurableRaftStorage;
+import io.partdb.server.raft.DurableRaftStorage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,9 +32,11 @@ public final class PartDbServer implements AutoCloseable {
 
     public PartDbServer(PartDbServerConfig config, RaftTransport transport, RaftStorage storage) {
         this.config = config;
+        this.pending = new PendingRequests();
         this.kvStore = KvStore.open(
             config.dataDirectory().resolve("db"),
-            config.storeConfig()
+            config.storeConfig(),
+            pending::complete
         );
 
         var membership = Membership.ofVoters(config.peers().toArray(String[]::new));
@@ -51,11 +53,8 @@ public final class PartDbServer implements AutoCloseable {
             .tickInterval(config.tickInterval())
             .build();
 
-        this.pending = new PendingRequests();
-        kvStore.setPendingRequests(pending);
-
         this.proposer = new Proposer(raftNode, pending);
-        this.lessor = new Lessor(raftNode, pending, kvStore.leases());
+        this.lessor = new Lessor(proposer, kvStore.leases());
         this.kvServer = new KvServer(proposer, lessor, kvStore, config.kvServerConfig());
     }
 

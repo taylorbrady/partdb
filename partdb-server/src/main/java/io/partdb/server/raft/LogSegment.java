@@ -1,4 +1,4 @@
-package io.partdb.server.storage;
+package io.partdb.server.raft;
 
 import java.nio.file.Path;
 

@@ -1,9 +1,9 @@
-package io.partdb.server.storage;
+package io.partdb.server.raft;
 
 import io.partdb.raft.LogEntry;
+import io.partdb.storage.StorageException;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -15,7 +15,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.function.Consumer;
 import java.util.zip.CRC32C;
 
-import static io.partdb.server.storage.LogCodec.BYTE_ORDER;
+import static io.partdb.server.raft.LogCodec.BYTE_ORDER;
 
 public final class SealedSegment implements LogSegment {
 
@@ -49,7 +49,7 @@ public final class SealedSegment implements LogSegment {
             return new SealedSegment(path, sequence, firstIndex, lastIndex, arena, mapped);
         } catch (IOException e) {
             arena.close();
-            throw new UncheckedIOException(e);
+            throw new StorageException.IO("Failed to open WAL segment: " + path, e);
         }
     }
 
@@ -100,7 +100,7 @@ public final class SealedSegment implements LogSegment {
             byte[] payload = readPayload(offset + RECORD_HEADER_SIZE, header.length());
 
             if (!verifyCrc(header, payload)) {
-                throw new CorruptedStorageException("CRC mismatch at WAL offset " + offset);
+                throw new StorageException.Corruption("CRC mismatch at WAL offset " + offset);
             }
 
             LogRecord record = decodeRecord(header.type(), payload);
