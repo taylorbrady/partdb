@@ -367,7 +367,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                 .setMessage("Not the leader")
                 .setLeaderHint(e.leaderId().orElse(""))
                 .build();
-            case RaftException.Stopped _ -> Error.newBuilder()
+            case RaftException.Shutdown _ -> Error.newBuilder()
                 .setCode(ErrorCode.INTERNAL_ERROR)
                 .setMessage("Server shutting down")
                 .build();

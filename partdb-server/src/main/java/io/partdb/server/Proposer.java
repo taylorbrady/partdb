@@ -23,7 +23,7 @@ public final class Proposer {
                 .setLeaseId(leaseId))
             .build();
         return raftNode.propose(command.toByteArray())
-            .thenCompose(raftNode::waitForApplied);
+            .thenCompose(result -> raftNode.waitForApplied(result.index()));
     }
 
     public CompletableFuture<Long> delete(byte[] key) {
@@ -32,12 +32,12 @@ public final class Proposer {
                 .setKey(ByteString.copyFrom(key)))
             .build();
         return raftNode.propose(command.toByteArray())
-            .thenCompose(raftNode::waitForApplied);
+            .thenCompose(result -> raftNode.waitForApplied(result.index()));
     }
 
     public CompletableFuture<Long> propose(Command.Builder commandBuilder) {
         var command = commandBuilder.build();
         return raftNode.propose(command.toByteArray())
-            .thenCompose(raftNode::waitForApplied);
+            .thenCompose(result -> raftNode.waitForApplied(result.index()));
     }
 }

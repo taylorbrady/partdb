@@ -39,7 +39,7 @@ public final class Raft {
 
     private Map<String, Long> nextIndex;
     private Map<String, Long> matchIndex;
-    private List<PendingRead> pendingReads;
+    private List<PendingRead> pendingReads = List.of();
 
     private Set<String> votesReceived;
     private Set<String> preVotesReceived;
@@ -347,7 +347,7 @@ public final class Raft {
     private void stepDownAfterConfigApplied() {
         role = Role.FOLLOWER;
         leaderId = null;
-        pendingReads = null;
+        pendingReads = List.of();
         lastHeardFrom = null;
         resetElectionTimeout();
     }
@@ -459,7 +459,7 @@ public final class Raft {
         if (role != Role.FOLLOWER || termChanged) {
             role = Role.FOLLOWER;
             leaderId = leader;
-            pendingReads = null;
+            pendingReads = List.of();
             lastHeardFrom = null;
         } else if (leader != null) {
             leaderId = leader;
@@ -642,6 +642,10 @@ public final class Raft {
     }
 
     private void startReadIndexConfirmation(String requester, byte[] context, ReadyBuilder builder) {
+        if (role != Role.LEADER) {
+            return;
+        }
+
         if (quorum == 1) {
             if (requester == null) {
                 builder.addReadState(commitIndex, context);
@@ -658,7 +662,7 @@ public final class Raft {
     }
 
     private void checkPendingReads(String from, ReadyBuilder builder) {
-        if (pendingReads == null || pendingReads.isEmpty()) {
+        if (pendingReads.isEmpty()) {
             return;
         }
 

@@ -95,7 +95,7 @@ public final class WriteAheadLog implements AutoCloseable {
 
     public List<LogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
         if (fromIndex < firstIndex) {
-            throw new RaftException.LogCompacted(fromIndex, firstIndex);
+            throw new RaftException.Compaction(fromIndex, firstIndex);
         }
         List<LogEntry> result = new ArrayList<>();
         long bytes = 0;
@@ -122,7 +122,7 @@ public final class WriteAheadLog implements AutoCloseable {
 
     public long term(long idx) {
         if (idx > 0 && idx < firstIndex) {
-            throw new RaftException.LogCompacted(idx, firstIndex);
+            throw new RaftException.Compaction(idx, firstIndex);
         }
         EntryLocation loc = index.get(idx);
         if (loc == null) {

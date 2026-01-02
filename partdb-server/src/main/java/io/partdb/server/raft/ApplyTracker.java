@@ -39,4 +39,13 @@ public final class ApplyTracker {
     public long lastApplied() {
         return lastApplied.get();
     }
+
+    public void failAll(Throwable cause) {
+        for (var entry : waiters.entrySet()) {
+            for (var future : entry.getValue()) {
+                future.completeExceptionally(cause);
+            }
+        }
+        waiters.clear();
+    }
 }

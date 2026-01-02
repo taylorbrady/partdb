@@ -4,8 +4,10 @@ import java.util.Optional;
 
 public sealed class RaftException extends RuntimeException
     permits RaftException.NotLeader,
-            RaftException.Stopped,
-            RaftException.LogCompacted {
+            RaftException.Shutdown,
+            RaftException.Compaction,
+            RaftException.StorageFailure,
+            RaftException.RpcTimeout {
 
     protected RaftException(String message) {
         super(message);
@@ -30,17 +32,17 @@ public sealed class RaftException extends RuntimeException
         }
     }
 
-    public static final class Stopped extends RaftException {
-        public Stopped() {
-            super("Raft node has been stopped");
+    public static final class Shutdown extends RaftException {
+        public Shutdown() {
+            super("Raft node has been shut down");
         }
     }
 
-    public static final class LogCompacted extends RaftException {
+    public static final class Compaction extends RaftException {
         private final long requestedIndex;
         private final long firstAvailableIndex;
 
-        public LogCompacted(long requestedIndex, long firstAvailableIndex) {
+        public Compaction(long requestedIndex, long firstAvailableIndex) {
             super("Log entry at index " + requestedIndex +
                   " has been compacted (first available: " + firstAvailableIndex + ")");
             this.requestedIndex = requestedIndex;
@@ -53,6 +55,25 @@ public sealed class RaftException extends RuntimeException
 
         public long firstAvailableIndex() {
             return firstAvailableIndex;
+        }
+    }
+
+    public static final class StorageFailure extends RaftException {
+        public StorageFailure(String message, Throwable cause) {
+            super("Storage operation failed: " + message, cause);
+        }
+    }
+
+    public static final class RpcTimeout extends RaftException {
+        private final String peerId;
+
+        public RpcTimeout(String peerId) {
+            super("RPC to peer " + peerId + " timed out");
+            this.peerId = peerId;
+        }
+
+        public String peerId() {
+            return peerId;
         }
     }
 }
