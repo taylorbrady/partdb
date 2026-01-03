@@ -2,10 +2,12 @@ package io.partdb.server;
 
 import io.partdb.raft.Membership;
 import io.partdb.raft.RaftStorage;
-import io.partdb.server.raft.RaftNode;
 import io.partdb.raft.RaftTransport;
 import io.partdb.server.grpc.KvServer;
 import io.partdb.server.raft.DurableRaftStorage;
+import io.partdb.server.raft.GrpcRaftTransport;
+import io.partdb.server.raft.GrpcRaftTransportConfig;
+import io.partdb.server.raft.RaftNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,7 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 public final class PartDbServer implements AutoCloseable {
-    private static final Logger logger = LoggerFactory.getLogger(PartDbServer.class);
+    private static final Logger log = LoggerFactory.getLogger(PartDbServer.class);
 
     private final PartDbServerConfig config;
     private final KvStore kvStore;
@@ -36,7 +38,7 @@ public final class PartDbServer implements AutoCloseable {
             config.storeConfig()
         );
 
-        var membership = Membership.ofVoters(config.peers().toArray(String[]::new));
+        var membership = createMembership(config);
         this.raftTransport = transport != null ? transport : createDefaultTransport();
         this.raftStorage = storage != null ? storage : createDefaultStorage(config.dataDirectory(), membership);
 
@@ -55,10 +57,20 @@ public final class PartDbServer implements AutoCloseable {
         this.kvServer = new KvServer(proposer, lessor, kvStore, config.kvServerConfig());
     }
 
+    private static Membership createMembership(PartDbServerConfig config) {
+        if (config.peerAddresses().isEmpty()) {
+            return Membership.ofVoters(config.nodeId());
+        }
+        return Membership.ofVoters(config.peerIds().toArray(String[]::new));
+    }
+
     private RaftTransport createDefaultTransport() {
-        throw new UnsupportedOperationException(
-            "Default transport not yet implemented. Please provide a RaftTransport instance."
+        var transportConfig = GrpcRaftTransportConfig.create(
+            config.nodeId(),
+            config.raftPort(),
+            config.peerAddresses()
         );
+        return new GrpcRaftTransport(transportConfig);
     }
 
     private static RaftStorage createDefaultStorage(Path dataDirectory, Membership membership) {
@@ -71,18 +83,29 @@ public final class PartDbServer implements AutoCloseable {
     }
 
     public void start() throws IOException {
-        logger.info("Starting PartDB server...");
+        log.atInfo()
+            .addKeyValue("nodeId", config.nodeId())
+            .log("Starting PartDB server");
         kvServer.start();
-        logger.info("PartDB server started (kv port: {})", config.kvServerConfig().port());
+        log.atInfo()
+            .addKeyValue("nodeId", config.nodeId())
+            .addKeyValue("kvPort", config.kvServerConfig().port())
+            .addKeyValue("raftPort", config.raftPort())
+            .log("PartDB server started");
     }
 
     @Override
     public void close() {
-        logger.info("Shutting down PartDB server...");
+        log.atInfo()
+            .addKeyValue("nodeId", config.nodeId())
+            .log("Shutting down PartDB server");
         lessor.close();
         kvServer.close();
         raftNode.close();
+        raftTransport.close();
         kvStore.close();
-        logger.info("PartDB server shut down");
+        log.atInfo()
+            .addKeyValue("nodeId", config.nodeId())
+            .log("PartDB server shut down");
     }
 }

@@ -12,6 +12,7 @@ import io.partdb.raft.RaftStorage;
 import io.partdb.raft.RaftTransport;
 import io.partdb.raft.ReadResult;
 import io.partdb.raft.Ready;
+import io.partdb.raft.Role;
 import io.partdb.raft.Snapshot;
 import io.partdb.raft.StateMachine;
 import io.partdb.storage.StorageException;
@@ -50,11 +51,13 @@ public final class RaftNode implements AutoCloseable {
 
     private record RpcKey(String peerId, Class<? extends RaftMessage.Request> requestType) {}
 
+    private final String nodeId;
     private final Raft raft;
     private final RaftConfig config;
     private final RaftTransport transport;
     private final RaftStorage storage;
     private final StateMachine stateMachine;
+    private volatile Role lastKnownRole;
 
     private final BlockingQueue<NodeEvent> events = new LinkedBlockingQueue<>();
     private final Map<RpcKey, Deque<PendingRpc>> pendingRpcs = new ConcurrentHashMap<>();
@@ -74,6 +77,7 @@ public final class RaftNode implements AutoCloseable {
     private volatile boolean running = true;
 
     private RaftNode(
+        String nodeId,
         Raft raft,
         RaftConfig config,
         RaftTransport transport,
@@ -81,11 +85,13 @@ public final class RaftNode implements AutoCloseable {
         StateMachine stateMachine,
         Duration tickInterval
     ) {
+        this.nodeId = nodeId;
         this.raft = raft;
         this.config = config;
         this.transport = transport;
         this.storage = storage;
         this.stateMachine = stateMachine;
+        this.lastKnownRole = raft.role();
 
         this.ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -148,6 +154,10 @@ public final class RaftNode implements AutoCloseable {
         return linearizableReadIndex().thenCompose(result -> waitForApplied(result.index()));
     }
 
+    public String nodeId() {
+        return nodeId;
+    }
+
     public boolean isLeader() {
         return raft.isLeader();
     }
@@ -206,12 +216,18 @@ public final class RaftNode implements AutoCloseable {
                 Thread.currentThread().interrupt();
                 break;
             } catch (StorageException e) {
-                log.error("Fatal storage error, shutting down", e);
+                log.atError()
+                    .addKeyValue("nodeId", nodeId)
+                    .setCause(e)
+                    .log("Fatal storage error, shutting down");
                 failPendingOperations(new RaftException.StorageFailure(e.getMessage(), e));
                 running = false;
                 break;
             } catch (Exception e) {
-                log.error("Unexpected error, shutting down", e);
+                log.atError()
+                    .addKeyValue("nodeId", nodeId)
+                    .setCause(e)
+                    .log("Unexpected error, shutting down");
                 failPendingOperations(new RaftException.StorageFailure("Unexpected error: " + e.getMessage(), e));
                 running = false;
                 break;
@@ -302,6 +318,17 @@ public final class RaftNode implements AutoCloseable {
             return;
         }
 
+        Role currentRole = raft.role();
+        if (currentRole != lastKnownRole) {
+            log.atInfo()
+                .addKeyValue("nodeId", nodeId)
+                .addKeyValue("term", raft.term())
+                .addKeyValue("previousRole", lastKnownRole)
+                .addKeyValue("newRole", currentRole)
+                .log("State transition");
+            lastKnownRole = currentRole;
+        }
+
         var persist = ready.persist();
         if (persist.hasWork()) {
             storage.append(persist.hardState(), persist.entries());
@@ -384,7 +411,11 @@ public final class RaftNode implements AutoCloseable {
             var response = transport.send(request.peer(), msg).join();
             events.offer(new NodeEvent.Raft(new RaftEvent.Receive(request.peer(), response)));
         } catch (Exception e) {
-            log.debug("Failed to send snapshot to {}: {}", request.peer(), e.getMessage());
+            log.atDebug()
+                .addKeyValue("nodeId", nodeId)
+                .addKeyValue("peer", request.peer())
+                .addKeyValue("error", e.getMessage())
+                .log("Failed to send snapshot");
         }
     }
 
@@ -393,7 +424,11 @@ public final class RaftNode implements AutoCloseable {
             var response = transport.send(to, request).join();
             events.offer(new NodeEvent.Raft(new RaftEvent.Receive(to, response)));
         } catch (Exception e) {
-            log.debug("Failed to send to {}: {}", to, e.getMessage());
+            log.atDebug()
+                .addKeyValue("nodeId", nodeId)
+                .addKeyValue("peer", to)
+                .addKeyValue("error", e.getMessage())
+                .log("Failed to send request");
         }
     }
 
@@ -505,7 +540,7 @@ public final class RaftNode implements AutoCloseable {
             var snapshot = storage.snapshot();
             snapshot.ifPresent(s -> stateMachine.restore(s.index(), s.data()));
 
-            return new RaftNode(raft, config, transport, storage, stateMachine, tickInterval);
+            return new RaftNode(nodeId, raft, config, transport, storage, stateMachine, tickInterval);
         }
     }
 }

@@ -204,8 +204,6 @@ public final class WriteAheadLog implements AutoCloseable {
             return;
         }
 
-        segmentFiles.sort(Comparator.comparing(p -> p.getFileName().toString()));
-
         for (int i = 0; i < segmentFiles.size(); i++) {
             Path path = segmentFiles.get(i);
             LogSegment.SegmentInfo info = LogSegment.parseFileName(path.getFileName().toString());
@@ -281,9 +279,13 @@ public final class WriteAheadLog implements AutoCloseable {
 
         switch (result) {
             case SegmentScanner.ScanResult.Incomplete incomplete -> {
-                log.warn("Repairing WAL segment {}: {} at offset {}. Truncating from {} to {} bytes.",
-                        path, incomplete.reason(), incomplete.problemOffset(),
-                        incomplete.originalFileSize(), incomplete.validEndOffset());
+                log.atWarn()
+                    .addKeyValue("path", path.toString())
+                    .addKeyValue("reason", incomplete.reason())
+                    .addKeyValue("problemOffset", incomplete.problemOffset())
+                    .addKeyValue("originalSize", incomplete.originalFileSize())
+                    .addKeyValue("validEndOffset", incomplete.validEndOffset())
+                    .log("Repairing WAL segment");
                 SegmentScanner.repair(path, incomplete.validEndOffset());
             }
             case SegmentScanner.ScanResult.Complete _ -> {}
@@ -299,6 +301,7 @@ public final class WriteAheadLog implements AutoCloseable {
         try (Stream<Path> files = Files.list(directory)) {
             return files
                     .filter(p -> p.getFileName().toString().endsWith(".log"))
+                    .sorted(Comparator.comparing(p -> p.getFileName().toString()))
                     .toList();
         } catch (IOException e) {
             throw new StorageException.IO("Failed to list WAL segment files in: " + directory, e);

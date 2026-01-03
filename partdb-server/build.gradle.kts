@@ -21,4 +21,16 @@ protobuf {
     protoc {
         artifact = "com.google.protobuf:protoc:4.33.1"
     }
+    plugins {
+        create("grpc") {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.75.0"
+        }
+    }
+    generateProtoTasks {
+        all().forEach { task ->
+            task.plugins {
+                create("grpc")
+            }
+        }
+    }
 }

@@ -6,12 +6,13 @@ import io.partdb.storage.LSMConfig;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 public record PartDbServerConfig(
     String nodeId,
-    List<String> peers,
+    Map<String, String> peerAddresses,
     Path dataDirectory,
     LSMConfig storeConfig,
     RaftConfig raftConfig,
@@ -21,24 +22,29 @@ public record PartDbServerConfig(
 ) {
     public PartDbServerConfig {
         Objects.requireNonNull(nodeId, "nodeId must not be null");
-        Objects.requireNonNull(peers, "peers must not be null");
+        Objects.requireNonNull(peerAddresses, "peerAddresses must not be null");
         Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
         Objects.requireNonNull(storeConfig, "storeConfig must not be null");
         Objects.requireNonNull(raftConfig, "raftConfig must not be null");
         Objects.requireNonNull(tickInterval, "tickInterval must not be null");
         Objects.requireNonNull(kvServerConfig, "kvServerConfig must not be null");
+        peerAddresses = Map.copyOf(peerAddresses);
+    }
+
+    public Set<String> peerIds() {
+        return peerAddresses.keySet();
     }
 
     public static PartDbServerConfig create(
         String nodeId,
-        List<String> peerSpecs,
+        Map<String, String> peerAddresses,
         Path dataDirectory,
         int raftPort,
         int kvPort
     ) {
         return new PartDbServerConfig(
             nodeId,
-            peerSpecs,
+            peerAddresses,
             dataDirectory,
             LSMConfig.defaults(),
             RaftConfig.defaults(),

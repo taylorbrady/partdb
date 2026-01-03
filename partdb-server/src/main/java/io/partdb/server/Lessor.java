@@ -73,7 +73,10 @@ public final class Lessor implements AutoCloseable {
                         long leaseId = entry.leaseId();
                         revoke(leaseId)
                             .exceptionally(ex -> {
-                                log.warn("Failed to revoke lease {}", leaseId, ex);
+                                log.atWarn()
+                                    .addKeyValue("leaseId", leaseId)
+                                    .setCause(ex)
+                                    .log("Failed to revoke lease");
                                 return null;
                             });
                         count++;

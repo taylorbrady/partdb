@@ -18,7 +18,7 @@ import java.util.Objects;
 
 public final class Compactor {
 
-    private static final Logger logger = LoggerFactory.getLogger(Compactor.class);
+    private static final Logger log = LoggerFactory.getLogger(Compactor.class);
 
     private final SSTableStore sstableStore;
     private final SSTableConfig config;
@@ -29,6 +29,7 @@ public final class Compactor {
     }
 
     public CompactionResult compact(CompactionTask task) {
+        long startNanos = System.nanoTime();
         List<SSTable> inputs = null;
         List<SSTableDescriptor> completedOutputs = new ArrayList<>();
 
@@ -37,9 +38,21 @@ public final class Compactor {
 
             List<SSTableDescriptor> outputs = merge(inputs, task.targetLevel(), task.gcTombstones(), completedOutputs);
 
+            long durationMs = (System.nanoTime() - startNanos) / 1_000_000;
+            log.atInfo()
+                .addKeyValue("targetLevel", task.targetLevel())
+                .addKeyValue("inputFiles", task.inputs().size())
+                .addKeyValue("outputFiles", outputs.size())
+                .addKeyValue("durationMs", durationMs)
+                .log("Compaction completed");
+
             return new CompactionResult.Success(task, outputs);
         } catch (Exception e) {
-            logger.error("Compaction failed for task targeting level {}", task.targetLevel(), e);
+            log.atError()
+                .addKeyValue("targetLevel", task.targetLevel())
+                .addKeyValue("inputFiles", task.inputs().size())
+                .setCause(e)
+                .log("Compaction failed");
             cleanupOutputs(completedOutputs);
             return new CompactionResult.Failure(task, e);
         } finally {
@@ -102,7 +115,10 @@ public final class Compactor {
             try {
                 sstableStore.delete(desc.id());
             } catch (IOException e) {
-                logger.warn("Failed to clean up compaction output: {}", desc.id(), e);
+                log.atWarn()
+                    .addKeyValue("sstableId", desc.id())
+                    .setCause(e)
+                    .log("Failed to clean up compaction output");
             }
         }
     }
@@ -112,7 +128,9 @@ public final class Compactor {
             try {
                 table.close();
             } catch (Exception e) {
-                logger.warn("Failed to close SSTable", e);
+                log.atWarn()
+                    .setCause(e)
+                    .log("Failed to close SSTable");
             }
         }
     }

@@ -31,7 +31,7 @@ import java.util.stream.Stream;
 
 public final class SSTableStore implements AutoCloseable {
 
-    private static final Logger logger = LoggerFactory.getLogger(SSTableStore.class);
+    private static final Logger log = LoggerFactory.getLogger(SSTableStore.class);
     private static final Pattern SSTABLE_PATTERN = Pattern.compile("(\\d{6})\\.sst");
     private static final int MAX_ACQUIRE_ATTEMPTS = 100;
     private static final long INITIAL_BACKOFF_NANOS = 100;
@@ -266,7 +266,10 @@ public final class SSTableStore implements AutoCloseable {
                 deleteOldSSTables(task.inputs());
             }
             case CompactionResult.Failure(var task, var cause) ->
-                logger.error("Compaction failed for task targeting level {}", task.targetLevel(), cause);
+                log.atError()
+                    .addKeyValue("targetLevel", task.targetLevel())
+                    .setCause(cause)
+                    .log("Compaction failed");
         }
     }
 
@@ -275,7 +278,9 @@ public final class SSTableStore implements AutoCloseable {
             try {
                 delete(desc.id());
             } catch (IOException e) {
-                logger.warn("Failed to delete old SSTable: {}", desc.id());
+                log.atWarn()
+                    .addKeyValue("sstableId", desc.id())
+                    .log("Failed to delete old SSTable");
             }
         }
     }

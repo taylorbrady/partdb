@@ -22,13 +22,15 @@ subprojects {
     }
 
     dependencies {
-        val slf4jVersion = "2.0.16"
-        val logbackVersion = "1.5.12"
+        val slf4jVersion = "2.0.17"
+        val logbackVersion = "1.5.23"
+        val logstashEncoderVersion = "8.1"
         val junitVersion = "5.11.3"
         val assertjVersion = "3.27.0"
 
         implementation("org.slf4j:slf4j-api:$slf4jVersion")
         runtimeOnly("ch.qos.logback:logback-classic:$logbackVersion")
+        runtimeOnly("net.logstash.logback:logstash-logback-encoder:$logstashEncoderVersion")
 
         testImplementation("org.junit.jupiter:junit-jupiter-api:$junitVersion")
         testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:$junitVersion")
