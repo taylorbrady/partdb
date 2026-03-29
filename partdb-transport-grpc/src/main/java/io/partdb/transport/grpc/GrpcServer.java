@@ -1,4 +1,4 @@
-package io.partdb.server.grpc;
+package io.partdb.transport.grpc;
 
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
@@ -6,24 +6,26 @@ import io.partdb.node.KvStore;
 import io.partdb.node.Lessor;
 import io.partdb.node.Proposer;
 import io.partdb.node.raft.RaftNode;
+import io.partdb.transport.grpc.cluster.ClusterServiceImpl;
+import io.partdb.transport.grpc.kv.KvServiceImpl;
 
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-public final class KvServer implements AutoCloseable {
+public final class GrpcServer implements AutoCloseable {
     private final Server server;
-    private final KvServerConfig config;
+    private final GrpcServerConfig config;
 
-    public KvServer(
+    public GrpcServer(
         Proposer proposer,
         Lessor lessor,
         KvStore kvStore,
         RaftNode raftNode,
         Map<String, String> peerAddresses,
         String selfAddress,
-        KvServerConfig config
+        GrpcServerConfig config
     ) {
         this.config = config;
         this.server = ServerBuilder.forPort(config.port())

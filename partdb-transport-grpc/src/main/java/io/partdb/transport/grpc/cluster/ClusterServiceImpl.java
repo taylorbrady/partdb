@@ -1,17 +1,17 @@
-package io.partdb.server.grpc;
+package io.partdb.transport.grpc.cluster;
 
 import io.grpc.stub.StreamObserver;
+import io.partdb.grpc.cluster.proto.ClusterProto.Error;
+import io.partdb.grpc.cluster.proto.ClusterProto.ErrorCode;
+import io.partdb.grpc.cluster.proto.ClusterProto.Member;
+import io.partdb.grpc.cluster.proto.ClusterProto.MemberListRequest;
+import io.partdb.grpc.cluster.proto.ClusterProto.MemberListResponse;
+import io.partdb.grpc.cluster.proto.ClusterProto.MemberRole;
+import io.partdb.grpc.cluster.proto.ClusterProto.NodeRole;
+import io.partdb.grpc.cluster.proto.ClusterProto.StatusRequest;
+import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
+import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
 import io.partdb.node.raft.RaftNode;
-import io.partdb.protocol.cluster.proto.ClusterProto.Error;
-import io.partdb.protocol.cluster.proto.ClusterProto.ErrorCode;
-import io.partdb.protocol.cluster.proto.ClusterProto.Member;
-import io.partdb.protocol.cluster.proto.ClusterProto.MemberListRequest;
-import io.partdb.protocol.cluster.proto.ClusterProto.MemberListResponse;
-import io.partdb.protocol.cluster.proto.ClusterProto.MemberRole;
-import io.partdb.protocol.cluster.proto.ClusterProto.NodeRole;
-import io.partdb.protocol.cluster.proto.ClusterProto.StatusRequest;
-import io.partdb.protocol.cluster.proto.ClusterProto.StatusResponse;
-import io.partdb.protocol.cluster.proto.ClusterServiceGrpc;
 import io.partdb.raft.Membership;
 import io.partdb.raft.Role;
 

@@ -1,4 +1,4 @@
-package io.partdb.server.raft;
+package io.partdb.transport.grpc.raft;
 
 import io.grpc.Context;
 import io.grpc.Contexts;
@@ -9,8 +9,8 @@ import io.grpc.ServerInterceptor;
 import io.grpc.stub.StreamObserver;
 import io.partdb.raft.RaftMessage;
 import io.partdb.raft.RaftTransport;
-import io.partdb.server.raft.proto.RaftProto;
-import io.partdb.server.raft.proto.RaftServiceGrpc;
+import io.partdb.transport.grpc.raft.proto.RaftProto;
+import io.partdb.transport.grpc.raft.proto.RaftServiceGrpc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

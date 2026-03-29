@@ -3,14 +3,16 @@ package io.partdb.client;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
-import io.partdb.protocol.cluster.proto.ClusterProto.ErrorCode;
-import io.partdb.protocol.cluster.proto.ClusterProto.MemberListRequest;
-import io.partdb.protocol.cluster.proto.ClusterProto.MemberListResponse;
-import io.partdb.protocol.cluster.proto.ClusterProto.RequestHeader;
-import io.partdb.protocol.cluster.proto.ClusterProto.StatusRequest;
-import io.partdb.protocol.cluster.proto.ClusterProto.StatusResponse;
-import io.partdb.protocol.cluster.proto.ClusterServiceGrpc;
+import io.partdb.grpc.cluster.proto.ClusterProto.ErrorCode;
+import io.partdb.grpc.cluster.proto.ClusterProto.MemberListRequest;
+import io.partdb.grpc.cluster.proto.ClusterProto.MemberListResponse;
+import io.partdb.grpc.cluster.proto.ClusterProto.RequestHeader;
+import io.partdb.grpc.cluster.proto.ClusterProto.StatusRequest;
+import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
+import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
 
+import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -33,12 +35,12 @@ public final class ClusterClient implements AutoCloseable {
         this.timeoutMs = timeoutMs;
     }
 
-    public CompletableFuture<StatusResponse> status() {
+    public CompletableFuture<ClusterStatus> status() {
         var request = StatusRequest.newBuilder()
             .setHeader(buildHeader())
             .build();
 
-        var future = new CompletableFuture<StatusResponse>();
+        var future = new CompletableFuture<ClusterStatus>();
         stub.withDeadlineAfter(timeoutMs, TimeUnit.MILLISECONDS)
             .status(request, new StreamObserver<>() {
                 @Override
@@ -47,7 +49,7 @@ public final class ClusterClient implements AutoCloseable {
                         future.completeExceptionally(
                             new ClusterClientException(response.getError().getMessage()));
                     } else {
-                        future.complete(response);
+                        future.complete(toClusterStatus(response));
                     }
                 }
 
@@ -62,12 +64,12 @@ public final class ClusterClient implements AutoCloseable {
         return future;
     }
 
-    public CompletableFuture<MemberListResponse> memberList() {
+    public CompletableFuture<ClusterMembership> memberList() {
         var request = MemberListRequest.newBuilder()
             .setHeader(buildHeader())
             .build();
 
-        var future = new CompletableFuture<MemberListResponse>();
+        var future = new CompletableFuture<ClusterMembership>();
         stub.withDeadlineAfter(timeoutMs, TimeUnit.MILLISECONDS)
             .memberList(request, new StreamObserver<>() {
                 @Override
@@ -76,7 +78,7 @@ public final class ClusterClient implements AutoCloseable {
                         future.completeExceptionally(
                             new ClusterClientException(response.getError().getMessage()));
                     } else {
-                        future.complete(response);
+                        future.complete(toClusterMembership(response));
                     }
                 }
 
@@ -89,6 +91,57 @@ public final class ClusterClient implements AutoCloseable {
                 public void onCompleted() {}
             });
         return future;
+    }
+
+    private static ClusterStatus toClusterStatus(StatusResponse response) {
+        return new ClusterStatus(
+            response.getNodeId(),
+            toClusterNodeRole(response.getRole()),
+            response.getTerm(),
+            emptyToOptional(response.getLeaderId()),
+            response.getCommitIndex(),
+            response.getLastAppliedIndex(),
+            response.getIsRunning()
+        );
+    }
+
+    private static ClusterMembership toClusterMembership(MemberListResponse response) {
+        List<ClusterMember> members = response.getMembersList().stream()
+            .map(member -> new ClusterMember(
+                member.getNodeId(),
+                emptyToOptional(member.getAddress()),
+                toClusterMemberRole(member.getRole()),
+                member.getIsLeader(),
+                member.getIsSelf()
+            ))
+            .toList();
+
+        return new ClusterMembership(
+            emptyToOptional(response.getLeaderId()),
+            members
+        );
+    }
+
+    private static ClusterNodeRole toClusterNodeRole(io.partdb.grpc.cluster.proto.ClusterProto.NodeRole role) {
+        return switch (role) {
+            case FOLLOWER -> ClusterNodeRole.FOLLOWER;
+            case PRE_CANDIDATE -> ClusterNodeRole.PRE_CANDIDATE;
+            case CANDIDATE -> ClusterNodeRole.CANDIDATE;
+            case LEADER -> ClusterNodeRole.LEADER;
+            case UNRECOGNIZED -> throw new IllegalArgumentException("Unknown node role: " + role);
+        };
+    }
+
+    private static ClusterMemberRole toClusterMemberRole(io.partdb.grpc.cluster.proto.ClusterProto.MemberRole role) {
+        return switch (role) {
+            case VOTER -> ClusterMemberRole.VOTER;
+            case LEARNER -> ClusterMemberRole.LEARNER;
+            case UNRECOGNIZED -> throw new IllegalArgumentException("Unknown member role: " + role);
+        };
+    }
+
+    private static Optional<String> emptyToOptional(String value) {
+        return value.isEmpty() ? Optional.empty() : Optional.of(value);
     }
 
     private RequestHeader buildHeader() {

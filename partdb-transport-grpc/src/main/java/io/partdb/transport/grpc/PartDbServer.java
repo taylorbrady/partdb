@@ -1,11 +1,10 @@
-package io.partdb.server;
+package io.partdb.transport.grpc;
 
 import io.partdb.raft.RaftStorage;
 import io.partdb.raft.RaftTransport;
 import io.partdb.node.PartDbNode;
-import io.partdb.server.grpc.KvServer;
-import io.partdb.server.raft.GrpcRaftTransport;
-import io.partdb.server.raft.GrpcRaftTransportConfig;
+import io.partdb.transport.grpc.raft.GrpcRaftTransport;
+import io.partdb.transport.grpc.raft.GrpcRaftTransportConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,26 +15,26 @@ public final class PartDbServer implements AutoCloseable {
 
     private final PartDbServerConfig config;
     private final PartDbNode node;
-    private final KvServer kvServer;
+    private final GrpcServer grpcServer;
 
     public PartDbServer(PartDbServerConfig config) {
         this(config, null, null);
     }
 
-    public PartDbServer(PartDbServerConfig config, RaftTransport transport, RaftStorage storage) {
+    PartDbServer(PartDbServerConfig config, RaftTransport transport, RaftStorage storage) {
         this.config = config;
         RaftTransport raftTransport = transport != null ? transport : createDefaultTransport();
         this.node = new PartDbNode(config.nodeConfig(), raftTransport, storage);
 
-        String selfAddress = config.nodeId() + ":" + config.kvServerConfig().port();
-        this.kvServer = new KvServer(
+        String selfAddress = config.nodeId() + ":" + config.grpcPort();
+        this.grpcServer = new GrpcServer(
             node.proposer(),
             node.lessor(),
             node.kvStore(),
             node.raftNode(),
             config.peerAddresses(),
             selfAddress,
-            config.kvServerConfig()
+            config.grpcServerConfig()
         );
     }
 
@@ -52,10 +51,10 @@ public final class PartDbServer implements AutoCloseable {
         log.atInfo()
             .addKeyValue("nodeId", config.nodeId())
             .log("Starting PartDB server");
-        kvServer.start();
+        grpcServer.start();
         log.atInfo()
             .addKeyValue("nodeId", config.nodeId())
-            .addKeyValue("kvPort", config.kvServerConfig().port())
+            .addKeyValue("grpcPort", config.grpcPort())
             .addKeyValue("raftPort", config.raftPort())
             .log("PartDB server started");
     }
@@ -65,7 +64,7 @@ public final class PartDbServer implements AutoCloseable {
         log.atInfo()
             .addKeyValue("nodeId", config.nodeId())
             .log("Shutting down PartDB server");
-        kvServer.close();
+        grpcServer.close();
         node.close();
         log.atInfo()
             .addKeyValue("nodeId", config.nodeId())

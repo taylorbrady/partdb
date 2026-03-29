@@ -1,4 +1,4 @@
-package io.partdb.server.raft;
+package io.partdb.transport.grpc.raft;
 
 import java.util.Map;
 

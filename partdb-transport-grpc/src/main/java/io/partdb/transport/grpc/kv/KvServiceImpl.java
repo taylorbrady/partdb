@@ -1,36 +1,37 @@
-package io.partdb.server.grpc;
+package io.partdb.transport.grpc.kv;
 
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
+import io.partdb.grpc.kv.proto.KvProto;
+import io.partdb.grpc.kv.proto.KvProto.BatchGetRequest;
+import io.partdb.grpc.kv.proto.KvProto.BatchGetResponse;
+import io.partdb.grpc.kv.proto.KvProto.BatchWriteRequest;
+import io.partdb.grpc.kv.proto.KvProto.BatchWriteResponse;
+import io.partdb.grpc.kv.proto.KvProto.DeleteRequest;
+import io.partdb.grpc.kv.proto.KvProto.DeleteResponse;
+import io.partdb.grpc.kv.proto.KvProto.Error;
+import io.partdb.grpc.kv.proto.KvProto.ErrorCode;
+import io.partdb.grpc.kv.proto.KvProto.GetRequest;
+import io.partdb.grpc.kv.proto.KvProto.GetResponse;
+import io.partdb.grpc.kv.proto.KvProto.GrantLeaseRequest;
+import io.partdb.grpc.kv.proto.KvProto.GrantLeaseResponse;
+import io.partdb.grpc.kv.proto.KvProto.KeepAliveLeaseRequest;
+import io.partdb.grpc.kv.proto.KvProto.KeepAliveLeaseResponse;
+import io.partdb.grpc.kv.proto.KvProto.KeyValue;
+import io.partdb.grpc.kv.proto.KvProto.PutRequest;
+import io.partdb.grpc.kv.proto.KvProto.PutResponse;
+import io.partdb.grpc.kv.proto.KvProto.ReadConsistency;
+import io.partdb.grpc.kv.proto.KvProto.RequestHeader;
+import io.partdb.grpc.kv.proto.KvProto.RevokeLeaseRequest;
+import io.partdb.grpc.kv.proto.KvProto.RevokeLeaseResponse;
+import io.partdb.grpc.kv.proto.KvProto.ScanRequest;
+import io.partdb.grpc.kv.proto.KvProto.ScanResponse;
+import io.partdb.grpc.kv.proto.KvServiceGrpc;
 import io.partdb.node.KvStore;
 import io.partdb.node.Lessor;
 import io.partdb.node.Proposer;
 import io.partdb.raft.RaftException;
-import io.partdb.protocol.kv.proto.KvProto;
-import io.partdb.protocol.kv.proto.KvProto.BatchGetRequest;
-import io.partdb.protocol.kv.proto.KvProto.BatchGetResponse;
-import io.partdb.protocol.kv.proto.KvProto.BatchWriteRequest;
-import io.partdb.protocol.kv.proto.KvProto.BatchWriteResponse;
-import io.partdb.protocol.kv.proto.KvProto.DeleteRequest;
-import io.partdb.protocol.kv.proto.KvProto.DeleteResponse;
-import io.partdb.protocol.kv.proto.KvProto.Error;
-import io.partdb.protocol.kv.proto.KvProto.ErrorCode;
-import io.partdb.protocol.kv.proto.KvProto.GetRequest;
-import io.partdb.protocol.kv.proto.KvProto.GetResponse;
-import io.partdb.protocol.kv.proto.KvProto.GrantLeaseRequest;
-import io.partdb.protocol.kv.proto.KvProto.GrantLeaseResponse;
-import io.partdb.protocol.kv.proto.KvProto.KeepAliveLeaseRequest;
-import io.partdb.protocol.kv.proto.KvProto.KeepAliveLeaseResponse;
-import io.partdb.protocol.kv.proto.KvProto.KeyValue;
-import io.partdb.protocol.kv.proto.KvProto.PutRequest;
-import io.partdb.protocol.kv.proto.KvProto.PutResponse;
-import io.partdb.protocol.kv.proto.KvProto.ReadConsistency;
-import io.partdb.protocol.kv.proto.KvProto.RequestHeader;
-import io.partdb.protocol.kv.proto.KvProto.RevokeLeaseRequest;
-import io.partdb.protocol.kv.proto.KvProto.RevokeLeaseResponse;
-import io.partdb.protocol.kv.proto.KvProto.ScanRequest;
-import io.partdb.protocol.kv.proto.KvProto.ScanResponse;
-import io.partdb.protocol.kv.proto.KvServiceGrpc;
+import io.partdb.transport.grpc.GrpcServerConfig;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -48,9 +49,9 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     private final Proposer proposer;
     private final Lessor lessor;
     private final KvStore kvStore;
-    private final KvServerConfig config;
+    private final GrpcServerConfig config;
 
-    public KvServiceImpl(Proposer proposer, Lessor lessor, KvStore kvStore, KvServerConfig config) {
+    public KvServiceImpl(Proposer proposer, Lessor lessor, KvStore kvStore, GrpcServerConfig config) {
         this.proposer = proposer;
         this.lessor = lessor;
         this.kvStore = kvStore;

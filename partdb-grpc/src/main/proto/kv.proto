@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package io.partdb.protocol.kv;
+package io.partdb.grpc.kv;
 
-option java_package = "io.partdb.protocol.kv.proto";
+option java_package = "io.partdb.grpc.kv.proto";
 option java_outer_classname = "KvProto";
 option java_multiple_files = false;
 

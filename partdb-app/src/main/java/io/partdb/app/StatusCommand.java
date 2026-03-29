@@ -1,7 +1,7 @@
 package io.partdb.app;
 
+import io.partdb.client.ClusterStatus;
 import io.partdb.client.ClusterClient;
-import io.partdb.protocol.cluster.proto.ClusterProto.StatusResponse;
 
 import java.io.PrintStream;
 import java.util.concurrent.ExecutionException;
@@ -47,7 +47,7 @@ final class StatusCommand {
         }
 
         try (var client = new ClusterClient(endpoint, TIMEOUT_SECONDS * 1000)) {
-            StatusResponse response = client.status().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            ClusterStatus response = client.status().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             if (format == OutputFormat.JSON) {
                 printJson(response, out);
@@ -71,26 +71,26 @@ final class StatusCommand {
         }
     }
 
-    private static void printText(StatusResponse response, PrintStream out) {
-        out.println("Node ID:        " + response.getNodeId());
-        out.println("Role:           " + response.getRole().name());
-        out.println("Term:           " + response.getTerm());
-        out.println("Leader:         " + (response.getLeaderId().isEmpty() ? "(none)" : response.getLeaderId()));
-        out.println("Commit Index:   " + response.getCommitIndex());
-        out.println("Applied Index:  " + response.getLastAppliedIndex());
-        out.println("Running:        " + response.getIsRunning());
+    private static void printText(ClusterStatus response, PrintStream out) {
+        out.println("Node ID:        " + response.nodeId());
+        out.println("Role:           " + response.role().name());
+        out.println("Term:           " + response.term());
+        out.println("Leader:         " + response.leaderId().orElse("(none)"));
+        out.println("Commit Index:   " + response.commitIndex());
+        out.println("Applied Index:  " + response.lastAppliedIndex());
+        out.println("Running:        " + response.running());
     }
 
-    private static void printJson(StatusResponse response, PrintStream out) {
+    private static void printJson(ClusterStatus response, PrintStream out) {
         out.print("{");
-        out.print("\"nodeId\":\"" + response.getNodeId() + "\",");
-        out.print("\"role\":\"" + response.getRole().name() + "\",");
-        out.print("\"term\":" + response.getTerm() + ",");
+        out.print("\"nodeId\":\"" + response.nodeId() + "\",");
+        out.print("\"role\":\"" + response.role().name() + "\",");
+        out.print("\"term\":" + response.term() + ",");
         out.print("\"leaderId\":"
-            + (response.getLeaderId().isEmpty() ? "null" : "\"" + response.getLeaderId() + "\"") + ",");
-        out.print("\"commitIndex\":" + response.getCommitIndex() + ",");
-        out.print("\"lastAppliedIndex\":" + response.getLastAppliedIndex() + ",");
-        out.print("\"isRunning\":" + response.getIsRunning());
+            + response.leaderId().map(id -> "\"" + id + "\"").orElse("null") + ",");
+        out.print("\"commitIndex\":" + response.commitIndex() + ",");
+        out.print("\"lastAppliedIndex\":" + response.lastAppliedIndex() + ",");
+        out.print("\"isRunning\":" + response.running());
         out.println("}");
     }
 

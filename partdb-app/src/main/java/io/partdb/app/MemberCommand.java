@@ -1,8 +1,8 @@
 package io.partdb.app;
 
 import io.partdb.client.ClusterClient;
-import io.partdb.protocol.cluster.proto.ClusterProto.Member;
-import io.partdb.protocol.cluster.proto.ClusterProto.MemberListResponse;
+import io.partdb.client.ClusterMember;
+import io.partdb.client.ClusterMembership;
 
 import java.io.PrintStream;
 import java.util.Arrays;
@@ -75,7 +75,7 @@ final class MemberCommand {
         }
 
         try (var client = new ClusterClient(endpoint, TIMEOUT_SECONDS * 1000)) {
-            MemberListResponse response = client.memberList().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            ClusterMembership response = client.memberList().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             if (format == OutputFormat.JSON) {
                 printJson(response, out);
@@ -99,34 +99,34 @@ final class MemberCommand {
         }
     }
 
-    private static void printText(MemberListResponse response, PrintStream out) {
+    private static void printText(ClusterMembership response, PrintStream out) {
         out.printf("%-12s %-24s %-8s %-8s%n", "NODE ID", "ADDRESS", "ROLE", "STATUS");
-        for (Member member : response.getMembersList()) {
-            String status = member.getIsLeader() ? "leader" : (member.getIsSelf() ? "self" : "");
+        for (ClusterMember member : response.members()) {
+            String status = member.leader() ? "leader" : (member.self() ? "self" : "");
             out.printf("%-12s %-24s %-8s %-8s%n",
-                member.getNodeId(),
-                member.getAddress().isEmpty() ? "(unknown)" : member.getAddress(),
-                member.getRole().name().toLowerCase(),
+                member.nodeId(),
+                member.address().orElse("(unknown)"),
+                member.role().name().toLowerCase(),
                 status);
         }
     }
 
-    private static void printJson(MemberListResponse response, PrintStream out) {
+    private static void printJson(ClusterMembership response, PrintStream out) {
         out.print("{\"leaderId\":");
-        out.print(response.getLeaderId().isEmpty() ? "null" : "\"" + response.getLeaderId() + "\"");
+        out.print(response.leaderId().map(id -> "\"" + id + "\"").orElse("null"));
         out.print(",\"members\":[");
-        var members = response.getMembersList();
+        var members = response.members();
         for (int i = 0; i < members.size(); i++) {
-            Member member = members.get(i);
+            ClusterMember member = members.get(i);
             if (i > 0) {
                 out.print(",");
             }
-            out.print("{\"nodeId\":\"" + member.getNodeId() + "\"");
+            out.print("{\"nodeId\":\"" + member.nodeId() + "\"");
             out.print(",\"address\":"
-                + (member.getAddress().isEmpty() ? "null" : "\"" + member.getAddress() + "\""));
-            out.print(",\"role\":\"" + member.getRole().name().toLowerCase() + "\"");
-            out.print(",\"isLeader\":" + member.getIsLeader());
-            out.print(",\"isSelf\":" + member.getIsSelf() + "}");
+                + member.address().map(address -> "\"" + address + "\"").orElse("null"));
+            out.print(",\"role\":\"" + member.role().name().toLowerCase() + "\"");
+            out.print(",\"isLeader\":" + member.leader());
+            out.print(",\"isSelf\":" + member.self() + "}");
         }
         out.println("]}");
     }

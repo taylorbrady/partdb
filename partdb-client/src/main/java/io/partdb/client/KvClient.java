@@ -4,8 +4,8 @@ import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
-import io.partdb.protocol.kv.proto.KvProto;
-import io.partdb.protocol.kv.proto.KvServiceGrpc;
+import io.partdb.grpc.kv.proto.KvProto;
+import io.partdb.grpc.kv.proto.KvServiceGrpc;
 
 import java.time.Duration;
 import java.util.ArrayList;

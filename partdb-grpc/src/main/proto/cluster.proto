@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package io.partdb.protocol.cluster;
+package io.partdb.grpc.cluster;
 
-option java_package = "io.partdb.protocol.cluster.proto";
+option java_package = "io.partdb.grpc.cluster.proto";
 option java_outer_classname = "ClusterProto";
 option java_multiple_files = false;
 

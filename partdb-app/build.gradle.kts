@@ -3,7 +3,7 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":partdb-server"))
+    implementation(project(":partdb-transport-grpc"))
     implementation(project(":partdb-client"))
 
     val logbackVersion = "1.5.23"

@@ -1,10 +1,10 @@
-package io.partdb.server.raft;
+package io.partdb.transport.grpc.raft;
 
 import com.google.protobuf.ByteString;
 import io.partdb.raft.LogEntry;
 import io.partdb.raft.Membership;
 import io.partdb.raft.RaftMessage;
-import io.partdb.server.raft.proto.RaftProto;
+import io.partdb.transport.grpc.raft.proto.RaftProto;
 
 import java.util.HashSet;
 import java.util.List;

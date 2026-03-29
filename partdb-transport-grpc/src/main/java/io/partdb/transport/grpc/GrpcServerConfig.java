@@ -1,14 +1,14 @@
-package io.partdb.server.grpc;
+package io.partdb.transport.grpc;
 
 import java.time.Duration;
 import java.util.Objects;
 
-public record KvServerConfig(
+public record GrpcServerConfig(
     int port,
     Duration defaultTimeout,
     Duration shutdownGracePeriod
 ) {
-    public KvServerConfig {
+    public GrpcServerConfig {
         if (port <= 0 || port > 65535) {
             throw new IllegalArgumentException("port must be between 1 and 65535");
         }
@@ -22,8 +22,8 @@ public record KvServerConfig(
         }
     }
 
-    public static KvServerConfig defaultConfig(int port) {
-        return new KvServerConfig(
+    public static GrpcServerConfig defaultConfig(int port) {
+        return new GrpcServerConfig(
             port,
             Duration.ofSeconds(30),
             Duration.ofSeconds(5)
