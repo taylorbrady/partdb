@@ -1,7 +1,5 @@
 package io.partdb.storage;
 
-import io.partdb.common.Slice;
-
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;

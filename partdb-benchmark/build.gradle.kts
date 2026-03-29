@@ -6,7 +6,6 @@ plugins {
 val jmhVersion = "1.37"
 
 dependencies {
-    implementation(project(":partdb-common"))
     implementation(project(":partdb-storage"))
     implementation("org.openjdk.jmh:jmh-core:$jmhVersion")
     annotationProcessor("org.openjdk.jmh:jmh-generator-annprocess:$jmhVersion")

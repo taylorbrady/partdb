@@ -1,6 +1,6 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.common.Slice;
+import io.partdb.storage.Slice;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;

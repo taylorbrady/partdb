@@ -1,4 +1,4 @@
-package io.partdb.common;
+package io.partdb.storage;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;

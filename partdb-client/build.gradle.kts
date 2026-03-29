@@ -1,5 +1,4 @@
 dependencies {
-    implementation(project(":partdb-common"))
     implementation(project(":partdb-protocol"))
 
     val grpcVersion = "1.75.0"

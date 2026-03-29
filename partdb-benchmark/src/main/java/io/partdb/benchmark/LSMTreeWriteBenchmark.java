@@ -1,8 +1,8 @@
 package io.partdb.benchmark;
 
-import io.partdb.common.Slice;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
+import io.partdb.storage.Slice;
 import org.openjdk.jmh.annotations.*;
 
 import java.io.IOException;

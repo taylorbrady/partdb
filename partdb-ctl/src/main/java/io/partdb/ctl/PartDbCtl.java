@@ -25,6 +25,8 @@ public final class PartDbCtl {
             case "get" -> GetCommand.run(commandArgs, out, err);
             case "put" -> PutCommand.run(commandArgs, out, err);
             case "delete" -> DeleteCommand.run(commandArgs, out, err);
+            case "status" -> StatusCommand.run(commandArgs, out, err);
+            case "member" -> MemberCommand.run(commandArgs, out, err);
             case "help", "--help", "-h" -> {
                 printUsage(out);
                 yield 0;
@@ -45,15 +47,19 @@ public final class PartDbCtl {
         out.println("  get <key>              Get a value by key");
         out.println("  put <key> <value>      Put a key-value pair");
         out.println("  delete <key>           Delete a key");
+        out.println("  status                 Show node status");
+        out.println("  member <subcommand>    Manage cluster members");
         out.println("  help                   Show this help message");
         out.println();
         out.println("Options:");
-        out.println("  --endpoint <host:port>  Server endpoint (default: localhost:8101)");
+        out.println("  -e, --endpoint <host:port>  Server endpoint (default: localhost:8101)");
+        out.println("  -o, --output <format>       Output format: text, json (default: text)");
         out.println();
         out.println("Examples:");
         out.println("  partdbctl put hello world");
         out.println("  partdbctl get hello");
-        out.println("  partdbctl delete hello");
-        out.println("  partdbctl get hello --endpoint node1:8101");
+        out.println("  partdbctl status");
+        out.println("  partdbctl status -o json");
+        out.println("  partdbctl member list");
     }
 }

@@ -1,6 +1,6 @@
 package io.partdb.storage.compaction;
 
-import io.partdb.common.Slice;
+import io.partdb.storage.Slice;
 import io.partdb.storage.manifest.Manifest;
 import io.partdb.storage.sstable.SSTableConfig;
 import io.partdb.storage.sstable.SSTableDescriptor;

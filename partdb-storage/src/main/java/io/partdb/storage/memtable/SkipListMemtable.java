@@ -1,6 +1,6 @@
 package io.partdb.storage.memtable;
 
-import io.partdb.common.Slice;
+import io.partdb.storage.Slice;
 import io.partdb.storage.Mutation;
 
 import java.util.Iterator;

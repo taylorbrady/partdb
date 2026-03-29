@@ -182,6 +182,14 @@ public final class RaftNode implements AutoCloseable {
         return applyTracker.lastApplied();
     }
 
+    public Role role() {
+        return lastKnownRole;
+    }
+
+    public Membership membership() {
+        return raft.membership();
+    }
+
     @Override
     public void close() {
         running = false;

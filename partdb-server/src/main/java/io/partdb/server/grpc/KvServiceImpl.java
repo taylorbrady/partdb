@@ -2,7 +2,6 @@ package io.partdb.server.grpc;
 
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
-import io.partdb.common.Slice;
 import io.partdb.raft.RaftException;
 import io.partdb.server.KvStore;
 import io.partdb.server.Lessor;
@@ -32,6 +31,7 @@ import io.partdb.protocol.kv.proto.KvProto.RevokeLeaseResponse;
 import io.partdb.protocol.kv.proto.KvProto.ScanRequest;
 import io.partdb.protocol.kv.proto.KvProto.ScanResponse;
 import io.partdb.protocol.kv.proto.KvServiceGrpc;
+import io.partdb.storage.Slice;
 
 import java.time.Duration;
 import java.util.ArrayList;

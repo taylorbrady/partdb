@@ -1,6 +1,5 @@
 package io.partdb.storage;
 
-import io.partdb.common.Slice;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 

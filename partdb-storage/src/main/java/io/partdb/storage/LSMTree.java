@@ -1,7 +1,5 @@
 package io.partdb.storage;
 
-import io.partdb.common.Entry;
-import io.partdb.common.Slice;
 import io.partdb.storage.manifest.Manifest;
 import io.partdb.storage.memtable.Memtable;
 import io.partdb.storage.memtable.SkipListMemtable;

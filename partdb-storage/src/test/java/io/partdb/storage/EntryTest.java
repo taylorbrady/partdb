@@ -1,4 +1,4 @@
-package io.partdb.common;
+package io.partdb.storage;
 
 import org.junit.jupiter.api.Test;
 

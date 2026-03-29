@@ -1,7 +1,6 @@
 rootProject.name = "partdb"
 
 include(
-    "partdb-common",
     "partdb-storage",
     "partdb-raft",
     "partdb-protocol",

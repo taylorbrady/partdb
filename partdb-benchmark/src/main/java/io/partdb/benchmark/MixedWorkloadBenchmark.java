@@ -1,9 +1,9 @@
 package io.partdb.benchmark;
 
-import io.partdb.common.Entry;
-import io.partdb.common.Slice;
+import io.partdb.storage.Entry;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
+import io.partdb.storage.Slice;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 

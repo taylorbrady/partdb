@@ -1,6 +1,6 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.common.Slice;
+import io.partdb.storage.Slice;
 import io.partdb.storage.StorageException;
 
 import java.lang.foreign.MemorySegment;

@@ -5,8 +5,10 @@ import io.grpc.ServerBuilder;
 import io.partdb.server.KvStore;
 import io.partdb.server.Lessor;
 import io.partdb.server.Proposer;
+import io.partdb.server.raft.RaftNode;
 
 import java.io.IOException;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
@@ -14,10 +16,19 @@ public final class KvServer implements AutoCloseable {
     private final Server server;
     private final KvServerConfig config;
 
-    public KvServer(Proposer proposer, Lessor lessor, KvStore kvStore, KvServerConfig config) {
+    public KvServer(
+        Proposer proposer,
+        Lessor lessor,
+        KvStore kvStore,
+        RaftNode raftNode,
+        Map<String, String> peerAddresses,
+        String selfAddress,
+        KvServerConfig config
+    ) {
         this.config = config;
         this.server = ServerBuilder.forPort(config.port())
             .addService(new KvServiceImpl(proposer, lessor, kvStore, config))
+            .addService(new ClusterServiceImpl(raftNode, peerAddresses, selfAddress))
             .executor(Executors.newVirtualThreadPerTaskExecutor())
             .build();
     }

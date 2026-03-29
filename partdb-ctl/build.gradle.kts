@@ -3,8 +3,8 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":partdb-common"))
     implementation(project(":partdb-client"))
+    implementation(project(":partdb-protocol"))
 }
 
 application {

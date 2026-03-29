@@ -1,11 +1,11 @@
 package io.partdb.server;
 
-import io.partdb.common.Leases;
 import io.partdb.server.raft.RaftNode;
 import io.partdb.server.command.proto.CommandProto.Command;
 import io.partdb.server.command.proto.CommandProto.GrantLease;
 import io.partdb.server.command.proto.CommandProto.KeepAliveLease;
 import io.partdb.server.command.proto.CommandProto.RevokeLease;
+import io.partdb.server.lease.Leases;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

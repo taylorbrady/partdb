@@ -1,13 +1,13 @@
 package io.partdb.server;
 
 import com.google.protobuf.InvalidProtocolBufferException;
-import io.partdb.common.Entry;
-import io.partdb.common.Leases;
-import io.partdb.common.Slice;
 import io.partdb.raft.StateMachine;
 import io.partdb.server.command.proto.CommandProto.Command;
+import io.partdb.server.lease.Leases;
+import io.partdb.storage.Entry;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
+import io.partdb.storage.Slice;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

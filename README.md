@@ -15,8 +15,7 @@ In active development. Core functionality is implemented; working toward product
 
 ## Modules
 
-- **partdb-common**: Core types (Slice, Entry, Lease, HybridClock)
-- **partdb-storage**: LSM storage engine with bloom filters and block cache
+- **partdb-storage**: LSM storage engine with bloom filters, block cache, and internal key/value primitives
 - **partdb-raft**: Raft consensus with log replication and snapshots
 - **partdb-protocol**: Protobuf definitions for KV and Raft RPCs
 - **partdb-server**: KV server with Raft integration and lease management

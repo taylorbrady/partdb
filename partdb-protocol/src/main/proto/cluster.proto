@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package io.partdb.protocol.cluster;
+
+option java_package = "io.partdb.protocol.cluster.proto";
+option java_outer_classname = "ClusterProto";
+option java_multiple_files = false;
+
+service ClusterService {
+  rpc Status(StatusRequest) returns (StatusResponse);
+  rpc MemberList(MemberListRequest) returns (MemberListResponse);
+}
+
+message RequestHeader {
+  string request_id = 1;
+  int64 timeout_ms = 2;
+}
+
+enum ErrorCode {
+  OK = 0;
+  INTERNAL_ERROR = 1;
+}
+
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+}
+
+enum NodeRole {
+  FOLLOWER = 0;
+  PRE_CANDIDATE = 1;
+  CANDIDATE = 2;
+  LEADER = 3;
+}
+
+enum MemberRole {
+  VOTER = 0;
+  LEARNER = 1;
+}
+
+message StatusRequest {
+  RequestHeader header = 1;
+}
+
+message StatusResponse {
+  Error error = 1;
+  string node_id = 2;
+  NodeRole role = 3;
+  int64 term = 4;
+  string leader_id = 5;
+  int64 commit_index = 6;
+  int64 last_applied_index = 7;
+  bool is_running = 8;
+}
+
+message MemberListRequest {
+  RequestHeader header = 1;
+}
+
+message Member {
+  string node_id = 1;
+  string address = 2;
+  MemberRole role = 3;
+  bool is_leader = 4;
+  bool is_self = 5;
+}
+
+message MemberListResponse {
+  Error error = 1;
+  repeated Member members = 2;
+  string leader_id = 3;
+}

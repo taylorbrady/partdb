@@ -54,7 +54,17 @@ public final class PartDbServer implements AutoCloseable {
 
         this.proposer = new Proposer(raftNode);
         this.lessor = new Lessor(raftNode, proposer, kvStore.leases());
-        this.kvServer = new KvServer(proposer, lessor, kvStore, config.kvServerConfig());
+
+        String selfAddress = config.nodeId() + ":" + config.kvServerConfig().port();
+        this.kvServer = new KvServer(
+            proposer,
+            lessor,
+            kvStore,
+            raftNode,
+            config.peerAddresses(),
+            selfAddress,
+            config.kvServerConfig()
+        );
     }
 
     private static Membership createMembership(PartDbServerConfig config) {

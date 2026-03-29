@@ -1,4 +1,6 @@
-package io.partdb.common;
+package io.partdb.server.lease;
+
+import io.partdb.storage.Slice;
 
 import java.nio.ByteBuffer;
 import java.time.Duration;

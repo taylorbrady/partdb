@@ -1,7 +1,5 @@
 package io.partdb.storage;
 
-import io.partdb.common.Slice;
-
 public sealed interface Mutation permits Mutation.Put, Mutation.Tombstone {
 
     Slice key();
