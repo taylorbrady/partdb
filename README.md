@@ -15,13 +15,13 @@ In active development. Core functionality is implemented; working toward product
 
 ## Modules
 
+- **partdb-node**: PartDB node runtime with KV state machine, lease handling, and durable Raft integration
 - **partdb-storage**: LSM storage engine with bloom filters, block cache, and internal key/value primitives
 - **partdb-raft**: Raft consensus with log replication and snapshots
 - **partdb-protocol**: Protobuf definitions for KV and Raft RPCs
-- **partdb-server**: KV server with Raft integration and lease management
+- **partdb-server**: gRPC server and Raft transport adapters on top of the node runtime
 - **partdb-client**: Java client library
-- **partdb-cli**: Server startup CLI
-- **partdb-ctl**: Admin tool (get, put, delete)
+- **partdb-app**: Unified executable for server startup and admin commands
 - **partdb-benchmark**: JMH benchmarks
 
 ## Building

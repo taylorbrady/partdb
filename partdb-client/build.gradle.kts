@@ -1,5 +1,9 @@
+plugins {
+    `java-library`
+}
+
 dependencies {
-    implementation(project(":partdb-protocol"))
+    api(project(":partdb-protocol"))
 
     val grpcVersion = "1.75.0"
     val protobufVersion = "4.33.1"

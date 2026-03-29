@@ -1,6 +1,7 @@
 package io.partdb.server.grpc;
 
 import io.grpc.stub.StreamObserver;
+import io.partdb.node.raft.RaftNode;
 import io.partdb.protocol.cluster.proto.ClusterProto.Error;
 import io.partdb.protocol.cluster.proto.ClusterProto.ErrorCode;
 import io.partdb.protocol.cluster.proto.ClusterProto.Member;
@@ -13,7 +14,6 @@ import io.partdb.protocol.cluster.proto.ClusterProto.StatusResponse;
 import io.partdb.protocol.cluster.proto.ClusterServiceGrpc;
 import io.partdb.raft.Membership;
 import io.partdb.raft.Role;
-import io.partdb.server.raft.RaftNode;
 
 import java.util.Map;
 

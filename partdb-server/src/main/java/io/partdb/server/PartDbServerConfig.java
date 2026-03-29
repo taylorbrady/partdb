@@ -1,38 +1,28 @@
 package io.partdb.server;
 
-import io.partdb.raft.RaftConfig;
+import io.partdb.node.PartDbNodeConfig;
 import io.partdb.server.grpc.KvServerConfig;
-import io.partdb.storage.LSMConfig;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 public record PartDbServerConfig(
-    String nodeId,
-    Map<String, String> peerAddresses,
-    Path dataDirectory,
-    LSMConfig storeConfig,
-    RaftConfig raftConfig,
-    Duration tickInterval,
+    PartDbNodeConfig nodeConfig,
     int raftPort,
     KvServerConfig kvServerConfig
 ) {
     public PartDbServerConfig {
-        Objects.requireNonNull(nodeId, "nodeId must not be null");
-        Objects.requireNonNull(peerAddresses, "peerAddresses must not be null");
-        Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
-        Objects.requireNonNull(storeConfig, "storeConfig must not be null");
-        Objects.requireNonNull(raftConfig, "raftConfig must not be null");
-        Objects.requireNonNull(tickInterval, "tickInterval must not be null");
+        Objects.requireNonNull(nodeConfig, "nodeConfig must not be null");
         Objects.requireNonNull(kvServerConfig, "kvServerConfig must not be null");
-        peerAddresses = Map.copyOf(peerAddresses);
     }
 
-    public Set<String> peerIds() {
-        return peerAddresses.keySet();
+    public String nodeId() {
+        return nodeConfig.nodeId();
+    }
+
+    public Map<String, String> peerAddresses() {
+        return nodeConfig.peerAddresses();
     }
 
     public static PartDbServerConfig create(
@@ -43,12 +33,7 @@ public record PartDbServerConfig(
         int kvPort
     ) {
         return new PartDbServerConfig(
-            nodeId,
-            peerAddresses,
-            dataDirectory,
-            LSMConfig.defaults(),
-            RaftConfig.defaults(),
-            Duration.ofMillis(10),
+            PartDbNodeConfig.create(nodeId, peerAddresses, dataDirectory),
             raftPort,
             KvServerConfig.defaultConfig(kvPort)
         );

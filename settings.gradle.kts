@@ -1,12 +1,12 @@
 rootProject.name = "partdb"
 
 include(
+    "partdb-node",
     "partdb-storage",
     "partdb-raft",
     "partdb-protocol",
     "partdb-server",
     "partdb-client",
-    "partdb-cli",
-    "partdb-ctl",
+    "partdb-app",
     "partdb-benchmark"
 )

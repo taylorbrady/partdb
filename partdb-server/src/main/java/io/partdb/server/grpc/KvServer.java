@@ -2,10 +2,10 @@ package io.partdb.server.grpc;
 
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
-import io.partdb.server.KvStore;
-import io.partdb.server.Lessor;
-import io.partdb.server.Proposer;
-import io.partdb.server.raft.RaftNode;
+import io.partdb.node.KvStore;
+import io.partdb.node.Lessor;
+import io.partdb.node.Proposer;
+import io.partdb.node.raft.RaftNode;
 
 import java.io.IOException;
 import java.util.Map;

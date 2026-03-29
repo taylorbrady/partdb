@@ -1,10 +1,11 @@
 plugins {
     id("com.google.protobuf")
+    `java-library`
 }
 
 dependencies {
-    implementation(project(":partdb-storage"))
-    implementation(project(":partdb-raft"))
+    api(project(":partdb-node"))
+    api(project(":partdb-raft"))
     implementation(project(":partdb-protocol"))
 
     val grpcVersion = "1.75.0"

@@ -10,8 +10,6 @@ dependencies {
     api("io.grpc:grpc-stub:$grpcVersion")
     api("io.grpc:grpc-protobuf:$grpcVersion")
     api("com.google.protobuf:protobuf-java:$protobufVersion")
-
-    runtimeOnly("io.grpc:grpc-netty-shaded:$grpcVersion")
 }
 
 protobuf {
