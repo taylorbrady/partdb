@@ -11,7 +11,7 @@ import java.util.concurrent.CountDownLatch;
 
 final class StartCommand {
     private static final int DEFAULT_RAFT_PORT = 8100;
-    private static final int DEFAULT_KV_PORT = 8101;
+    private static final int DEFAULT_GRPC_PORT = 8101;
 
     static int run(String[] args, PrintStream out, PrintStream err) {
         Options options;
@@ -44,7 +44,7 @@ final class StartCommand {
                 options.peerAddresses,
                 options.dataDir,
                 options.raftPort,
-                options.kvPort
+                options.grpcPort
             );
         } catch (IllegalArgumentException e) {
             err.println("Error: " + e.getMessage());
@@ -62,7 +62,7 @@ final class StartCommand {
             server.start();
             out.println("PartDB node '" + options.nodeId + "' started");
             out.println("  Raft port: " + options.raftPort);
-            out.println("  KV port:   " + options.kvPort);
+            out.println("  gRPC port: " + options.grpcPort);
             out.println("  Data dir:  " + options.dataDir.toAbsolutePath());
             if (options.peerAddresses.isEmpty()) {
                 out.println("  Mode:      single-node");
@@ -100,7 +100,7 @@ final class StartCommand {
                 }
                 case "--data-dir", "-d" -> options.dataDir = Path.of(requireValue(args, ++i, "--data-dir"));
                 case "--raft-port" -> options.raftPort = requireIntValue(args, ++i, "--raft-port");
-                case "--kv-port" -> options.kvPort = requireIntValue(args, ++i, "--kv-port");
+                case "--grpc-port" -> options.grpcPort = requireIntValue(args, ++i, "--grpc-port");
                 default -> throw new IllegalArgumentException("Unknown option: " + arg);
             }
         }
@@ -156,7 +156,7 @@ final class StartCommand {
         out.println("  -p, --peer <id=host:port>       Peer node (repeatable, omit for single-node)");
         out.println("  -d, --data-dir <path>           Directory for data storage (required)");
         out.println("      --raft-port <port>          Port for Raft communication (default: " + DEFAULT_RAFT_PORT + ")");
-        out.println("      --kv-port <port>            Port for KV service (default: " + DEFAULT_KV_PORT + ")");
+        out.println("      --grpc-port <port>          Port for gRPC API traffic (default: " + DEFAULT_GRPC_PORT + ")");
         out.println("  -h, --help                      Show this help message");
         out.println();
         out.println("Examples:");
@@ -178,7 +178,7 @@ final class StartCommand {
         Map<String, String> peerAddresses = new HashMap<>();
         Path dataDir;
         int raftPort = DEFAULT_RAFT_PORT;
-        int kvPort = DEFAULT_KV_PORT;
+        int grpcPort = DEFAULT_GRPC_PORT;
 
         String validate() {
             if (nodeId == null || nodeId.isBlank()) {

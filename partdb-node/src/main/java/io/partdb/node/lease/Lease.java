@@ -5,7 +5,7 @@ import io.partdb.storage.Slice;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-public final class Lease {
+final class Lease {
     private final long id;
     private final long ttlNanos;
     private final Set<Slice> keys = ConcurrentHashMap.newKeySet();

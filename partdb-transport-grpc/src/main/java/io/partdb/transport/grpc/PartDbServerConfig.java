@@ -51,12 +51,12 @@ public final class PartDbServerConfig {
         Map<String, String> peerAddresses,
         Path dataDirectory,
         int raftPort,
-        int kvPort
+        int grpcPort
     ) {
         return new PartDbServerConfig(
             PartDbNodeConfig.create(nodeId, peerAddresses, dataDirectory),
             raftPort,
-            GrpcServerConfig.defaultConfig(kvPort)
+            GrpcServerConfig.defaultConfig(grpcPort)
         );
     }
 }

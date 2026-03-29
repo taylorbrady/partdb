@@ -1,9 +1,9 @@
-package io.partdb.node;
+package io.partdb.node.kv;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.partdb.raft.StateMachine;
 import io.partdb.node.command.proto.CommandProto.Command;
-import io.partdb.node.lease.Leases;
+import io.partdb.node.lease.LeaseRegistry;
 import io.partdb.storage.Entry;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
@@ -20,19 +20,19 @@ import java.util.stream.Stream;
 public final class KvStore implements StateMachine, AutoCloseable {
 
     private final LSMTree store;
-    private final Leases leases;
+    private final LeaseRegistry leaseRegistry;
     private volatile long lastApplied;
 
-    private KvStore(LSMTree store, Leases leases) {
+    private KvStore(LSMTree store, LeaseRegistry leaseRegistry) {
         this.store = store;
-        this.leases = leases;
+        this.leaseRegistry = leaseRegistry;
         this.lastApplied = 0;
     }
 
     public static KvStore open(Path dataDirectory, LSMConfig config) {
         LSMTree store = LSMTree.open(dataDirectory, config);
-        Leases leases = new Leases();
-        return new KvStore(store, leases);
+        LeaseRegistry leaseRegistry = new LeaseRegistry();
+        return new KvStore(store, leaseRegistry);
     }
 
     @Override
@@ -55,7 +55,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
                 StoredValue stored = new StoredValue(value, index, leaseId);
                 store.put(key, Slice.of(stored.encode()), index);
                 if (leaseId != 0) {
-                    leases.attachKey(leaseId, key);
+                    leaseRegistry.attachKey(leaseId, key);
                 }
             }
             case DELETE -> {
@@ -66,19 +66,19 @@ public final class KvStore implements StateMachine, AutoCloseable {
             }
             case GRANT_LEASE -> {
                 var grant = command.getGrantLease();
-                leases.grant(grant.getLeaseId(), grant.getTtlNanos());
+                leaseRegistry.grant(grant.getLeaseId(), grant.getTtlNanos());
             }
             case REVOKE_LEASE -> {
                 var revoke = command.getRevokeLease();
-                Set<Slice> keys = leases.getKeys(revoke.getLeaseId());
+                Set<Slice> keys = leaseRegistry.getKeys(revoke.getLeaseId());
                 for (Slice key : keys) {
                     store.delete(key, index);
                 }
-                leases.revoke(revoke.getLeaseId());
+                leaseRegistry.revoke(revoke.getLeaseId());
             }
             case KEEP_ALIVE_LEASE -> {
                 var keepAlive = command.getKeepAliveLease();
-                leases.keepAlive(keepAlive.getLeaseId());
+                leaseRegistry.keepAlive(keepAlive.getLeaseId());
             }
             case OP_NOT_SET -> throw new IllegalArgumentException("Command operation not set");
         }
@@ -89,7 +89,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         if (existing.isPresent()) {
             StoredValue stored = StoredValue.decode(existing.get().value().toByteArray());
             if (stored.leaseId() != 0) {
-                leases.detachKey(stored.leaseId(), key);
+                leaseRegistry.detachKey(stored.leaseId(), key);
             }
         }
     }
@@ -100,7 +100,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
             return Optional.empty();
         }
         StoredValue stored = StoredValue.decode(raw.get().value().toByteArray());
-        if (stored.leaseId() != 0 && !leases.isLeaseActive(stored.leaseId())) {
+        if (stored.leaseId() != 0 && !leaseRegistry.isLeaseActive(stored.leaseId())) {
             return Optional.empty();
         }
         return Optional.of(stored.value());
@@ -114,7 +114,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         return raw
             .<KvEntry>mapMulti((entry, consumer) -> {
                 StoredValue stored = StoredValue.decode(entry.value().toByteArray());
-                if (stored.leaseId() == 0 || leases.isLeaseActive(stored.leaseId())) {
+                if (stored.leaseId() == 0 || leaseRegistry.isLeaseActive(stored.leaseId())) {
                     consumer.accept(new KvEntry(
                         entry.key().toByteArray(),
                         stored.value(),
@@ -131,7 +131,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
     public byte[] snapshot() {
         try {
             byte[] storageData = store.checkpoint();
-            byte[] leaseData = leases.toSnapshot();
+            byte[] leaseData = leaseRegistry.toSnapshot();
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             ByteBuffer header = ByteBuffer.allocate(16);
@@ -162,7 +162,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         buffer.get(leaseData);
 
         store.restoreFromCheckpoint(storageData);
-        leases.restoreSnapshot(leaseData);
+        leaseRegistry.restoreSnapshot(leaseData);
 
         lastApplied = index;
     }
@@ -171,8 +171,8 @@ public final class KvStore implements StateMachine, AutoCloseable {
         return lastApplied;
     }
 
-    public Leases leases() {
-        return leases;
+    public LeaseRegistry leaseRegistry() {
+        return leaseRegistry;
     }
 
     @Override

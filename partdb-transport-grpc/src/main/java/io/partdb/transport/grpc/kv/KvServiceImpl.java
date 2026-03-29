@@ -27,9 +27,8 @@ import io.partdb.grpc.kv.proto.KvProto.RevokeLeaseResponse;
 import io.partdb.grpc.kv.proto.KvProto.ScanRequest;
 import io.partdb.grpc.kv.proto.KvProto.ScanResponse;
 import io.partdb.grpc.kv.proto.KvServiceGrpc;
-import io.partdb.node.KvStore;
-import io.partdb.node.Lessor;
-import io.partdb.node.Proposer;
+import io.partdb.node.KeyValueEntry;
+import io.partdb.node.PartDbNode;
 import io.partdb.raft.RaftException;
 import io.partdb.transport.grpc.GrpcServerConfig;
 
@@ -46,15 +45,11 @@ import java.util.stream.Stream;
 
 public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
 
-    private final Proposer proposer;
-    private final Lessor lessor;
-    private final KvStore kvStore;
+    private final PartDbNode node;
     private final GrpcServerConfig config;
 
-    public KvServiceImpl(Proposer proposer, Lessor lessor, KvStore kvStore, GrpcServerConfig config) {
-        this.proposer = proposer;
-        this.lessor = lessor;
-        this.kvStore = kvStore;
+    public KvServiceImpl(PartDbNode node, GrpcServerConfig config) {
+        this.node = node;
         this.config = config;
     }
 
@@ -64,9 +59,9 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
 
         CompletableFuture<Optional<byte[]>> future;
         if (request.getConsistency() == ReadConsistency.STALE) {
-            future = CompletableFuture.completedFuture(kvStore.get(toBytes(request.getKey())));
+            future = CompletableFuture.completedFuture(node.get(toBytes(request.getKey())));
         } else {
-            future = CompletableFuture.completedFuture(kvStore.get(toBytes(request.getKey())));
+            future = CompletableFuture.completedFuture(node.get(toBytes(request.getKey())));
         }
 
         future
@@ -100,7 +95,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         byte[] value = toBytes(request.getValue());
         long leaseId = request.getLeaseId();
 
-        proposer.put(key, value, leaseId)
+        node.put(key, value, leaseId)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
             .whenComplete((_, ex) -> {
                 if (ex != null) {
@@ -121,7 +116,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         Duration timeout = resolveTimeout(request.getHeader());
         byte[] key = toBytes(request.getKey());
 
-        proposer.delete(key)
+        node.delete(key)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
             .whenComplete((_, ex) -> {
                 if (ex != null) {
@@ -145,11 +140,11 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         byte[] endKey = request.getEndKey().isEmpty() ? null : toBytes(request.getEndKey());
         int limit = request.getLimit() > 0 ? request.getLimit() : Integer.MAX_VALUE;
 
-        CompletableFuture<Stream<KvStore.KvEntry>> future;
+        CompletableFuture<Stream<KeyValueEntry>> future;
         if (request.getConsistency() == ReadConsistency.STALE) {
-            future = CompletableFuture.completedFuture(kvStore.scan(startKey, endKey));
+            future = CompletableFuture.completedFuture(node.scan(startKey, endKey));
         } else {
-            future = CompletableFuture.completedFuture(kvStore.scan(startKey, endKey));
+            future = CompletableFuture.completedFuture(node.scan(startKey, endKey));
         }
 
         future
@@ -188,7 +183,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         List<CompletableFuture<KeyValue>> futures = new ArrayList<>();
 
         for (ByteString keyBytes : request.getKeysList()) {
-            Optional<byte[]> value = kvStore.get(keyBytes.toByteArray());
+            Optional<byte[]> value = node.get(keyBytes.toByteArray());
             CompletableFuture<KeyValue> kvFuture = CompletableFuture.completedFuture(buildKeyValue(keyBytes, value));
             futures.add(kvFuture);
         }
@@ -222,7 +217,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
             CompletableFuture<Long> opFuture = switch (writeOp.getOpCase()) {
                 case PUT -> {
                     KvProto.PutOp put = writeOp.getPut();
-                    yield proposer.put(
+                    yield node.put(
                         toBytes(put.getKey()),
                         toBytes(put.getValue()),
                         put.getLeaseId()
@@ -230,7 +225,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                 }
                 case DELETE -> {
                     KvProto.DeleteOp del = writeOp.getDelete();
-                    yield proposer.delete(toBytes(del.getKey()));
+                    yield node.delete(toBytes(del.getKey()));
                 }
                 case OP_NOT_SET -> CompletableFuture.failedFuture(
                     new IllegalArgumentException("WriteOp type not set"));
@@ -259,7 +254,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         Duration timeout = resolveTimeout(request.getHeader());
         long ttlNanos = TimeUnit.MILLISECONDS.toNanos(request.getTtlMillis());
 
-        lessor.grant(ttlNanos)
+        node.grantLease(ttlNanos)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
             .whenComplete((leaseId, ex) -> {
                 if (ex != null) {
@@ -282,7 +277,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         Duration timeout = resolveTimeout(request.getHeader());
         long leaseId = request.getLeaseId();
 
-        lessor.revoke(leaseId)
+        node.revokeLease(leaseId)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
             .whenComplete((_, ex) -> {
                 if (ex != null) {
@@ -303,7 +298,7 @@ public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         Duration timeout = resolveTimeout(request.getHeader());
         long leaseId = request.getLeaseId();
 
-        lessor.keepAlive(leaseId)
+        node.keepAliveLease(leaseId)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
             .whenComplete((_, ex) -> {
                 if (ex != null) {

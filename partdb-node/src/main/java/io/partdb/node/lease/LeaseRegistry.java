@@ -12,7 +12,7 @@ import java.util.concurrent.DelayQueue;
 import java.util.concurrent.Delayed;
 import java.util.concurrent.TimeUnit;
 
-public final class Leases {
+public final class LeaseRegistry {
     private final ConcurrentHashMap<Long, Lease> byId = new ConcurrentHashMap<>();
     private final DelayQueue<LeaseExpiry> expirationQueue = new DelayQueue<>();
 
@@ -87,12 +87,12 @@ public final class Leases {
     }
 
     public byte[] toSnapshot() {
-        var leases = new ArrayList<>(byId.values());
-        int size = 4 + leases.size() * 16;
+        var snapshotLeases = new ArrayList<>(byId.values());
+        int size = 4 + snapshotLeases.size() * 16;
         var buffer = ByteBuffer.allocate(size);
 
-        buffer.putInt(leases.size());
-        for (var lease : leases) {
+        buffer.putInt(snapshotLeases.size());
+        for (var lease : snapshotLeases) {
             buffer.putLong(lease.id());
             buffer.putLong(lease.remainingNanos());
         }

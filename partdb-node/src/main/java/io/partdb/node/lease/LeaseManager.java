@@ -1,10 +1,10 @@
-package io.partdb.node;
+package io.partdb.node.lease;
 
+import io.partdb.node.command.CommandProposer;
 import io.partdb.node.command.proto.CommandProto.Command;
 import io.partdb.node.command.proto.CommandProto.GrantLease;
 import io.partdb.node.command.proto.CommandProto.KeepAliveLease;
 import io.partdb.node.command.proto.CommandProto.RevokeLease;
-import io.partdb.node.lease.Leases;
 import io.partdb.node.raft.RaftNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,21 +13,21 @@ import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 
-public final class Lessor implements AutoCloseable {
-    private static final Logger log = LoggerFactory.getLogger(Lessor.class);
+public final class LeaseManager implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(LeaseManager.class);
     private static final int MAX_REVOCATIONS_PER_BATCH = 500;
 
     private final RaftNode raftNode;
-    private final Proposer proposer;
-    private final Leases leases;
+    private final CommandProposer proposer;
+    private final LeaseRegistry leaseRegistry;
     private final AtomicLong nextLeaseId = new AtomicLong(1);
     private final Thread expirerThread;
     private volatile boolean running = true;
 
-    public Lessor(RaftNode raftNode, Proposer proposer, Leases leases) {
+    public LeaseManager(RaftNode raftNode, CommandProposer proposer, LeaseRegistry leaseRegistry) {
         this.raftNode = raftNode;
         this.proposer = proposer;
-        this.leases = leases;
+        this.leaseRegistry = leaseRegistry;
         this.expirerThread = Thread.ofVirtual()
             .name("lease-expirer")
             .start(this::runExpirer);
@@ -62,14 +62,14 @@ public final class Lessor implements AutoCloseable {
                     continue;
                 }
 
-                var entry = leases.pollExpired(Duration.ofMillis(500));
+                var entry = leaseRegistry.pollExpired(Duration.ofMillis(500));
                 if (entry == null) {
                     continue;
                 }
 
                 int count = 0;
                 while (entry != null && count < MAX_REVOCATIONS_PER_BATCH) {
-                    if (!leases.isStale(entry)) {
+                    if (!leaseRegistry.isStale(entry)) {
                         long leaseId = entry.leaseId();
                         revoke(leaseId)
                             .exceptionally(ex -> {
@@ -81,7 +81,7 @@ public final class Lessor implements AutoCloseable {
                             });
                         count++;
                     }
-                    entry = leases.pollExpiredNow();
+                    entry = leaseRegistry.pollExpiredNow();
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

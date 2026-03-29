@@ -1,8 +1,8 @@
-package io.partdb.node;
+package io.partdb.node.kv;
 
 import java.nio.ByteBuffer;
 
-public record StoredValue(
+record StoredValue(
     byte[] value,
     long version,
     long leaseId

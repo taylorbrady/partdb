@@ -11,7 +11,8 @@ import io.partdb.grpc.cluster.proto.ClusterProto.NodeRole;
 import io.partdb.grpc.cluster.proto.ClusterProto.StatusRequest;
 import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
 import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
-import io.partdb.node.raft.RaftNode;
+import io.partdb.node.PartDbNode;
+import io.partdb.node.NodeStatus;
 import io.partdb.raft.Membership;
 import io.partdb.raft.Role;
 
@@ -19,27 +20,28 @@ import java.util.Map;
 
 public final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase {
 
-    private final RaftNode raftNode;
+    private final PartDbNode node;
     private final Map<String, String> peerAddresses;
     private final String selfAddress;
 
-    public ClusterServiceImpl(RaftNode raftNode, Map<String, String> peerAddresses, String selfAddress) {
-        this.raftNode = raftNode;
+    public ClusterServiceImpl(PartDbNode node, Map<String, String> peerAddresses, String selfAddress) {
+        this.node = node;
         this.peerAddresses = Map.copyOf(peerAddresses);
         this.selfAddress = selfAddress;
     }
 
     @Override
     public void status(StatusRequest request, StreamObserver<StatusResponse> responseObserver) {
+        NodeStatus status = node.status();
         var response = StatusResponse.newBuilder()
             .setError(okError())
-            .setNodeId(raftNode.nodeId())
-            .setRole(toProtoRole(raftNode.role()))
-            .setTerm(raftNode.currentTerm())
-            .setLeaderId(raftNode.leaderId().orElse(""))
-            .setCommitIndex(raftNode.commitIndex())
-            .setLastAppliedIndex(raftNode.lastAppliedIndex())
-            .setIsRunning(raftNode.isRunning())
+            .setNodeId(status.nodeId())
+            .setRole(toProtoRole(status.role()))
+            .setTerm(status.term())
+            .setLeaderId(status.leaderId().orElse(""))
+            .setCommitIndex(status.commitIndex())
+            .setLastAppliedIndex(status.lastAppliedIndex())
+            .setIsRunning(status.running())
             .build();
         responseObserver.onNext(response);
         responseObserver.onCompleted();
@@ -47,9 +49,9 @@ public final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceI
 
     @Override
     public void memberList(MemberListRequest request, StreamObserver<MemberListResponse> responseObserver) {
-        Membership membership = raftNode.membership();
-        String leaderId = raftNode.leaderId().orElse("");
-        String selfId = raftNode.nodeId();
+        Membership membership = node.membership();
+        String leaderId = node.leaderId().orElse("");
+        String selfId = node.nodeId();
 
         var builder = MemberListResponse.newBuilder()
             .setError(okError())

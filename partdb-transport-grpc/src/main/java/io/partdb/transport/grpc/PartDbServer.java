@@ -28,10 +28,7 @@ public final class PartDbServer implements AutoCloseable {
 
         String selfAddress = config.nodeId() + ":" + config.grpcPort();
         this.grpcServer = new GrpcServer(
-            node.proposer(),
-            node.lessor(),
-            node.kvStore(),
-            node.raftNode(),
+            node,
             config.peerAddresses(),
             selfAddress,
             config.grpcServerConfig()

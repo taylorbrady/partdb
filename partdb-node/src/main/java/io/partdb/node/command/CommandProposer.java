@@ -1,4 +1,4 @@
-package io.partdb.node;
+package io.partdb.node.command;
 
 import com.google.protobuf.ByteString;
 import io.partdb.node.command.proto.CommandProto.Command;
@@ -8,10 +8,10 @@ import io.partdb.node.raft.RaftNode;
 
 import java.util.concurrent.CompletableFuture;
 
-public final class Proposer {
+public final class CommandProposer {
     private final RaftNode raftNode;
 
-    public Proposer(RaftNode raftNode) {
+    public CommandProposer(RaftNode raftNode) {
         this.raftNode = raftNode;
     }
 
