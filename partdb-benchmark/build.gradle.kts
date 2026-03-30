@@ -22,11 +22,14 @@ application {
 }
 
 tasks.jar {
+    dependsOn(configurations.runtimeClasspath)
     manifest {
         attributes["Main-Class"] = "org.openjdk.jmh.Main"
     }
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
+    from({
+        configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) }
+    })
     archiveClassifier.set("all")
 }
 
