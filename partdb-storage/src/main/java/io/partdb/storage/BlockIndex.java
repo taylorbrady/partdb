@@ -50,7 +50,7 @@ final class BlockIndex {
         if (startKey != null) {
             startIndex = indexOf(startKey);
             if (startIndex < 0) {
-                return List.of();
+                startIndex = 0;
             }
         }
 

@@ -92,10 +92,21 @@ final class Compactor {
         int targetLevel,
         List<SSTableDescriptor> completedOutputs
     ) {
-        while (entries.hasNext()) {
+        Mutation pending = null;
+
+        while (pending != null || entries.hasNext()) {
             try (SSTable.Builder builder = sstableStore.createBuilder(targetLevel)) {
-                while (entries.hasNext() && builder.uncompressedBytes() < config.targetUncompressedSize()) {
-                    builder.add(entries.next());
+                while (pending != null || entries.hasNext()) {
+                    Mutation next = pending != null ? pending : entries.next();
+                    pending = null;
+
+                    if (builder.uncompressedBytes() > 0
+                        && builder.uncompressedBytes() + next.sizeInBytes() > config.targetUncompressedSize()) {
+                        pending = next;
+                        break;
+                    }
+
+                    builder.add(next);
                 }
                 completedOutputs.add(builder.finish());
             }

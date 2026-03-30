@@ -499,11 +499,7 @@ final class SSTable implements AutoCloseable {
         }
 
         private static int entrySize(Mutation mutation) {
-            int base = 1 + 8 + 4 + mutation.key().length() + 4;
-            return switch (mutation) {
-                case Mutation.Put put -> base + put.value().length();
-                case Mutation.Tombstone _ -> base;
-            };
+            return mutation.sizeInBytes();
         }
 
         private void writeHeader() {
