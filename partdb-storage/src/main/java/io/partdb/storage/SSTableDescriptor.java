@@ -1,11 +1,9 @@
-package io.partdb.storage.sstable;
-
-import io.partdb.storage.Slice;
+package io.partdb.storage;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
-public record SSTableDescriptor(
+record SSTableDescriptor(
     long id,
     int level,
     Slice smallestKey,

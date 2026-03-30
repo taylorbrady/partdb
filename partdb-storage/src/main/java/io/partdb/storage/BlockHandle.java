@@ -1,6 +1,6 @@
-package io.partdb.storage.sstable;
+package io.partdb.storage;
 
-public record BlockHandle(long offset, int size) {
+record BlockHandle(long offset, int size) {
 
     public BlockHandle {
         if (offset < 0) {

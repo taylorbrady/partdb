@@ -1,10 +1,8 @@
-package io.partdb.storage.compaction;
-
-import io.partdb.storage.sstable.SSTableDescriptor;
+package io.partdb.storage;
 
 import java.util.List;
 
-public sealed interface CompactionResult {
+sealed interface CompactionResult {
 
     CompactionTask task();
 

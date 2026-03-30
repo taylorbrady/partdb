@@ -1,6 +1,6 @@
-package io.partdb.storage.sstable;
+package io.partdb.storage;
 
-public final class NoOpBlockCache implements BlockCache {
+final class NoOpBlockCache implements BlockCache {
 
     public static final NoOpBlockCache INSTANCE = new NoOpBlockCache();
 

@@ -1,9 +1,4 @@
-package io.partdb.storage.compaction;
-
-import io.partdb.storage.LSMConfig;
-import io.partdb.storage.Slice;
-import io.partdb.storage.manifest.Manifest;
-import io.partdb.storage.sstable.SSTableDescriptor;
+package io.partdb.storage;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -15,35 +10,17 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public final class LeveledCompactionStrategy implements CompactionStrategy {
+final class LeveledCompactionPlanner {
 
     private final LSMConfig config;
     private final Map<Integer, AtomicInteger> levelRoundRobin;
 
-    public LeveledCompactionStrategy(LSMConfig config) {
+    LeveledCompactionPlanner(LSMConfig config) {
         this.config = config;
         this.levelRoundRobin = new ConcurrentHashMap<>();
     }
 
-    @Override
-    public Optional<CompactionTask> selectCompaction(Manifest manifest) {
-        Optional<CompactionTask> l0Task = selectL0Compaction(manifest, Set.of());
-        if (l0Task.isPresent()) {
-            return l0Task;
-        }
-
-        for (int level = 1; level < config.maxLevels(); level++) {
-            Optional<CompactionTask> task = selectLevelCompaction(manifest, level, Set.of());
-            if (task.isPresent()) {
-                return task;
-            }
-        }
-
-        return Optional.empty();
-    }
-
-    @Override
-    public List<CompactionTask> selectCompactions(Manifest manifest, Set<Long> excludedSSTableIds) {
+    List<CompactionTask> selectCompactions(Manifest manifest, Set<Long> excludedSSTableIds) {
         List<CompactionTask> tasks = new ArrayList<>();
         Set<Long> usedIds = new HashSet<>(excludedSSTableIds);
 

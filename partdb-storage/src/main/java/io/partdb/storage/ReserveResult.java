@@ -1,6 +1,6 @@
-package io.partdb.storage.compaction;
+package io.partdb.storage;
 
-public sealed interface ReserveResult {
+sealed interface ReserveResult {
 
     record Success(ReservationToken token) implements ReserveResult {}
 

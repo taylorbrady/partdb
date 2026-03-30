@@ -1,4 +1,4 @@
-package io.partdb.storage.sstable;
+package io.partdb.storage;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-public final class S3FifoBlockCache implements BlockCache {
+final class S3FifoBlockCache implements BlockCache {
 
     private static final double SMALL_QUEUE_RATIO = 0.1;
     private static final int GHOST_CAPACITY = 10_000;

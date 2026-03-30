@@ -1,11 +1,11 @@
-package io.partdb.storage.sstable;
+package io.partdb.storage;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class SSTableSetRef {
+final class SSTableSetRef {
 
     private static final int RETIRED_BIT = 1 << 30;
     private static final int COUNT_MASK = RETIRED_BIT - 1;

@@ -1,11 +1,5 @@
-package io.partdb.storage.compaction;
+package io.partdb.storage;
 
-import io.partdb.storage.LSMConfig;
-import io.partdb.storage.MergingIterator;
-import io.partdb.storage.Mutation;
-import io.partdb.storage.sstable.SSTable;
-import io.partdb.storage.sstable.SSTableDescriptor;
-import io.partdb.storage.sstable.SSTableStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,19 +10,19 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 
-public final class Compactor {
+final class Compactor {
 
     private static final Logger log = LoggerFactory.getLogger(Compactor.class);
 
     private final SSTableStore sstableStore;
     private final LSMConfig config;
 
-    public Compactor(SSTableStore sstableStore, LSMConfig config) {
+    Compactor(SSTableStore sstableStore, LSMConfig config) {
         this.sstableStore = Objects.requireNonNull(sstableStore, "sstableStore");
         this.config = Objects.requireNonNull(config, "config");
     }
 
-    public CompactionResult compact(CompactionTask task) {
+    CompactionResult compact(CompactionTask task) {
         long startNanos = System.nanoTime();
         List<SSTable> inputs = null;
         List<SSTableDescriptor> completedOutputs = new ArrayList<>();

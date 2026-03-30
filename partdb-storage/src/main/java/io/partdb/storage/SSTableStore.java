@@ -1,19 +1,16 @@
-package io.partdb.storage.sstable;
+package io.partdb.storage;
 
-import io.partdb.storage.LSMConfig;
-import io.partdb.storage.Mutation;
-import io.partdb.storage.StorageException;
-import io.partdb.storage.compaction.CompactionResult;
-import io.partdb.storage.compaction.CompactionScheduler;
-import io.partdb.storage.compaction.Compactor;
-import io.partdb.storage.compaction.LeveledCompactionStrategy;
-import io.partdb.storage.manifest.Manifest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.BufferUnderflowException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -30,7 +27,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-public final class SSTableStore implements AutoCloseable {
+final class SSTableStore implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(SSTableStore.class);
     private static final Pattern SSTABLE_PATTERN = Pattern.compile("(\\d{6})\\.sst");
@@ -38,6 +35,9 @@ public final class SSTableStore implements AutoCloseable {
     private static final long INITIAL_BACKOFF_NANOS = 100;
     private static final long MAX_BACKOFF_NANOS = 10_000;
     private static final Duration SHUTDOWN_DRAIN_TIMEOUT = Duration.ofSeconds(30);
+    private static final int CHECKPOINT_MAGIC = 0x53544350;
+    private static final int CHECKPOINT_VERSION = 1;
+    private static final String RESTORE_SUFFIX = ".restore";
 
     private final Path directory;
     private final LSMConfig config;
@@ -66,10 +66,10 @@ public final class SSTableStore implements AutoCloseable {
         this.currentSet = initialSet;
         this.closed = new AtomicBoolean(false);
 
-        LeveledCompactionStrategy strategy = new LeveledCompactionStrategy(config);
+        LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
         Compactor compactor = new Compactor(this, config);
         this.compactionScheduler = new CompactionScheduler(
-            strategy,
+            planner,
             compactor,
             config.maxConcurrentCompactions(),
             this::manifest,
@@ -77,7 +77,7 @@ public final class SSTableStore implements AutoCloseable {
         );
     }
 
-    public static SSTableStore open(Path directory, LSMConfig config) {
+    static SSTableStore open(Path directory, LSMConfig config) {
         try {
             Files.createDirectories(directory);
 
@@ -110,7 +110,7 @@ public final class SSTableStore implements AutoCloseable {
         }
     }
 
-    public void flush(Iterator<Mutation> mutations) {
+    void flush(Iterator<Mutation> mutations) {
         SSTableDescriptor descriptor;
         try (SSTable.Builder builder = createBuilder(0)) {
             while (mutations.hasNext()) {
@@ -124,12 +124,40 @@ public final class SSTableStore implements AutoCloseable {
         scheduleCompaction();
     }
 
-    public ReadSet acquire() {
-        SSTableSetRef acquired = acquireCurrentSet();
-        return new ReadSetImpl(acquired, manifest);
+    SSTableView acquire() {
+        long backoffNanos = INITIAL_BACKOFF_NANOS;
+
+        for (int attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
+            stateLock.lock();
+            try {
+                SSTableSetRef current = currentSet;
+                Manifest manifestSnapshot = manifest;
+
+                switch (current.tryAcquire()) {
+                    case SSTableSetRef.AcquireResult.Success(var acquired) -> {
+                        return new SSTableView(acquired, manifestSnapshot);
+                    }
+                    case SSTableSetRef.AcquireResult.Retired _ -> {
+                    }
+                }
+            } finally {
+                stateLock.unlock();
+            }
+
+            if (attempt < 16) {
+                Thread.onSpinWait();
+            } else {
+                LockSupport.parkNanos(backoffNanos);
+                backoffNanos = Math.min(backoffNanos * 2, MAX_BACKOFF_NANOS);
+            }
+        }
+
+        throw new IllegalStateException(
+            "Failed to acquire SSTable view after " + MAX_ACQUIRE_ATTEMPTS + " attempts"
+        );
     }
 
-    public Manifest manifest() {
+    Manifest manifest() {
         stateLock.lock();
         try {
             return manifest;
@@ -138,48 +166,61 @@ public final class SSTableStore implements AutoCloseable {
         }
     }
 
-    public byte[] checkpoint() {
-        return manifest().toBytes();
+    byte[] checkpoint() {
+        try (SSTableView view = acquire()) {
+            return StoreCheckpoint.capture(view).toBytes();
+        }
     }
 
-    public void restore(byte[] data) {
-        Manifest newManifest = Manifest.fromBytes(data);
-        List<SSTable> newReaders = new ArrayList<>();
-        for (SSTableDescriptor desc : newManifest.sstables()) {
-            newReaders.add(openReader(desc));
+    void restore(byte[] data) {
+        StoreCheckpoint checkpoint = StoreCheckpoint.fromBytes(data);
+        try {
+            checkpoint.stage(directory);
+        } catch (IOException e) {
+            throw new StorageException.IO("Failed to stage checkpoint files", e);
         }
 
         stateLock.lock();
         try {
+            Manifest newManifest = checkpoint.manifest();
+            SSTableSetRef oldSet = currentSet;
+            oldSet.retire(List.copyOf(oldSet.readers()));
+            awaitDrain(oldSet, SHUTDOWN_DRAIN_TIMEOUT);
+
+            deleteAllSSTables();
+            checkpoint.commitTo(directory);
             manifest = newManifest;
             manifest.writeTo(directory);
             nextId.set(newManifest.nextSSTableId());
-
-            SSTableSetRef oldSet = currentSet;
-            List<SSTable> orphanedReaders = new ArrayList<>(oldSet.readers());
-            currentSet = SSTableSetRef.of(newReaders);
-            oldSet.retire(orphanedReaders);
+            currentSet = SSTableSetRef.of(loadSSTablesFromManifest(directory, cache, newManifest));
+        } catch (IOException e) {
+            resetAfterFailedRestore();
+            throw new StorageException.IO("Failed to restore checkpoint", e);
+        } catch (RuntimeException e) {
+            resetAfterFailedRestore();
+            throw e;
         } finally {
             stateLock.unlock();
+            checkpoint.cleanup(directory);
         }
     }
 
-    public SSTable.Builder createBuilder(int level) {
+    SSTable.Builder createBuilder(int level) {
         long id = nextId.incrementAndGet();
         return SSTable.builder(id, level, resolvePath(id), config);
     }
 
-    public SSTable openReader(SSTableDescriptor descriptor) {
+    SSTable openReader(SSTableDescriptor descriptor) {
         Path path = resolvePath(descriptor.id());
         return SSTable.open(descriptor.id(), descriptor.level(), path, cache);
     }
 
-    public SSTable openForCompaction(SSTableDescriptor descriptor) {
+    SSTable openForCompaction(SSTableDescriptor descriptor) {
         Path path = resolvePath(descriptor.id());
         return SSTable.open(descriptor.id(), descriptor.level(), path, NoOpBlockCache.INSTANCE);
     }
 
-    public void delete(long id) throws IOException {
+    void delete(long id) throws IOException {
         Files.deleteIfExists(resolvePath(id));
     }
 
@@ -290,33 +331,6 @@ public final class SSTableStore implements AutoCloseable {
         return directory.resolve("%06d.sst".formatted(id));
     }
 
-    private SSTableSetRef acquireCurrentSet() {
-        long backoffNanos = INITIAL_BACKOFF_NANOS;
-
-        for (int attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
-            SSTableSetRef current = currentSet;
-            SSTableSetRef.AcquireResult result = current.tryAcquire();
-
-            switch (result) {
-                case SSTableSetRef.AcquireResult.Success(var acquired) -> {
-                    return acquired;
-                }
-                case SSTableSetRef.AcquireResult.Retired _ -> {
-                    if (attempt < 16) {
-                        Thread.onSpinWait();
-                    } else {
-                        LockSupport.parkNanos(backoffNanos);
-                        backoffNanos = Math.min(backoffNanos * 2, MAX_BACKOFF_NANOS);
-                    }
-                }
-            }
-        }
-
-        throw new IllegalStateException(
-            "Failed to acquire SSTableSetRef after " + MAX_ACQUIRE_ATTEMPTS + " attempts"
-        );
-    }
-
     private void awaitDrain(SSTableSetRef set, Duration timeout) {
         long deadlineNanos = System.nanoTime() + timeout.toNanos();
 
@@ -383,46 +397,199 @@ public final class SSTableStore implements AutoCloseable {
         return readers;
     }
 
-    private static final class ReadSetImpl implements ReadSet {
-        private final SSTableSetRef ref;
-        private final Manifest manifest;
-        private final int maxLevel;
-
-        ReadSetImpl(SSTableSetRef ref, Manifest manifest) {
-            this.ref = ref;
-            this.manifest = manifest;
-            this.maxLevel = manifest.maxLevel();
+    private void deleteAllSSTables() throws IOException {
+        if (!Files.exists(directory)) {
+            return;
         }
 
-        @Override
-        public List<SSTable> level0() {
-            return level(0);
-        }
-
-        @Override
-        public List<SSTable> level(int level) {
-            Set<Long> levelIds = manifest.level(level).stream()
-                .map(SSTableDescriptor::id)
-                .collect(Collectors.toSet());
-
-            return ref.readers().stream()
-                .filter(sst -> levelIds.contains(sst.id()))
-                .toList();
-        }
-
-        @Override
-        public int maxLevel() {
-            return maxLevel;
-        }
-
-        @Override
-        public List<SSTable> all() {
-            return ref.readers();
-        }
-
-        @Override
-        public void close() {
-            ref.release();
+        try (Stream<Path> paths = Files.list(directory)) {
+            for (Path path : paths
+                .filter(path -> SSTABLE_PATTERN.matcher(path.getFileName().toString()).matches())
+                .toList()) {
+                Files.deleteIfExists(path);
+            }
         }
     }
+
+    private void resetAfterFailedRestore() {
+        try {
+            deleteAllSSTables();
+        } catch (IOException e) {
+            log.atWarn()
+                .setCause(e)
+                .log("Failed to clean SSTables after restore failure");
+        }
+
+        try {
+            Files.deleteIfExists(directory.resolve("MANIFEST"));
+            Files.deleteIfExists(directory.resolve("MANIFEST.tmp"));
+        } catch (IOException e) {
+            log.atWarn()
+                .setCause(e)
+                .log("Failed to clean manifest after restore failure");
+        }
+
+        manifest = new Manifest(0, List.of());
+        nextId.set(0);
+        currentSet = SSTableSetRef.of(List.of());
+    }
+
+    private static final class StoreCheckpoint {
+        private final Manifest manifest;
+        private final List<CheckpointSSTable> sstables;
+
+        private StoreCheckpoint(Manifest manifest, List<CheckpointSSTable> sstables) {
+            this.manifest = manifest;
+            this.sstables = List.copyOf(sstables);
+        }
+
+        static StoreCheckpoint capture(SSTableView view) {
+            Manifest manifest = view.manifest();
+            var readersById = view.all().stream()
+                .collect(Collectors.toMap(SSTable::id, reader -> reader));
+
+            List<CheckpointSSTable> sstables = new ArrayList<>(manifest.sstables().size());
+            for (SSTableDescriptor descriptor : manifest.sstables()) {
+                SSTable reader = readersById.get(descriptor.id());
+                if (reader == null) {
+                    throw new StorageException.Corruption(
+                        "Missing SSTable reader for checkpoint: " + descriptor.id()
+                    );
+                }
+                sstables.add(new CheckpointSSTable(descriptor.id(), reader.fileBytes()));
+            }
+
+            return new StoreCheckpoint(manifest, sstables);
+        }
+
+        static StoreCheckpoint fromBytes(byte[] data) {
+            try {
+                ByteBuffer buffer = ByteBuffer.wrap(data);
+                int magic = buffer.getInt();
+                if (magic != CHECKPOINT_MAGIC) {
+                    throw new StorageException.Corruption(
+                        "Invalid checkpoint magic: " + Integer.toHexString(magic)
+                    );
+                }
+
+                int version = buffer.getInt();
+                if (version != CHECKPOINT_VERSION) {
+                    throw new StorageException.Corruption("Unsupported checkpoint version: " + version);
+                }
+
+                int manifestLength = buffer.getInt();
+                if (manifestLength < 0) {
+                    throw new StorageException.Corruption("Negative checkpoint manifest length");
+                }
+
+                int sstableCount = buffer.getInt();
+                if (sstableCount < 0) {
+                    throw new StorageException.Corruption("Negative checkpoint SSTable count");
+                }
+
+                byte[] manifestBytes = new byte[manifestLength];
+                buffer.get(manifestBytes);
+                Manifest manifest = Manifest.fromBytes(manifestBytes);
+                if (manifest.sstables().size() != sstableCount) {
+                    throw new StorageException.Corruption("Checkpoint SSTable count does not match manifest");
+                }
+
+                List<CheckpointSSTable> sstables = new ArrayList<>(sstableCount);
+                for (SSTableDescriptor descriptor : manifest.sstables()) {
+                    long id = buffer.getLong();
+                    if (id != descriptor.id()) {
+                        throw new StorageException.Corruption(
+                            "Checkpoint SSTable id does not match manifest: " + id
+                        );
+                    }
+
+                    int fileLength = buffer.getInt();
+                    if (fileLength < 0) {
+                        throw new StorageException.Corruption("Negative checkpoint SSTable length");
+                    }
+
+                    byte[] fileBytes = new byte[fileLength];
+                    buffer.get(fileBytes);
+                    sstables.add(new CheckpointSSTable(id, fileBytes));
+                }
+
+                if (buffer.hasRemaining()) {
+                    throw new StorageException.Corruption("Trailing checkpoint data");
+                }
+
+                return new StoreCheckpoint(manifest, sstables);
+            } catch (BufferUnderflowException e) {
+                throw new StorageException.Corruption("Truncated checkpoint", e);
+            }
+        }
+
+        Manifest manifest() {
+            return manifest;
+        }
+
+        byte[] toBytes() {
+            byte[] manifestBytes = manifest.toBytes();
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+            ByteBuffer header = ByteBuffer.allocate(Integer.BYTES * 4);
+            header.putInt(CHECKPOINT_MAGIC);
+            header.putInt(CHECKPOINT_VERSION);
+            header.putInt(manifestBytes.length);
+            header.putInt(sstables.size());
+            output.writeBytes(header.array());
+            output.writeBytes(manifestBytes);
+
+            for (CheckpointSSTable sstable : sstables) {
+                ByteBuffer sstableHeader = ByteBuffer.allocate(Long.BYTES + Integer.BYTES);
+                sstableHeader.putLong(sstable.id());
+                sstableHeader.putInt(sstable.data().length);
+                output.writeBytes(sstableHeader.array());
+                output.writeBytes(sstable.data());
+            }
+
+            return output.toByteArray();
+        }
+
+        void stage(Path directory) throws IOException {
+            Files.createDirectories(directory);
+            for (CheckpointSSTable sstable : sstables) {
+                Files.write(
+                    stagedPath(directory, sstable.id()),
+                    sstable.data(),
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE
+                );
+            }
+        }
+
+        void commitTo(Path directory) throws IOException {
+            for (CheckpointSSTable sstable : sstables) {
+                Files.move(
+                    stagedPath(directory, sstable.id()),
+                    directory.resolve("%06d.sst".formatted(sstable.id())),
+                    StandardCopyOption.REPLACE_EXISTING
+                );
+            }
+        }
+
+        void cleanup(Path directory) {
+            for (CheckpointSSTable sstable : sstables) {
+                try {
+                    Files.deleteIfExists(stagedPath(directory, sstable.id()));
+                } catch (IOException e) {
+                    log.atWarn()
+                        .setCause(e)
+                        .addKeyValue("sstableId", sstable.id())
+                        .log("Failed to clean staged checkpoint SSTable");
+                }
+            }
+        }
+
+        private static Path stagedPath(Path directory, long id) {
+            return directory.resolve("%06d.sst%s".formatted(id, RESTORE_SUFFIX));
+        }
+    }
+
+    private record CheckpointSSTable(long id, byte[] data) {}
 }

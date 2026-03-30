@@ -1,12 +1,5 @@
 package io.partdb.storage;
 
-import io.partdb.storage.manifest.Manifest;
-import io.partdb.storage.memtable.Memtable;
-import io.partdb.storage.memtable.SkipListMemtable;
-import io.partdb.storage.sstable.ReadSet;
-import io.partdb.storage.sstable.SSTable;
-import io.partdb.storage.sstable.SSTableStore;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -47,7 +40,7 @@ public final class LSMTree implements AutoCloseable {
     private LSMTree(LSMConfig config, SSTableStore sstableStore) {
         this.config = config;
         this.sstableStore = sstableStore;
-        this.activeMemtable = new AtomicReference<>(new SkipListMemtable());
+        this.activeMemtable = new AtomicReference<>(new Memtable());
         this.immutableMemtablesLock = new ReentrantLock();
         this.immutableMemtables = List.of();
         this.rotationLock = new ReentrantLock();
@@ -77,19 +70,12 @@ public final class LSMTree implements AutoCloseable {
     }
 
     public Optional<StorageEntry> get(Slice key) {
-        Optional<Mutation> result = activeMemtable.get().get(key);
+        Optional<Mutation> result = lookupMutation(key, activeMemtable.get(), immutableMemtables);
         if (result.isPresent()) {
             return resolveEntry(result.get());
         }
 
-        for (Memtable immutable : immutableMemtables) {
-            result = immutable.get(key);
-            if (result.isPresent()) {
-                return resolveEntry(result.get());
-            }
-        }
-
-        try (ReadSet readers = sstableStore.acquire()) {
+        try (SSTableView readers = sstableStore.acquire()) {
             for (SSTable sstable : readers.all()) {
                 result = sstable.get(key);
                 if (result.isPresent()) {
@@ -105,11 +91,9 @@ public final class LSMTree implements AutoCloseable {
 
         iterators.add(activeMemtable.get().scan(startKey, endKey));
 
-        for (Memtable immutable : immutableMemtables) {
-            iterators.add(immutable.scan(startKey, endKey));
-        }
+        addImmutableMemtableIterators(iterators, startKey, endKey, immutableMemtables);
 
-        ReadSet readers = sstableStore.acquire();
+        SSTableView readers = sstableStore.acquire();
         for (SSTable sstable : readers.all()) {
             SSTable.Scan scan = sstable.scan();
             if (startKey != null) {
@@ -193,7 +177,7 @@ public final class LSMTree implements AutoCloseable {
                 throw new StorageException.IO("Interrupted waiting for flush permit", e);
             }
 
-            Memtable newMemtable = new SkipListMemtable();
+            Memtable newMemtable = new Memtable();
             immutableMemtablesLock.lock();
             try {
                 var updated = new ArrayList<>(immutableMemtables);
@@ -262,7 +246,7 @@ public final class LSMTree implements AutoCloseable {
                 throw new StorageException.IO("Interrupted waiting for flush permit", e);
             }
 
-            Memtable newMemtable = new SkipListMemtable();
+            Memtable newMemtable = new Memtable();
             immutableMemtablesLock.lock();
             try {
                 var updated = new ArrayList<>(immutableMemtables);
@@ -340,6 +324,33 @@ public final class LSMTree implements AutoCloseable {
         } finally {
             immutableMemtablesLock.unlock();
         }
-        activeMemtable.set(new SkipListMemtable());
+        activeMemtable.set(new Memtable());
+    }
+
+    static Optional<Mutation> lookupMutation(Slice key, Memtable activeMemtable, List<Memtable> immutableMemtables) {
+        Optional<Mutation> result = activeMemtable.get(key);
+        if (result.isPresent()) {
+            return result;
+        }
+
+        for (int i = immutableMemtables.size() - 1; i >= 0; i--) {
+            result = immutableMemtables.get(i).get(key);
+            if (result.isPresent()) {
+                return result;
+            }
+        }
+
+        return Optional.empty();
+    }
+
+    private static void addImmutableMemtableIterators(
+        List<Iterator<Mutation>> iterators,
+        Slice startKey,
+        Slice endKey,
+        List<Memtable> immutableMemtables
+    ) {
+        for (int i = immutableMemtables.size() - 1; i >= 0; i--) {
+            iterators.add(immutableMemtables.get(i).scan(startKey, endKey));
+        }
     }
 }

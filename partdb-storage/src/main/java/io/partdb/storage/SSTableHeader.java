@@ -1,6 +1,4 @@
-package io.partdb.storage.sstable;
-
-import io.partdb.storage.StorageException;
+package io.partdb.storage;
 
 record SSTableHeader(int magic, int version, byte codecId) {
 

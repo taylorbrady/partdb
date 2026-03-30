@@ -1,6 +1,4 @@
-package io.partdb.storage.compaction;
-
-import io.partdb.storage.sstable.SSTableDescriptor;
+package io.partdb.storage;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -9,7 +7,7 @@ import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
-public final class CompactionReservations {
+final class CompactionReservations {
 
     private final ReentrantLock lock = new ReentrantLock();
     private final Map<Integer, Set<KeyRange>> rangesByLevel = new HashMap<>();

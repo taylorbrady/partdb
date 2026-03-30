@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.PriorityQueue;
 
-public final class MergingIterator implements Iterator<Mutation> {
+final class MergingIterator implements Iterator<Mutation> {
 
     private static final Comparator<IteratorEntry> ENTRY_ORDER = Comparator
         .comparing((IteratorEntry e) -> e.mutation.key())

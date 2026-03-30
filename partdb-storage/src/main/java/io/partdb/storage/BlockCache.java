@@ -1,6 +1,6 @@
-package io.partdb.storage.sstable;
+package io.partdb.storage;
 
-public sealed interface BlockCache permits S3FifoBlockCache, NoOpBlockCache {
+sealed interface BlockCache permits S3FifoBlockCache, NoOpBlockCache {
 
     Block get(long sstableId, long offset);
 

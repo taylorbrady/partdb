@@ -1,6 +1,4 @@
-package io.partdb.storage.sstable;
-
-import io.partdb.storage.StorageException;
+package io.partdb.storage;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;

@@ -1,6 +1,4 @@
-package io.partdb.storage.compaction;
-
-import io.partdb.storage.manifest.Manifest;
+package io.partdb.storage;
 
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -12,9 +10,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
-public final class CompactionScheduler implements AutoCloseable {
+final class CompactionScheduler implements AutoCloseable {
 
-    private final CompactionStrategy strategy;
+    private final LeveledCompactionPlanner planner;
     private final Compactor compactor;
     private final Supplier<Manifest> manifestSupplier;
     private final Consumer<CompactionResult> resultHandler;
@@ -24,14 +22,14 @@ public final class CompactionScheduler implements AutoCloseable {
     private final Semaphore concurrencyLimit;
     private final AtomicBoolean closed;
 
-    public CompactionScheduler(
-        CompactionStrategy strategy,
+    CompactionScheduler(
+        LeveledCompactionPlanner planner,
         Compactor compactor,
         int maxConcurrent,
         Supplier<Manifest> manifestSupplier,
         Consumer<CompactionResult> resultHandler
     ) {
-        this.strategy = strategy;
+        this.planner = planner;
         this.compactor = compactor;
         this.manifestSupplier = manifestSupplier;
         this.resultHandler = resultHandler;
@@ -44,13 +42,13 @@ public final class CompactionScheduler implements AutoCloseable {
         this.closed = new AtomicBoolean(false);
     }
 
-    public void scheduleCompactions() {
+    void scheduleCompactions() {
         if (closed.get()) {
             return;
         }
 
         Manifest manifest = manifestSupplier.get();
-        List<CompactionTask> tasks = strategy.selectCompactions(
+        List<CompactionTask> tasks = planner.selectCompactions(
             manifest,
             reservations.reservedSSTableIds()
         );
@@ -68,7 +66,7 @@ public final class CompactionScheduler implements AutoCloseable {
         }
     }
 
-    public boolean hasActiveCompactions() {
+    boolean hasActiveCompactions() {
         return reservations.hasActiveCompactions();
     }
 

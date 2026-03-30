@@ -1,7 +1,5 @@
 package io.partdb.storage;
 
-import io.partdb.storage.manifest.Manifest;
-import io.partdb.storage.sstable.SSTableDescriptor;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -110,6 +108,22 @@ class LSMTreeTest {
                 assertTrue(result.isPresent());
                 assertEquals(value(20), result.get().value());
             }
+        }
+
+        @Test
+        void prefersNewestImmutableMemtableValue() {
+            Memtable active = new Memtable();
+            Memtable older = new Memtable();
+            Memtable newer = new Memtable();
+
+            older.put(new Mutation.Put(key("key"), value("older"), 1));
+            newer.put(new Mutation.Put(key("key"), value("newer"), 2));
+
+            Optional<Mutation> result = LSMTree.lookupMutation(key("key"), active, List.of(older, newer));
+
+            assertTrue(result.isPresent());
+            assertInstanceOf(Mutation.Put.class, result.get());
+            assertEquals(value("newer"), ((Mutation.Put) result.get()).value());
         }
     }
 
@@ -533,6 +547,29 @@ class LSMTreeTest {
                 assertEquals(value(10), tree.get(key(1)).get().value());
                 assertTrue(tree.get(key(2)).isPresent());
                 assertEquals(value(20), tree.get(key(2)).get().value());
+            }
+        }
+
+        @Test
+        void restoresIntoFreshDirectory() {
+            Path sourceDir = tempDir.resolve("source");
+            Path restoredDir = tempDir.resolve("restored");
+
+            byte[] checkpoint;
+            try (LSMTree source = LSMTree.open(sourceDir, LSMConfig.defaults())) {
+                source.put(key(1), value(10), nextRevision());
+                source.put(key(2), value(20), nextRevision());
+                source.flush();
+                checkpoint = source.checkpoint();
+            }
+
+            try (LSMTree restored = LSMTree.open(restoredDir, LSMConfig.defaults())) {
+                restored.restoreFromCheckpoint(checkpoint);
+
+                assertTrue(restored.get(key(1)).isPresent());
+                assertEquals(value(10), restored.get(key(1)).get().value());
+                assertTrue(restored.get(key(2)).isPresent());
+                assertEquals(value(20), restored.get(key(2)).get().value());
             }
         }
 

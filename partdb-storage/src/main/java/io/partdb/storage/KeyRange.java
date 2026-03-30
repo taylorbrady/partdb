@@ -1,12 +1,9 @@
-package io.partdb.storage.compaction;
-
-import io.partdb.storage.Slice;
-import io.partdb.storage.sstable.SSTableDescriptor;
+package io.partdb.storage;
 
 import java.util.List;
 import java.util.Objects;
 
-public record KeyRange(Slice start, Slice end) {
+record KeyRange(Slice start, Slice end) {
 
     public KeyRange {
         Objects.requireNonNull(start, "start");

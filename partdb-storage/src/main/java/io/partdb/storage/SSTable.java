@@ -1,10 +1,4 @@
-package io.partdb.storage.sstable;
-
-import io.partdb.storage.BlockCodec;
-import io.partdb.storage.LSMConfig;
-import io.partdb.storage.Mutation;
-import io.partdb.storage.Slice;
-import io.partdb.storage.StorageException;
+package io.partdb.storage;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
@@ -24,7 +18,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
-public final class SSTable implements AutoCloseable {
+final class SSTable implements AutoCloseable {
 
     private final long id;
     private final int level;
@@ -131,6 +125,10 @@ public final class SSTable implements AutoCloseable {
 
     public Path path() {
         return path;
+    }
+
+    byte[] fileBytes() {
+        return segment.toArray(ValueLayout.JAVA_BYTE);
     }
 
     public Slice smallestKey() {

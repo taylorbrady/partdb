@@ -1,9 +1,9 @@
-package io.partdb.storage.compaction;
+package io.partdb.storage;
 
 import java.util.Objects;
 import java.util.Set;
 
-public record ReservationToken(
+record ReservationToken(
     Set<Long> sstableIds,
     int sourceLevel,
     int targetLevel,

@@ -1,7 +1,4 @@
-package io.partdb.storage.memtable;
-
-import io.partdb.storage.Slice;
-import io.partdb.storage.Mutation;
+package io.partdb.storage;
 
 import java.util.Iterator;
 import java.util.Optional;
@@ -9,20 +6,19 @@ import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
 
-public final class SkipListMemtable implements Memtable {
+final class Memtable {
 
     private static final int ENTRY_OVERHEAD = 100;
 
     private final ConcurrentSkipListMap<Slice, Mutation> entries;
     private final AtomicLong sizeInBytes;
 
-    public SkipListMemtable() {
+    Memtable() {
         this.entries = new ConcurrentSkipListMap<>();
         this.sizeInBytes = new AtomicLong(0);
     }
 
-    @Override
-    public void put(Mutation mutation) {
+    void put(Mutation mutation) {
         Mutation previous = entries.put(mutation.key(), mutation);
         long delta = estimateEntrySize(mutation);
         if (previous != null) {
@@ -31,13 +27,11 @@ public final class SkipListMemtable implements Memtable {
         sizeInBytes.addAndGet(delta);
     }
 
-    @Override
-    public Optional<Mutation> get(Slice key) {
+    Optional<Mutation> get(Slice key) {
         return Optional.ofNullable(entries.get(key));
     }
 
-    @Override
-    public Iterator<Mutation> scan(Slice startKey, Slice endKey) {
+    Iterator<Mutation> scan(Slice startKey, Slice endKey) {
         ConcurrentNavigableMap<Slice, Mutation> range;
 
         if (startKey == null && endKey == null) {
@@ -53,26 +47,18 @@ public final class SkipListMemtable implements Memtable {
         return range.values().iterator();
     }
 
-    @Override
-    public long sizeInBytes() {
+    long sizeInBytes() {
         return sizeInBytes.get();
     }
 
-    @Override
-    public long entryCount() {
+    long entryCount() {
         return entries.size();
     }
 
-    @Override
-    public void clear() {
-        entries.clear();
-        sizeInBytes.set(0);
-    }
-
-    private long estimateEntrySize(Mutation mutation) {
+    private static long estimateEntrySize(Mutation mutation) {
         return switch (mutation) {
-            case Mutation.Put p -> ENTRY_OVERHEAD + mutation.key().length() + p.value().length() + 8;
-            case Mutation.Tombstone _ -> ENTRY_OVERHEAD + mutation.key().length() + 8;
+            case Mutation.Put p -> ENTRY_OVERHEAD + mutation.key().length() + p.value().length() + Long.BYTES;
+            case Mutation.Tombstone _ -> ENTRY_OVERHEAD + mutation.key().length() + Long.BYTES;
         };
     }
 }

@@ -1,7 +1,4 @@
-package io.partdb.storage.manifest;
-
-import io.partdb.storage.StorageException;
-import io.partdb.storage.sstable.SSTableDescriptor;
+package io.partdb.storage;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -15,7 +12,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.zip.CRC32C;
 
-public record Manifest(
+record Manifest(
     long nextSSTableId,
     List<SSTableDescriptor> sstables
 ) {

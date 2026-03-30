@@ -1,8 +1,4 @@
-package io.partdb.storage.sstable;
-
-import io.partdb.storage.Slice;
-import io.partdb.storage.Mutation;
-import io.partdb.storage.StorageException;
+package io.partdb.storage;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -15,7 +11,7 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.zip.CRC32C;
 
-public final class Block implements Iterable<Mutation> {
+final class Block implements Iterable<Mutation> {
 
     private static final int TRAILER_SIZE = 12;
 
