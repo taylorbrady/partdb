@@ -1,8 +1,8 @@
 package io.partdb.client;
 
 import io.grpc.ManagedChannel;
-import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
-import io.grpc.netty.shaded.io.netty.channel.ChannelOption;
+import io.grpc.netty.NettyChannelBuilder;
+import io.netty.channel.ChannelOption;
 
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;

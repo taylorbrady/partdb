@@ -10,8 +10,8 @@ dependencies {
     implementation("org.openjdk.jmh:jmh-core:$jmhVersion")
     annotationProcessor("org.openjdk.jmh:jmh-generator-annprocess:$jmhVersion")
 
-    val logbackVersion = "1.5.23"
-    val logstashEncoderVersion = "8.1"
+    val logbackVersion = "1.5.32"
+    val logstashEncoderVersion = "9.0"
 
     runtimeOnly("ch.qos.logback:logback-classic:$logbackVersion")
     runtimeOnly("net.logstash.logback:logstash-logback-encoder:$logstashEncoderVersion")

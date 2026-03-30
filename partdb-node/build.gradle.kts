@@ -7,13 +7,13 @@ dependencies {
     implementation(project(":partdb-storage"))
     implementation(project(":partdb-raft"))
 
-    val protobufVersion = "4.33.1"
+    val protobufVersion = "4.34.0"
 
     implementation("com.google.protobuf:protobuf-java:$protobufVersion")
 }
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:4.33.1"
+        artifact = "com.google.protobuf:protoc:4.34.0"
     }
 }

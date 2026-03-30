@@ -1,6 +1,6 @@
 plugins {
     java
-    id("com.google.protobuf") version "0.9.5" apply false
+    id("com.google.protobuf") version "0.9.6" apply false
 }
 
 allprojects {
@@ -23,8 +23,8 @@ subprojects {
 
     dependencies {
         val slf4jVersion = "2.0.17"
-        val junitVersion = "5.11.3"
-        val assertjVersion = "3.27.0"
+        val junitVersion = "6.0.3"
+        val assertjVersion = "3.27.7"
 
         implementation("org.slf4j:slf4j-api:$slf4jVersion")
 
@@ -36,5 +36,6 @@ subprojects {
 
     tasks.test {
         useJUnitPlatform()
+        jvmArgs("--sun-misc-unsafe-memory-access=allow")
     }
 }

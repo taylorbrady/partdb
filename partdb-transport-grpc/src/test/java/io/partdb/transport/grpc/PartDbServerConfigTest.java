@@ -65,6 +65,19 @@ class PartDbServerConfigTest {
     }
 
     @Test
+    void createDefaultsSelfRaftEndpointForSingleNodeMode() {
+        var config = PartDbServerConfig.create(
+            "node1",
+            Map.of(),
+            Path.of("data/node1"),
+            8100,
+            8101
+        );
+
+        assertEquals(new PeerEndpoint("localhost", 8100), config.selfRaftEndpoint());
+    }
+
+    @Test
     void createRejectsInvalidRaftPeerAddresses() {
         assertThrows(
             IllegalArgumentException.class,

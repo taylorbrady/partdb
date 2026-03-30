@@ -10,23 +10,27 @@ import java.util.Objects;
 public final class PartDbServerConfig {
     private final PartDbNodeConfig nodeConfig;
     private final Map<String, String> raftPeerAddresses;
+    private final PeerEndpoint selfRaftEndpoint;
     private final int raftPort;
     private final GrpcServerConfig grpcServerConfig;
 
     PartDbServerConfig(
         PartDbNodeConfig nodeConfig,
         Map<String, String> raftPeerAddresses,
+        PeerEndpoint selfRaftEndpoint,
         int raftPort,
         GrpcServerConfig grpcServerConfig
     ) {
         Objects.requireNonNull(nodeConfig, "nodeConfig must not be null");
         Objects.requireNonNull(raftPeerAddresses, "raftPeerAddresses must not be null");
+        Objects.requireNonNull(selfRaftEndpoint, "selfRaftEndpoint must not be null");
         Objects.requireNonNull(grpcServerConfig, "grpcServerConfig must not be null");
         if (raftPort <= 0 || raftPort > 65535) {
             throw new IllegalArgumentException("raftPort must be between 1 and 65535");
         }
         this.nodeConfig = nodeConfig;
         this.raftPeerAddresses = Map.copyOf(raftPeerAddresses);
+        this.selfRaftEndpoint = selfRaftEndpoint;
         this.raftPort = raftPort;
         this.grpcServerConfig = grpcServerConfig;
     }
@@ -41,6 +45,10 @@ public final class PartDbServerConfig {
 
     public Map<String, String> raftPeerAddresses() {
         return raftPeerAddresses;
+    }
+
+    PeerEndpoint selfRaftEndpoint() {
+        return selfRaftEndpoint;
     }
 
     public int raftPort() {
@@ -70,9 +78,22 @@ public final class PartDbServerConfig {
         return new PartDbServerConfig(
             nodeConfigBuilder.build(),
             normalizedRaftPeerAddresses,
+            resolveSelfRaftEndpoint(nodeId, normalizedRaftPeerAddresses, raftPort),
             raftPort,
             GrpcServerConfig.defaultConfig(grpcPort)
         );
+    }
+
+    private static PeerEndpoint resolveSelfRaftEndpoint(
+        String nodeId,
+        Map<String, String> raftPeerAddresses,
+        int raftPort
+    ) {
+        String configuredAddress = raftPeerAddresses.get(nodeId);
+        if (configuredAddress != null) {
+            return PeerEndpoint.parse(configuredAddress);
+        }
+        return new PeerEndpoint("localhost", raftPort);
     }
 
     private static Map<String, String> normalizeRaftPeerAddresses(

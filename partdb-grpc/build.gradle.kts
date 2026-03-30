@@ -4,8 +4,8 @@ plugins {
 }
 
 dependencies {
-    val grpcVersion = "1.75.0"
-    val protobufVersion = "4.33.1"
+    val grpcVersion = "1.80.0"
+    val protobufVersion = "4.34.0"
 
     api("io.grpc:grpc-stub:$grpcVersion")
     api("io.grpc:grpc-protobuf:$grpcVersion")
@@ -14,11 +14,11 @@ dependencies {
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:4.33.1"
+        artifact = "com.google.protobuf:protoc:4.34.0"
     }
     plugins {
         create("grpc") {
-            artifact = "io.grpc:protoc-gen-grpc-java:1.75.0"
+            artifact = "io.grpc:protoc-gen-grpc-java:1.80.0"
         }
     }
     generateProtoTasks {
