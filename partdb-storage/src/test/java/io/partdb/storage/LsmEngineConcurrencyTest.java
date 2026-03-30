@@ -31,7 +31,7 @@ class LsmEngineConcurrencyTest extends LsmEngineTestSupport {
                     executor.submit(() -> {
                         for (int i = 0; i < readsPerThread; i++) {
                             int keyIndex = i % 100;
-                            Optional<StorageEntry> result = tree.get(key(keyIndex));
+                            Optional<EngineEntry> result = tree.get(key(keyIndex));
                             if (result.isEmpty() || !result.get().value().equals(value(keyIndex))) {
                                 failed.set(true);
                             }
@@ -72,7 +72,7 @@ class LsmEngineConcurrencyTest extends LsmEngineTestSupport {
 
             tree.flush();
 
-            List<StorageEntry> entries = readAll(tree.scan(null, null));
+            List<EngineEntry> entries = readAll(tree.scan(null, null));
             assertFalse(entries.isEmpty());
         }
     }
@@ -191,7 +191,7 @@ class LsmEngineConcurrencyTest extends LsmEngineTestSupport {
                         try {
                             for (int round = 0; round < 50; round++) {
                                 for (int i = 0; i < 50; i++) {
-                                    Optional<StorageEntry> result = tree.get(key(String.format("key-%03d", i)));
+                                    Optional<EngineEntry> result = tree.get(key(String.format("key-%03d", i)));
                                     if (result.isEmpty()) {
                                         failed.set(true);
                                     }
@@ -230,7 +230,7 @@ class LsmEngineConcurrencyTest extends LsmEngineTestSupport {
                     try {
                         startLatch.await();
                         for (int round = 0; round < 10; round++) {
-                            try (StorageEntryCursor cursor = tree.scan(null, null)) {
+                            try (EngineEntryCursor cursor = tree.scan(null, null)) {
                                 while (cursor.hasNext()) {
                                     cursor.next();
                                 }

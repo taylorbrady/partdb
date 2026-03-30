@@ -17,7 +17,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
         try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
 
-            Optional<StorageEntry> result = tree.get(key(1));
+            Optional<EngineEntry> result = tree.get(key(1));
 
             assertTrue(result.isPresent());
             assertEquals(value(10), result.get().value());
@@ -27,7 +27,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
     @Test
     void getNonExistentKey() {
         try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
-            Optional<StorageEntry> result = tree.get(key(99));
+            Optional<EngineEntry> result = tree.get(key(99));
             assertTrue(result.isEmpty());
         }
     }
@@ -38,7 +38,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
             tree.put(key(1), value(10), nextRevision());
             tree.delete(key(1), nextRevision());
 
-            Optional<StorageEntry> result = tree.get(key(1));
+            Optional<EngineEntry> result = tree.get(key(1));
             assertTrue(result.isEmpty());
         }
     }
@@ -48,7 +48,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
         try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.delete(key(1), nextRevision());
 
-            Optional<StorageEntry> result = tree.get(key(1));
+            Optional<EngineEntry> result = tree.get(key(1));
             assertTrue(result.isEmpty());
         }
     }
@@ -59,7 +59,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(1), value(20), nextRevision());
 
-            Optional<StorageEntry> result = tree.get(key(1));
+            Optional<EngineEntry> result = tree.get(key(1));
 
             assertTrue(result.isPresent());
             assertEquals(value(20), result.get().value());
@@ -89,7 +89,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
             tree.put(key(2), value(20), nextRevision());
             tree.put(key(3), value(30), nextRevision());
 
-            List<StorageEntry> entries = readAll(tree.scan(null, null));
+            List<EngineEntry> entries = readAll(tree.scan(null, null));
 
             assertEquals(3, entries.size());
             assertEquals(key(1), entries.get(0).key());
@@ -106,7 +106,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
             tree.put(key(3), value(30), nextRevision());
             tree.put(key(4), value(40), nextRevision());
 
-            List<StorageEntry> entries = readAll(tree.scan(key(2), key(4)));
+            List<EngineEntry> entries = readAll(tree.scan(key(2), key(4)));
 
             assertEquals(2, entries.size());
             assertEquals(key(2), entries.get(0).key());
@@ -122,7 +122,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
             tree.delete(key(2), nextRevision());
             tree.put(key(3), value(30), nextRevision());
 
-            List<StorageEntry> entries = readAll(tree.scan(null, null));
+            List<EngineEntry> entries = readAll(tree.scan(null, null));
 
             assertEquals(2, entries.size());
             assertEquals(key(1), entries.get(0).key());
@@ -139,7 +139,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
                 tree.put(key(i), largeValue(100), nextRevision());
             }
 
-            List<StorageEntry> entries = readAll(tree.scan(null, null));
+            List<EngineEntry> entries = readAll(tree.scan(null, null));
 
             assertEquals(20, entries.size());
             for (int i = 0; i < 20; i++) {
@@ -157,9 +157,9 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
             tree.put(key(2), largeValue(100), nextRevision());
             tree.put(key(1), value(20), nextRevision());
 
-            List<StorageEntry> entries = readAll(tree.scan(null, null));
+            List<EngineEntry> entries = readAll(tree.scan(null, null));
 
-            Optional<StorageEntry> keyEntry = entries.stream()
+            Optional<EngineEntry> keyEntry = entries.stream()
                 .filter(e -> e.key().equals(key(1)))
                 .findFirst();
 
@@ -207,8 +207,8 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
         }
 
         try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
-            Optional<StorageEntry> result1 = tree.get(key(1));
-            Optional<StorageEntry> result2 = tree.get(key(2));
+            Optional<EngineEntry> result1 = tree.get(key(1));
+            Optional<EngineEntry> result2 = tree.get(key(2));
 
             assertTrue(result1.isPresent());
             assertEquals(value(10), result1.get().value());
@@ -225,7 +225,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
             tree.flush();
             tree.put(key(1), value(20), nextRevision());
 
-            Optional<StorageEntry> result = tree.get(key(1));
+            Optional<EngineEntry> result = tree.get(key(1));
 
             assertTrue(result.isPresent());
             assertEquals(value(20), result.get().value());

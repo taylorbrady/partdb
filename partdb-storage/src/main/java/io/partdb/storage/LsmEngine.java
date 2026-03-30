@@ -65,7 +65,7 @@ final class LsmEngine implements AutoCloseable {
         applyMutation(mutation);
     }
 
-    Optional<StorageEntry> get(Slice key) {
+    Optional<EngineEntry> get(Slice key) {
         Optional<Mutation> result = lookupMutation(key, activeMemtable.get(), immutableMemtables);
         if (result.isPresent()) {
             return resolveEntry(result.get());
@@ -76,7 +76,7 @@ final class LsmEngine implements AutoCloseable {
         }
     }
 
-    StorageEntryCursor scan(Slice startKey, Slice endKey) {
+    EngineEntryCursor scan(Slice startKey, Slice endKey) {
         SSTableView readers = sstableStore.acquire();
         try {
             List<Iterator<Mutation>> iterators = new ArrayList<>();
@@ -224,10 +224,10 @@ final class LsmEngine implements AutoCloseable {
         }
     }
 
-    private Optional<StorageEntry> resolveEntry(Mutation mutation) {
+    private Optional<EngineEntry> resolveEntry(Mutation mutation) {
         return switch (mutation) {
             case Mutation.Tombstone _ -> Optional.empty();
-            case Mutation.Put p -> Optional.of(new StorageEntry(p.key(), p.value(), p.revision()));
+            case Mutation.Put p -> Optional.of(new EngineEntry(p.key(), p.value(), p.revision()));
         };
     }
 
@@ -315,10 +315,10 @@ final class LsmEngine implements AutoCloseable {
         }
     }
 
-    private static final class ScanCursor implements StorageEntryCursor {
+    private static final class ScanCursor implements EngineEntryCursor {
         private final SSTableView readers;
         private final MergingIterator merged;
-        private StorageEntry next;
+        private EngineEntry next;
         private boolean closed;
 
         private ScanCursor(SSTableView readers, MergingIterator merged) {
@@ -334,11 +334,11 @@ final class LsmEngine implements AutoCloseable {
         }
 
         @Override
-        public StorageEntry next() {
+        public EngineEntry next() {
             if (next == null) {
                 throw new NoSuchElementException();
             }
-            StorageEntry result = next;
+            EngineEntry result = next;
             next = advance();
             return result;
         }
@@ -351,10 +351,10 @@ final class LsmEngine implements AutoCloseable {
             }
         }
 
-        private StorageEntry advance() {
+        private EngineEntry advance() {
             while (merged.hasNext()) {
                 if (merged.next() instanceof Mutation.Put p) {
-                    return new StorageEntry(p.key(), p.value(), p.revision());
+                    return new EngineEntry(p.key(), p.value(), p.revision());
                 }
             }
             return null;

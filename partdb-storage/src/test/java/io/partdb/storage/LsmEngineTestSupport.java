@@ -43,9 +43,9 @@ abstract class LsmEngineTestSupport {
         return LsmConfig.defaults().withMemtableMaxSizeBytes(sizeBytes);
     }
 
-    protected static List<StorageEntry> readAll(StorageEntryCursor cursor) {
+    protected static List<EngineEntry> readAll(EngineEntryCursor cursor) {
         try (cursor) {
-            List<StorageEntry> entries = new ArrayList<>();
+            List<EngineEntry> entries = new ArrayList<>();
             while (cursor.hasNext()) {
                 entries.add(cursor.next());
             }

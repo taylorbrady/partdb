@@ -19,7 +19,7 @@ class LsmEngineCursorTest extends LsmEngineTestSupport {
             }
             tree.flush();
 
-            try (StorageEntryCursor cursor = tree.scan(null, null)) {
+            try (EngineEntryCursor cursor = tree.scan(null, null)) {
                 assertTrue(cursor.hasNext());
                 assertNotNull(cursor.next());
             }
@@ -34,13 +34,13 @@ class LsmEngineCursorTest extends LsmEngineTestSupport {
             }
             tree.flush();
 
-            try (StorageEntryCursor cursor1 = tree.scan(null, null);
-                 StorageEntryCursor cursor2 = tree.scan(null, null);
-                 StorageEntryCursor cursor3 = tree.scan(null, null)) {
+            try (EngineEntryCursor cursor1 = tree.scan(null, null);
+                 EngineEntryCursor cursor2 = tree.scan(null, null);
+                 EngineEntryCursor cursor3 = tree.scan(null, null)) {
 
-                List<StorageEntry> entries1 = readAll(cursor1);
-                List<StorageEntry> entries2 = readAll(cursor2);
-                List<StorageEntry> entries3 = readAll(cursor3);
+                List<EngineEntry> entries1 = readAll(cursor1);
+                List<EngineEntry> entries2 = readAll(cursor2);
+                List<EngineEntry> entries3 = readAll(cursor3);
 
                 assertEquals(20, entries1.size());
                 assertEquals(20, entries2.size());
@@ -61,12 +61,12 @@ class LsmEngineCursorTest extends LsmEngineTestSupport {
                 tree.flush();
             }
 
-            try (StorageEntryCursor cursor = tree.scan(null, null)) {
+            try (EngineEntryCursor cursor = tree.scan(null, null)) {
                 Thread.sleep(1000);
 
-                List<StorageEntry> entries = readAll(cursor);
+                List<EngineEntry> entries = readAll(cursor);
                 assertEquals(30, entries.size());
-                for (StorageEntry e : entries) {
+                for (EngineEntry e : entries) {
                     assertNotNull(e.key());
                     assertNotNull(e.value());
                 }
@@ -82,8 +82,8 @@ class LsmEngineCursorTest extends LsmEngineTestSupport {
             }
             tree.flush();
 
-            try (StorageEntryCursor cursor = tree.scan(null, null)) {
-                List<StorageEntry> first10 = new ArrayList<>();
+            try (EngineEntryCursor cursor = tree.scan(null, null)) {
+                List<EngineEntry> first10 = new ArrayList<>();
                 while (cursor.hasNext() && first10.size() < 10) {
                     first10.add(cursor.next());
                 }

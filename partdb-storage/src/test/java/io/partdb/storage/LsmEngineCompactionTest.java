@@ -49,7 +49,7 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
             Thread.sleep(1000);
 
             for (int i = 0; i < 20; i++) {
-                Optional<StorageEntry> result = tree.get(key(String.format("key-%02d", i)));
+                Optional<EngineEntry> result = tree.get(key(String.format("key-%02d", i)));
                 assertTrue(result.isPresent());
                 assertTrue(new String(result.get().value().toByteArray(), StandardCharsets.UTF_8).startsWith("v4"));
             }
@@ -124,7 +124,7 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
             Thread.sleep(1000);
 
             for (int i = 0; i < 30; i++) {
-                Optional<StorageEntry> result = tree.get(key(String.format("key-%02d", i)));
+                Optional<EngineEntry> result = tree.get(key(String.format("key-%02d", i)));
                 assertTrue(result.isPresent());
                 assertEquals(expectedValues.get(i), new String(result.get().value().toByteArray(), StandardCharsets.UTF_8));
             }
@@ -180,7 +180,7 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
 
         try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
             for (int i = 0; i < keys.size(); i++) {
-                Optional<StorageEntry> result = tree.get(keys.get(i));
+                Optional<EngineEntry> result = tree.get(keys.get(i));
                 assertTrue(result.isPresent());
                 assertEquals(values.get(i), result.get().value());
             }
@@ -202,10 +202,10 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
             Slice startKey = key("key-020");
             Slice endKey = key("key-030");
 
-            List<StorageEntry> entries = readAll(tree.scan(startKey, endKey));
+            List<EngineEntry> entries = readAll(tree.scan(startKey, endKey));
 
             assertEquals(10, entries.size());
-            for (StorageEntry e : entries) {
+            for (EngineEntry e : entries) {
                 assertTrue(e.key().compareTo(startKey) >= 0);
                 assertTrue(e.key().compareTo(endKey) < 0);
             }
