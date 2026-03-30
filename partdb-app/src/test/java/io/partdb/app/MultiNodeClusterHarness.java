@@ -72,6 +72,14 @@ final class MultiNodeClusterHarness implements AutoCloseable {
         }
     }
 
+    void stopAll() {
+        var reverseOrder = new ArrayList<>(nodes.values());
+        java.util.Collections.reverse(reverseOrder);
+        for (NodeHandle node : reverseOrder) {
+            node.stop();
+        }
+    }
+
     void startNode(String nodeId) throws IOException {
         node(nodeId).start();
     }
@@ -150,11 +158,7 @@ final class MultiNodeClusterHarness implements AutoCloseable {
 
     @Override
     public void close() {
-        var reverseOrder = new ArrayList<>(nodes.values());
-        java.util.Collections.reverse(reverseOrder);
-        for (NodeHandle node : reverseOrder) {
-            node.stop();
-        }
+        stopAll();
     }
 
     private NodeHandle awaitStableLeader(Duration timeout, String excludedNodeId) throws Exception {
