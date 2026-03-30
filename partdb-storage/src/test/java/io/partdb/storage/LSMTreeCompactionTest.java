@@ -25,9 +25,9 @@ class LSMTreeCompactionTest extends LSMTreeTestSupport {
             tree.flush();
             Thread.sleep(500);
 
-            Manifest manifest = tree.manifest();
-            List<SSTableDescriptor> l0Files = manifest.level(0);
-            List<SSTableDescriptor> l1Files = manifest.level(1);
+            SSTableManifest manifest = tree.manifest();
+            List<SSTableMetadata> l0Files = manifest.level(0);
+            List<SSTableMetadata> l1Files = manifest.level(1);
 
             assertTrue(l0Files.size() < 4);
             assertTrue(l1Files.size() > 0);
@@ -93,7 +93,7 @@ class LSMTreeCompactionTest extends LSMTreeTestSupport {
 
             Thread.sleep(2000);
 
-            Manifest manifest = tree.manifest();
+            SSTableManifest manifest = tree.manifest();
 
             for (int level = 1; level < manifest.maxLevel(); level++) {
                 long levelSize = manifest.levelSize(level);
@@ -143,10 +143,10 @@ class LSMTreeCompactionTest extends LSMTreeTestSupport {
 
             Thread.sleep(500);
 
-            Manifest manifest = tree.manifest();
+            SSTableManifest manifest = tree.manifest();
 
             long totalEntries = 0;
-            for (SSTableDescriptor desc : manifest.sstables()) {
+            for (SSTableMetadata desc : manifest.sstables()) {
                 totalEntries += desc.entryCount();
                 assertTrue(desc.id() > 0);
                 assertTrue(desc.level() >= 0);

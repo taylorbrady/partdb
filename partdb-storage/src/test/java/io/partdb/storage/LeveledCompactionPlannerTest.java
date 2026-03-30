@@ -19,7 +19,7 @@ class LeveledCompactionPlannerTest {
             .withMaxLevels(4);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
 
-        Manifest manifest = new Manifest(10, List.of(
+        SSTableManifest manifest = new SSTableManifest(10, List.of(
             sstable(5, 0, "e", "e", 10),
             sstable(4, 0, "d", "d", 10),
             sstable(3, 0, "c", "c", 10),
@@ -43,7 +43,7 @@ class LeveledCompactionPlannerTest {
             .withMaxBytesForLevelBase(100);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
 
-        Manifest manifest = new Manifest(3, List.of(
+        SSTableManifest manifest = new SSTableManifest(3, List.of(
             sstable(1, 2, "a", "m", 800),
             sstable(2, 2, "n", "z", 800)
         ));
@@ -61,7 +61,7 @@ class LeveledCompactionPlannerTest {
             .withMaxBytesForLevelBase(100);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
 
-        Manifest manifest = new Manifest(8, List.of(
+        SSTableManifest manifest = new SSTableManifest(8, List.of(
             sstable(8, 0, "m", "m", 10),
             sstable(7, 0, "n", "n", 10),
             sstable(6, 0, "o", "o", 10),
@@ -77,14 +77,64 @@ class LeveledCompactionPlannerTest {
         assertEquals(1, tasks.get(1).targetLevel());
     }
 
+    @Test
+    void prefersLowerOverlapSeedFileWithinOverfullLevel() {
+        LSMConfig config = LSMConfig.defaults()
+            .withMaxLevels(4)
+            .withMaxBytesForLevelBase(100);
+        LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
+
+        SSTableManifest manifest = new SSTableManifest(10, List.of(
+            sstable(1, 1, "a", "c", 80),
+            sstable(2, 1, "d", "f", 80),
+            sstable(3, 2, "a", "c", 500),
+            sstable(4, 2, "g", "z", 50)
+        ));
+
+        List<CompactionTask> tasks = planner.selectCompactions(manifest, Set.of());
+
+        assertEquals(1, tasks.size());
+        Set<Long> inputIds = ids(tasks.get(0));
+        assertEquals(Set.of(2L), inputIds);
+        assertFalse(inputIds.contains(1L));
+        assertFalse(inputIds.contains(3L));
+    }
+
+    @Test
+    void includesOnlyOverlappingGrandparentsForCompactionRange() {
+        LSMConfig config = LSMConfig.defaults()
+            .withMaxLevels(5)
+            .withMaxBytesForLevelBase(100);
+        LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
+
+        SSTableManifest manifest = new SSTableManifest(10, List.of(
+            sstable(1, 1, "d", "f", 150),
+            sstable(2, 2, "d", "f", 50),
+            sstable(3, 3, "c", "e", 25),
+            sstable(4, 3, "f", "g", 25),
+            sstable(5, 3, "x", "z", 25)
+        ));
+
+        List<CompactionTask> tasks = planner.selectCompactions(manifest, Set.of());
+
+        assertEquals(1, tasks.size());
+        assertEquals(Set.of(3L, 4L), grandparentIds(tasks.get(0)));
+    }
+
     private static Set<Long> ids(CompactionTask task) {
         return task.inputs().stream()
-            .map(SSTableDescriptor::id)
+            .map(SSTableMetadata::id)
             .collect(java.util.stream.Collectors.toSet());
     }
 
-    private static SSTableDescriptor sstable(long id, int level, String smallest, String largest, long fileSize) {
-        return new SSTableDescriptor(
+    private static Set<Long> grandparentIds(CompactionTask task) {
+        return task.grandparents().stream()
+            .map(SSTableMetadata::id)
+            .collect(java.util.stream.Collectors.toSet());
+    }
+
+    private static SSTableMetadata sstable(long id, int level, String smallest, String largest, long fileSize) {
+        return new SSTableMetadata(
             id,
             level,
             slice(smallest),

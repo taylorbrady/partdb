@@ -17,7 +17,7 @@ final class CompactionReservations {
         lock.lock();
         try {
             Set<Long> taskIds = task.inputs().stream()
-                .map(SSTableDescriptor::id)
+                .map(SSTableMetadata::id)
                 .collect(Collectors.toSet());
 
             if (!disjoint(reservedSSTableIds, taskIds)) {
@@ -101,7 +101,7 @@ final class CompactionReservations {
 
     private static int sourceLevel(CompactionTask task) {
         return task.inputs().stream()
-            .mapToInt(SSTableDescriptor::level)
+            .mapToInt(SSTableMetadata::level)
             .min()
             .orElse(0);
     }

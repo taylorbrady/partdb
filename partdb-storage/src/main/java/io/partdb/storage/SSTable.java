@@ -155,8 +155,8 @@ final class SSTable implements AutoCloseable {
         return fileSizeBytes;
     }
 
-    public SSTableDescriptor descriptor() {
-        return new SSTableDescriptor(
+    public SSTableMetadata metadata() {
+        return new SSTableMetadata(
             id,
             level,
             smallestKey(),
@@ -405,14 +405,14 @@ final class SSTable implements AutoCloseable {
             return uncompressedBytes;
         }
 
-        public SSTableDescriptor finish() {
+        public SSTableMetadata finish() {
             if (finished) {
                 throw new IllegalStateException("Builder already finished");
             }
 
             finishWriting();
 
-            return new SSTableDescriptor(
+            return new SSTableMetadata(
                 id,
                 level,
                 firstKey != null ? firstKey : Slice.empty(),

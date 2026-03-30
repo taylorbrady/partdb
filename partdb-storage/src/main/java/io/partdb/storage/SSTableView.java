@@ -10,11 +10,11 @@ import java.util.Optional;
 final class SSTableView implements AutoCloseable {
 
     private final SSTableSetRef ref;
-    private final Manifest manifest;
+    private final SSTableManifest manifest;
     private final int maxLevel;
     private final Map<Long, SSTable> readersById;
 
-    SSTableView(SSTableSetRef ref, Manifest manifest) {
+    SSTableView(SSTableSetRef ref, SSTableManifest manifest) {
         this.ref = ref;
         this.manifest = manifest;
         this.maxLevel = manifest.maxLevel();
@@ -50,16 +50,16 @@ final class SSTableView implements AutoCloseable {
     List<SSTable> scanTables(Slice startKey, Slice endKey) {
         List<SSTable> tables = new ArrayList<>(manifest.sstables().size());
 
-        for (SSTableDescriptor descriptor : manifest.level(0)) {
-            if (descriptor.overlaps(startKey, endKey)) {
-                tables.add(readerFor(descriptor));
+        for (SSTableMetadata metadata : manifest.level(0)) {
+            if (metadata.overlaps(startKey, endKey)) {
+                tables.add(readerFor(metadata));
             }
         }
 
         for (int level = 1; level <= maxLevel; level++) {
-            for (SSTableDescriptor descriptor : manifest.level(level)) {
-                if (descriptor.overlaps(startKey, endKey)) {
-                    tables.add(readerFor(descriptor));
+            for (SSTableMetadata metadata : manifest.level(level)) {
+                if (metadata.overlaps(startKey, endKey)) {
+                    tables.add(readerFor(metadata));
                 }
             }
         }
@@ -71,7 +71,7 @@ final class SSTableView implements AutoCloseable {
         return maxLevel;
     }
 
-    Manifest manifest() {
+    SSTableManifest manifest() {
         return manifest;
     }
 
@@ -84,13 +84,13 @@ final class SSTableView implements AutoCloseable {
         ref.release();
     }
 
-    private Optional<Mutation> getFrom(List<SSTableDescriptor> descriptors, Slice key) {
-        for (SSTableDescriptor descriptor : descriptors) {
-            if (!descriptor.mightContain(key)) {
+    private Optional<Mutation> getFrom(List<SSTableMetadata> metadata, Slice key) {
+        for (SSTableMetadata table : metadata) {
+            if (!table.mightContain(key)) {
                 continue;
             }
 
-            Optional<Mutation> result = readerFor(descriptor).get(key);
+            Optional<Mutation> result = readerFor(table).get(key);
             if (result.isPresent()) {
                 return result;
             }
@@ -99,19 +99,19 @@ final class SSTableView implements AutoCloseable {
         return Optional.empty();
     }
 
-    private List<SSTable> readersFor(List<SSTableDescriptor> descriptors) {
-        List<SSTable> readers = new ArrayList<>(descriptors.size());
-        for (SSTableDescriptor descriptor : descriptors) {
-            readers.add(readerFor(descriptor));
+    private List<SSTable> readersFor(List<SSTableMetadata> metadata) {
+        List<SSTable> readers = new ArrayList<>(metadata.size());
+        for (SSTableMetadata table : metadata) {
+            readers.add(readerFor(table));
         }
         return List.copyOf(readers);
     }
 
-    private SSTable readerFor(SSTableDescriptor descriptor) {
-        SSTable reader = readersById.get(descriptor.id());
+    private SSTable readerFor(SSTableMetadata metadata) {
+        SSTable reader = readersById.get(metadata.id());
         if (reader == null) {
             throw new StorageException.Corruption(
-                "Missing SSTable reader for descriptor id " + descriptor.id()
+                "Missing SSTable reader for metadata id " + metadata.id()
             );
         }
         return reader;

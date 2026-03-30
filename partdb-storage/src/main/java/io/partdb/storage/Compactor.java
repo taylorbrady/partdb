@@ -13,6 +13,7 @@ import java.util.Objects;
 final class Compactor {
 
     private static final Logger log = LoggerFactory.getLogger(Compactor.class);
+    private static final int GRANDPARENT_OVERLAP_MULTIPLIER = 10;
 
     private final SSTableStore sstableStore;
     private final LSMConfig config;
@@ -25,12 +26,18 @@ final class Compactor {
     CompactionResult compact(CompactionTask task) {
         long startNanos = System.nanoTime();
         List<SSTable> inputs = null;
-        List<SSTableDescriptor> completedOutputs = new ArrayList<>();
+        List<SSTableMetadata> completedOutputs = new ArrayList<>();
 
         try {
             inputs = openSSTables(task.inputs());
 
-            List<SSTableDescriptor> outputs = merge(inputs, task.targetLevel(), task.gcTombstones(), completedOutputs);
+            List<SSTableMetadata> outputs = merge(
+                inputs,
+                task.targetLevel(),
+                task.gcTombstones(),
+                task.grandparents(),
+                completedOutputs
+            );
 
             long durationMs = (System.nanoTime() - startNanos) / 1_000_000;
             log.atInfo()
@@ -56,11 +63,11 @@ final class Compactor {
         }
     }
 
-    private List<SSTable> openSSTables(List<SSTableDescriptor> descriptors) {
+    private List<SSTable> openSSTables(List<SSTableMetadata> metadata) {
         List<SSTable> readers = new ArrayList<>();
         try {
-            for (SSTableDescriptor desc : descriptors) {
-                readers.add(sstableStore.openForCompaction(desc));
+            for (SSTableMetadata table : metadata) {
+                readers.add(sstableStore.openForCompaction(table));
             }
             return readers;
         } catch (Exception e) {
@@ -69,11 +76,12 @@ final class Compactor {
         }
     }
 
-    private List<SSTableDescriptor> merge(
+    private List<SSTableMetadata> merge(
         List<SSTable> sources,
         int targetLevel,
         boolean gcTombstones,
-        List<SSTableDescriptor> completedOutputs
+        List<SSTableMetadata> grandparents,
+        List<SSTableMetadata> completedOutputs
     ) {
         List<Iterator<Mutation>> iterators = sources.stream()
             .map(table -> table.scan().iterator())
@@ -84,29 +92,33 @@ final class Compactor {
             ? new TombstoneFilter(merged)
             : merged;
 
-        return writeOutputs(filtered, targetLevel, completedOutputs);
+        return writeOutputs(filtered, targetLevel, grandparents, completedOutputs);
     }
 
-    private List<SSTableDescriptor> writeOutputs(
+    private List<SSTableMetadata> writeOutputs(
         Iterator<Mutation> entries,
         int targetLevel,
-        List<SSTableDescriptor> completedOutputs
+        List<SSTableMetadata> grandparents,
+        List<SSTableMetadata> completedOutputs
     ) {
         Mutation pending = null;
 
         while (pending != null || entries.hasNext()) {
             try (SSTable.Builder builder = sstableStore.createBuilder(targetLevel)) {
+                Slice firstKey = null;
                 while (pending != null || entries.hasNext()) {
                     Mutation next = pending != null ? pending : entries.next();
                     pending = null;
 
-                    if (builder.uncompressedBytes() > 0
-                        && builder.uncompressedBytes() + next.sizeInBytes() > config.targetUncompressedSize()) {
+                    if (shouldFinishOutput(builder, firstKey, next, grandparents)) {
                         pending = next;
                         break;
                     }
 
                     builder.add(next);
+                    if (firstKey == null) {
+                        firstKey = next.key();
+                    }
                 }
                 completedOutputs.add(builder.finish());
             }
@@ -115,8 +127,45 @@ final class Compactor {
         return completedOutputs;
     }
 
-    private void cleanupOutputs(List<SSTableDescriptor> outputs) {
-        for (SSTableDescriptor desc : outputs) {
+    private boolean shouldFinishOutput(
+        SSTable.Builder builder,
+        Slice firstKey,
+        Mutation next,
+        List<SSTableMetadata> grandparents
+    ) {
+        if (builder.uncompressedBytes() == 0 || firstKey == null) {
+            return false;
+        }
+
+        if (builder.uncompressedBytes() + next.sizeInBytes() > config.targetUncompressedSize()) {
+            return true;
+        }
+
+        return grandparentOverlapBytes(firstKey, next.key(), grandparents) > maxGrandparentOverlapBytes();
+    }
+
+    private long grandparentOverlapBytes(
+        Slice startKey,
+        Slice endKey,
+        List<SSTableMetadata> grandparents
+    ) {
+        long overlapBytes = 0;
+
+        for (SSTableMetadata metadata : grandparents) {
+            if (metadata.overlaps(startKey, endKey)) {
+                overlapBytes += metadata.fileSizeBytes();
+            }
+        }
+
+        return overlapBytes;
+    }
+
+    private long maxGrandparentOverlapBytes() {
+        return config.targetUncompressedSize() * GRANDPARENT_OVERLAP_MULTIPLIER;
+    }
+
+    private void cleanupOutputs(List<SSTableMetadata> outputs) {
+        for (SSTableMetadata desc : outputs) {
             try {
                 sstableStore.delete(desc.id());
             } catch (IOException e) {

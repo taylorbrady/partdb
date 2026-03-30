@@ -21,7 +21,7 @@ class CompactorTest {
             .withTargetUncompressedSize(200);
 
         try (SSTableStore store = SSTableStore.open(tempDir, config)) {
-            SSTableDescriptor input;
+            SSTableMetadata input;
             try (SSTable.Builder builder = store.createBuilder(0)) {
                 builder.add(put("key-1", value(96), 1));
                 builder.add(put("key-2", value(96), 2));
@@ -33,10 +33,40 @@ class CompactorTest {
             CompactionResult result = compactor.compact(new CompactionTask(List.of(input), 1, false));
 
             CompactionResult.Success success = assertInstanceOf(CompactionResult.Success.class, result);
-            List<SSTableDescriptor> outputs = success.outputs();
+            List<SSTableMetadata> outputs = success.outputs();
 
             assertEquals(3, outputs.size());
-            assertEquals(List.of(1L, 1L, 1L), outputs.stream().map(SSTableDescriptor::entryCount).toList());
+            assertEquals(List.of(1L, 1L, 1L), outputs.stream().map(SSTableMetadata::entryCount).toList());
+        }
+    }
+
+    @Test
+    void splitsOutputsWhenGrandparentOverlapGetsTooLarge() {
+        LSMConfig config = LSMConfig.defaults()
+            .withTargetUncompressedSize(1_000);
+
+        try (SSTableStore store = SSTableStore.open(tempDir, config)) {
+            SSTableMetadata input;
+            try (SSTable.Builder builder = store.createBuilder(0)) {
+                builder.add(put("key-1", value(96), 1));
+                builder.add(put("key-2", value(96), 2));
+                builder.add(put("key-3", value(96), 3));
+                input = builder.finish();
+            }
+
+            List<SSTableMetadata> grandparents = List.of(
+                metadata(10, 2, "key-1", "key-1", 6_000),
+                metadata(11, 2, "key-2", "key-2", 6_000)
+            );
+
+            Compactor compactor = new Compactor(store, config);
+            CompactionResult result = compactor.compact(new CompactionTask(List.of(input), grandparents, 1, false));
+
+            CompactionResult.Success success = assertInstanceOf(CompactionResult.Success.class, result);
+            List<SSTableMetadata> outputs = success.outputs();
+
+            assertEquals(2, outputs.size());
+            assertEquals(List.of(1L, 2L), outputs.stream().map(SSTableMetadata::entryCount).toList());
         }
     }
 
@@ -46,6 +76,19 @@ class CompactorTest {
 
     private static Slice slice(String value) {
         return Slice.of(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static SSTableMetadata metadata(long id, int level, String smallest, String largest, long fileSizeBytes) {
+        return new SSTableMetadata(
+            id,
+            level,
+            slice(smallest),
+            slice(largest),
+            id,
+            id,
+            fileSizeBytes,
+            1
+        );
     }
 
     private static byte[] value(int size) {

@@ -12,9 +12,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.zip.CRC32C;
 
-record Manifest(
+record SSTableManifest(
     long nextSSTableId,
-    List<SSTableDescriptor> sstables
+    List<SSTableMetadata> sstables
 ) {
 
     private static final int MAGIC_NUMBER = 0x4D414E46;
@@ -22,7 +22,7 @@ record Manifest(
     private static final String MANIFEST_FILENAME = "MANIFEST";
     private static final String MANIFEST_TEMP_FILENAME = "MANIFEST.tmp";
 
-    public Manifest {
+    public SSTableManifest {
         Objects.requireNonNull(sstables, "sstables");
         sstables = List.copyOf(sstables);
 
@@ -31,12 +31,12 @@ record Manifest(
         }
     }
 
-    public static Manifest readFrom(Path dataDirectory) {
+    public static SSTableManifest readFrom(Path dataDirectory) {
         try {
             Path manifestPath = dataDirectory.resolve(MANIFEST_FILENAME);
 
             if (!Files.exists(manifestPath)) {
-                return new Manifest(0, List.of());
+                return new SSTableManifest(0, List.of());
             }
 
             byte[] bytes = Files.readAllBytes(manifestPath);
@@ -44,7 +44,7 @@ record Manifest(
 
             return fromByteBuffer(buffer);
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to read manifest", e);
+            throw new StorageException.IO("Failed to read SSTable manifest", e);
         }
     }
 
@@ -69,11 +69,11 @@ record Manifest(
 
             Files.move(tempPath, manifestPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to write manifest", e);
+            throw new StorageException.IO("Failed to write SSTable manifest", e);
         }
     }
 
-    public List<SSTableDescriptor> level(int level) {
+    public List<SSTableMetadata> level(int level) {
         return sstables.stream()
             .filter(sst -> sst.level() == level)
             .toList();
@@ -82,13 +82,13 @@ record Manifest(
     public long levelSize(int level) {
         return sstables.stream()
             .filter(sst -> sst.level() == level)
-            .mapToLong(SSTableDescriptor::fileSizeBytes)
+            .mapToLong(SSTableMetadata::fileSizeBytes)
             .sum();
     }
 
     public int maxLevel() {
         return sstables.stream()
-            .mapToInt(SSTableDescriptor::level)
+            .mapToInt(SSTableMetadata::level)
             .max()
             .orElse(0);
     }
@@ -102,7 +102,7 @@ record Manifest(
         buffer.putLong(nextSSTableId);
         buffer.putInt(sstables.size());
 
-        for (SSTableDescriptor sst : sstables) {
+        for (SSTableMetadata sst : sstables) {
             sst.writeTo(buffer);
         }
 
@@ -113,19 +113,21 @@ record Manifest(
         return buffer.array();
     }
 
-    public static Manifest fromBytes(byte[] data) {
+    public static SSTableManifest fromBytes(byte[] data) {
         return fromByteBuffer(ByteBuffer.wrap(data));
     }
 
-    private static Manifest fromByteBuffer(ByteBuffer buffer) {
+    private static SSTableManifest fromByteBuffer(ByteBuffer buffer) {
         int magic = buffer.getInt();
         if (magic != MAGIC_NUMBER) {
-            throw new StorageException.Corruption("Invalid manifest magic number: " + Integer.toHexString(magic));
+            throw new StorageException.Corruption(
+                "Invalid SSTable manifest magic number: " + Integer.toHexString(magic)
+            );
         }
 
         int version = buffer.getInt();
         if (version != VERSION) {
-            throw new StorageException.Corruption("Unsupported manifest version: " + version);
+            throw new StorageException.Corruption("Unsupported SSTable manifest version: " + version);
         }
 
         int checksumPosition = buffer.limit() - 4;
@@ -136,23 +138,23 @@ record Manifest(
         int actualChecksum = (int) crc.getValue();
 
         if (actualChecksum != expectedChecksum) {
-            throw new StorageException.Corruption("Manifest checksum mismatch");
+            throw new StorageException.Corruption("SSTable manifest checksum mismatch");
         }
 
         long nextSSTableId = buffer.getLong();
         int sstableCount = buffer.getInt();
 
-        List<SSTableDescriptor> sstables = new ArrayList<>(sstableCount);
+        List<SSTableMetadata> sstables = new ArrayList<>(sstableCount);
         for (int i = 0; i < sstableCount; i++) {
-            sstables.add(SSTableDescriptor.readFrom(buffer));
+            sstables.add(SSTableMetadata.readFrom(buffer));
         }
 
-        return new Manifest(nextSSTableId, sstables);
+        return new SSTableManifest(nextSSTableId, sstables);
     }
 
     private int calculateSize() {
         int size = 4 + 4 + 8 + 4 + 4;
-        for (SSTableDescriptor sst : sstables) {
+        for (SSTableMetadata sst : sstables) {
             size += sst.serializedSize();
         }
         return size;

@@ -17,7 +17,7 @@ record KeyRange(Slice start, Slice end) {
         return end.compareTo(other.start) >= 0 && other.end.compareTo(start) >= 0;
     }
 
-    public static KeyRange from(List<SSTableDescriptor> sstables) {
+    public static KeyRange from(List<SSTableMetadata> sstables) {
         if (sstables.isEmpty()) {
             throw new IllegalArgumentException("sstables cannot be empty");
         }
@@ -25,7 +25,7 @@ record KeyRange(Slice start, Slice end) {
         Slice min = null;
         Slice max = null;
 
-        for (SSTableDescriptor sst : sstables) {
+        for (SSTableMetadata sst : sstables) {
             Slice smallest = sst.smallestKey();
             Slice largest = sst.largestKey();
 

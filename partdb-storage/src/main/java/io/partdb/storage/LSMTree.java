@@ -118,7 +118,7 @@ final class LSMTree implements AutoCloseable {
         }
     }
 
-    Manifest manifest() {
+    SSTableManifest manifest() {
         return sstableStore.manifest();
     }
 

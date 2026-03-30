@@ -6,7 +6,7 @@ sealed interface CompactionResult {
 
     CompactionTask task();
 
-    record Success(CompactionTask task, List<SSTableDescriptor> outputs) implements CompactionResult {
+    record Success(CompactionTask task, List<SSTableMetadata> outputs) implements CompactionResult {
         public Success {
             outputs = List.copyOf(outputs);
         }

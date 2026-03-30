@@ -80,6 +80,144 @@ class StateStoreInvariantTest {
         }
     }
 
+    @Test
+    void inPlaceRestoreRewindsVisibleStateAfterAggressiveCompaction() {
+        StorageConfig config = StorageConfig.builder()
+            .writeBufferMaxBytes(128)
+            .tuning(StorageConfig.Tuning.builder()
+                .targetTableSizeBytes(128)
+                .l0CompactionTrigger(2)
+                .maxBytesForLevelBase(256)
+                .maxLevels(4)
+                .build())
+            .build();
+
+        NavigableMap<Integer, ModelValue> expected = new TreeMap<>();
+        List<String> operations = new ArrayList<>();
+        long revision = 0;
+
+        try (StateStoreHolder holder = StateStoreHolder.open(tempDir.resolve("store-in-place"), config)) {
+            for (int round = 0; round < 80; round++) {
+                int key = round % 16;
+                byte[] value = valueFor(round, key);
+                revision++;
+                holder.store.put(key(key), value, revision);
+                expected.put(key, new ModelValue(value, revision));
+                operations.add("seed-put round=%d key=%d rev=%d".formatted(round, key, revision));
+            }
+
+            for (int key = 0; key < 8; key++) {
+                revision++;
+                holder.store.delete(key(key), revision);
+                expected.remove(key);
+                operations.add("seed-delete key=%d rev=%d".formatted(key, revision));
+            }
+
+            StorageSnapshot snapshot = holder.store.snapshot();
+            NavigableMap<Integer, ModelValue> snapshotState = new TreeMap<>(expected);
+            operations.add("snapshot");
+
+            for (int round = 0; round < 240; round++) {
+                int key = (round * 7) % 24;
+                if (round % 5 == 0) {
+                    revision++;
+                    holder.store.delete(key(key), revision);
+                    expected.remove(key);
+                    operations.add("mutate-delete round=%d key=%d rev=%d".formatted(round, key, revision));
+                } else {
+                    byte[] value = valueFor(200 + round, key);
+                    revision++;
+                    holder.store.put(key(key), value, revision);
+                    expected.put(key, new ModelValue(value, revision));
+                    operations.add("mutate-put round=%d key=%d rev=%d".formatted(round, key, revision));
+                }
+            }
+
+            holder.restoreInPlace(snapshot);
+            operations.add("restore-in-place");
+            assertScanMatches(snapshotState, holder.store, 0, 25, operations);
+
+            holder.reopen();
+            operations.add("reopen-after-restore");
+            assertScanMatches(snapshotState, holder.store, 0, 25, operations);
+        }
+    }
+
+    @Test
+    void randomizedSnapshotsSupportInPlaceAndCrossDirectoryRestore() {
+        StorageConfig config = StorageConfig.builder()
+            .writeBufferMaxBytes(192)
+            .tuning(StorageConfig.Tuning.builder()
+                .targetTableSizeBytes(192)
+                .l0CompactionTrigger(2)
+                .maxBytesForLevelBase(384)
+                .maxLevels(4)
+                .build())
+            .build();
+
+        Random random = new Random(67890);
+        NavigableMap<Integer, ModelValue> expected = new TreeMap<>();
+        List<SnapshotState> snapshots = new ArrayList<>();
+        List<String> operations = new ArrayList<>();
+        int nextStoreId = 1;
+        long revision = 0;
+
+        try (StateStoreHolder holder = StateStoreHolder.open(tempDir.resolve("mixed-store-0"), config)) {
+            snapshots.add(new SnapshotState(holder.store.snapshot(), copyState(expected)));
+            operations.add("snapshot-initial");
+
+            for (int step = 0; step < 350; step++) {
+                int op = random.nextInt(100);
+                if (op < 38) {
+                    int key = random.nextInt(24);
+                    byte[] value = valueFor(step, key);
+                    revision++;
+                    holder.store.put(key(key), value, revision);
+                    expected.put(key, new ModelValue(value, revision));
+                    operations.add("put step=%d key=%d rev=%d".formatted(step, key, revision));
+                } else if (op < 56) {
+                    int key = random.nextInt(24);
+                    revision++;
+                    holder.store.delete(key(key), revision);
+                    expected.remove(key);
+                    operations.add("delete step=%d key=%d rev=%d".formatted(step, key, revision));
+                } else if (op < 68) {
+                    int key = random.nextInt(24);
+                    operations.add("get step=%d key=%d".formatted(step, key));
+                    assertGetMatches(expected, holder.store, key, operations);
+                } else if (op < 80) {
+                    int start = random.nextInt(24);
+                    int end = random.nextInt(25);
+                    operations.add("scan step=%d start=%d end=%d".formatted(step, start, end));
+                    assertScanMatches(expected, holder.store, start, end, operations);
+                } else if (op < 88) {
+                    snapshots.add(new SnapshotState(holder.store.snapshot(), copyState(expected)));
+                    operations.add("snapshot step=%d count=%d".formatted(step, snapshots.size()));
+                } else if (op < 92) {
+                    holder.reopen();
+                    operations.add("reopen step=%d".formatted(step));
+                    assertScanMatches(expected, holder.store, 0, 25, operations);
+                } else if (op < 96) {
+                    SnapshotState snapshot = snapshots.get(random.nextInt(snapshots.size()));
+                    holder.restoreInPlace(snapshot.snapshot());
+                    expected = copyState(snapshot.visibleState());
+                    operations.add("restore-in-place step=%d".formatted(step));
+                    assertScanMatches(expected, holder.store, 0, 25, operations);
+                } else {
+                    SnapshotState snapshot = snapshots.get(random.nextInt(snapshots.size()));
+                    Path restoredDir = tempDir.resolve("mixed-store-" + nextStoreId++);
+                    holder.replaceWith(restoredDir, snapshot.snapshot());
+                    expected = copyState(snapshot.visibleState());
+                    operations.add("restore-cross-dir step=%d dir=%s".formatted(step, restoredDir.getFileName()));
+                    assertScanMatches(expected, holder.store, 0, 25, operations);
+                }
+            }
+
+            operations.add("final-scan");
+            assertScanMatches(expected, holder.store, 0, 25, operations);
+        }
+    }
+
     private static void assertGetMatches(
         NavigableMap<Integer, ModelValue> expected,
         StateStore store,
@@ -145,7 +283,15 @@ class StateStoreInvariantTest {
         return new byte[]{(byte) step, (byte) key, (byte) (step ^ key)};
     }
 
+    private static NavigableMap<Integer, ModelValue> copyState(NavigableMap<Integer, ModelValue> source) {
+        NavigableMap<Integer, ModelValue> copy = new TreeMap<>();
+        source.forEach((key, value) -> copy.put(key, new ModelValue(value.value().clone(), value.revision())));
+        return copy;
+    }
+
     private record ModelValue(byte[] value, long revision) {}
+
+    private record SnapshotState(StorageSnapshot snapshot, NavigableMap<Integer, ModelValue> visibleState) {}
 
     private static final class StateStoreHolder implements AutoCloseable {
         private final StorageConfig config;
@@ -172,6 +318,10 @@ class StateStoreInvariantTest {
             this.directory = directory;
             this.store = StateStore.open(directory, config);
             this.store.restore(snapshot);
+        }
+
+        void restoreInPlace(StorageSnapshot snapshot) {
+            store.restore(snapshot);
         }
 
         @Override

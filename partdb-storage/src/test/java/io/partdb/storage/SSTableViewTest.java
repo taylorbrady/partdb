@@ -17,14 +17,14 @@ class SSTableViewTest {
 
     @Test
     void lookupUsesLevelOrderInsteadOfReaderListOrder() {
-        SSTableDescriptor newerDescriptor = writeTable(
+        SSTableMetadata newerDescriptor = writeTable(
             1,
             1,
             "shared-key",
             "newer-value",
             20
         );
-        SSTableDescriptor olderDescriptor = writeTable(
+        SSTableMetadata olderDescriptor = writeTable(
             2,
             2,
             "shared-key",
@@ -54,7 +54,7 @@ class SSTableViewTest {
 
         ref.retire(List.of(olderReader, newerReader));
 
-        Manifest manifest = new Manifest(2, List.of(newerDescriptor, olderDescriptor));
+        SSTableManifest manifest = new SSTableManifest(2, List.of(newerDescriptor, olderDescriptor));
         try (SSTableView view = new SSTableView(acquired, manifest)) {
             Mutation mutation = view.get(slice("shared-key")).orElseThrow();
 
@@ -65,9 +65,9 @@ class SSTableViewTest {
 
     @Test
     void scanTablesRespectManifestLevelOrder() {
-        SSTableDescriptor newestL0 = writeTable(1, 0, "a", "l0", 30);
-        SSTableDescriptor l1 = writeTable(2, 1, "a", "l1", 20);
-        SSTableDescriptor l2 = writeTable(3, 2, "a", "l2", 10);
+        SSTableMetadata newestL0 = writeTable(1, 0, "a", "l0", 30);
+        SSTableMetadata l1 = writeTable(2, 1, "a", "l1", 20);
+        SSTableMetadata l2 = writeTable(3, 2, "a", "l2", 10);
 
         SSTable l2Reader = SSTable.open(l2.id(), l2.level(), tablePath(l2.id()), NoOpBlockCache.INSTANCE);
         SSTable newestL0Reader = SSTable.open(
@@ -87,7 +87,7 @@ class SSTableViewTest {
 
         ref.retire(List.of(l2Reader, newestL0Reader, l1Reader));
 
-        Manifest manifest = new Manifest(3, List.of(newestL0, l1, l2));
+        SSTableManifest manifest = new SSTableManifest(3, List.of(newestL0, l1, l2));
         try (SSTableView view = new SSTableView(acquired, manifest)) {
             List<SSTable> tables = view.scanTables(slice("a"), slice("z"));
 
@@ -95,7 +95,7 @@ class SSTableViewTest {
         }
     }
 
-    private SSTableDescriptor writeTable(long id, int level, String key, String value, long revision) {
+    private SSTableMetadata writeTable(long id, int level, String key, String value, long revision) {
         try (SSTable.Builder builder = SSTable.builder(id, level, tablePath(id), LSMConfig.defaults())) {
             builder.add(new Mutation.Put(slice(key), slice(value), revision));
             return builder.finish();

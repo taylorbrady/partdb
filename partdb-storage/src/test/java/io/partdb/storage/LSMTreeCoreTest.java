@@ -252,7 +252,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
     @Test
     void emptyManifestLoad() {
         try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
-            Manifest manifest = tree.manifest();
+            SSTableManifest manifest = tree.manifest();
             assertNotNull(manifest);
             assertTrue(manifest.sstables().isEmpty());
         }

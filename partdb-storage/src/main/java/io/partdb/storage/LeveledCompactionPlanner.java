@@ -20,7 +20,7 @@ final class LeveledCompactionPlanner {
         this.levelRoundRobin = new ConcurrentHashMap<>();
     }
 
-    List<CompactionTask> selectCompactions(Manifest manifest, Set<Long> excludedSSTableIds) {
+    List<CompactionTask> selectCompactions(SSTableManifest manifest, Set<Long> excludedSSTableIds) {
         if (config.maxLevels() <= 1) {
             return List.of();
         }
@@ -51,8 +51,8 @@ final class LeveledCompactionPlanner {
         return tasks;
     }
 
-    private Optional<ScoredTask> l0Candidate(Manifest manifest, Set<Long> excludedIds) {
-        List<SSTableDescriptor> l0Files = manifest.level(0).stream()
+    private Optional<ScoredTask> l0Candidate(SSTableManifest manifest, Set<Long> excludedIds) {
+        List<SSTableMetadata> l0Files = manifest.level(0).stream()
             .filter(sst -> !excludedIds.contains(sst.id()))
             .toList();
 
@@ -60,22 +60,26 @@ final class LeveledCompactionPlanner {
             return Optional.empty();
         }
 
-        List<SSTableDescriptor> l0Batch = selectL0Batch(l0Files);
-        List<SSTableDescriptor> l1Files = manifest.level(1).stream()
+        List<SSTableMetadata> l0Batch = selectL0Batch(l0Files);
+        List<SSTableMetadata> l1Files = manifest.level(1).stream()
             .filter(sst -> !excludedIds.contains(sst.id()))
             .toList();
-        List<SSTableDescriptor> overlappingL1 = findOverlapping(l0Batch, l1Files);
+        List<SSTableMetadata> overlappingL1 = findOverlapping(l0Batch, l1Files);
 
-        List<SSTableDescriptor> allInputs = new ArrayList<>();
+        List<SSTableMetadata> allInputs = new ArrayList<>();
         allInputs.addAll(l0Batch);
         allInputs.addAll(overlappingL1);
 
         boolean gcTombstones = 1 == config.maxLevels() - 1;
         double score = (double) l0Files.size() / config.l0CompactionTrigger();
-        return Optional.of(new ScoredTask(0, score, new CompactionTask(allInputs, 1, gcTombstones)));
+        return Optional.of(new ScoredTask(
+            0,
+            score,
+            new CompactionTask(allInputs, grandparents(manifest, allInputs, 1), 1, gcTombstones)
+        ));
     }
 
-    private Optional<ScoredTask> levelCandidate(Manifest manifest, int level, Set<Long> excludedIds) {
+    private Optional<ScoredTask> levelCandidate(SSTableManifest manifest, int level, Set<Long> excludedIds) {
         long currentSize = manifest.levelSize(level);
         long maxSize = config.maxBytesForLevel(level);
 
@@ -83,47 +87,53 @@ final class LeveledCompactionPlanner {
             return Optional.empty();
         }
 
-        List<SSTableDescriptor> levelFiles = manifest.level(level).stream()
+        List<SSTableMetadata> levelFiles = manifest.level(level).stream()
             .filter(sst -> !excludedIds.contains(sst.id()))
+            .sorted(metadataOrder())
             .toList();
         if (levelFiles.isEmpty()) {
             return Optional.empty();
         }
 
-        AtomicInteger counter = levelRoundRobin.computeIfAbsent(level, _ -> new AtomicInteger(0));
-        int index = Math.floorMod(counter.getAndIncrement(), levelFiles.size());
-        SSTableDescriptor selected = levelFiles.get(index);
-
-        List<SSTableDescriptor> nextLevelFiles = manifest.level(level + 1).stream()
+        List<SSTableMetadata> nextLevelFiles = manifest.level(level + 1).stream()
             .filter(sst -> !excludedIds.contains(sst.id()))
+            .sorted(metadataOrder())
             .toList();
-        List<SSTableDescriptor> overlapping = findOverlapping(List.of(selected), nextLevelFiles);
 
-        List<SSTableDescriptor> allInputs = new ArrayList<>();
+        AtomicInteger counter = levelRoundRobin.computeIfAbsent(level, _ -> new AtomicInteger(0));
+        int startIndex = Math.floorMod(counter.getAndIncrement(), levelFiles.size());
+        SSTableMetadata selected = selectLevelSeed(levelFiles, nextLevelFiles, startIndex);
+        List<SSTableMetadata> overlapping = findOverlapping(List.of(selected), nextLevelFiles);
+
+        List<SSTableMetadata> allInputs = new ArrayList<>();
         allInputs.add(selected);
         allInputs.addAll(overlapping);
 
         int targetLevel = level + 1;
         boolean gcTombstones = targetLevel == config.maxLevels() - 1;
         double score = (double) currentSize / maxSize;
-        return Optional.of(new ScoredTask(level, score, new CompactionTask(allInputs, targetLevel, gcTombstones)));
+        return Optional.of(new ScoredTask(
+            level,
+            score,
+            new CompactionTask(allInputs, grandparents(manifest, allInputs, targetLevel), targetLevel, gcTombstones)
+        ));
     }
 
-    private List<SSTableDescriptor> findOverlapping(
-        List<SSTableDescriptor> sources,
-        List<SSTableDescriptor> candidates
+    private List<SSTableMetadata> findOverlapping(
+        List<SSTableMetadata> sources,
+        List<SSTableMetadata> candidates
     ) {
         if (sources.isEmpty() || candidates.isEmpty()) {
             return List.of();
         }
 
         Slice minKey = sources.stream()
-            .map(SSTableDescriptor::smallestKey)
+            .map(SSTableMetadata::smallestKey)
             .min(Comparator.naturalOrder())
             .orElseThrow();
 
         Slice maxKey = sources.stream()
-            .map(SSTableDescriptor::largestKey)
+            .map(SSTableMetadata::largestKey)
             .max(Comparator.naturalOrder())
             .orElseThrow();
 
@@ -132,7 +142,7 @@ final class LeveledCompactionPlanner {
             .toList();
     }
 
-    private List<SSTableDescriptor> selectL0Batch(List<SSTableDescriptor> l0Files) {
+    private List<SSTableMetadata> selectL0Batch(List<SSTableMetadata> l0Files) {
         int batchSize = Math.min(l0Files.size(), config.l0CompactionTrigger());
         return l0Files.subList(l0Files.size() - batchSize, l0Files.size());
     }
@@ -141,5 +151,75 @@ final class LeveledCompactionPlanner {
         return task.inputs().stream().anyMatch(sst -> usedIds.contains(sst.id()));
     }
 
+    private List<SSTableMetadata> grandparents(
+        SSTableManifest manifest,
+        List<SSTableMetadata> inputs,
+        int targetLevel
+    ) {
+        int grandparentLevel = targetLevel + 1;
+        if (grandparentLevel >= config.maxLevels()) {
+            return List.of();
+        }
+        List<SSTableMetadata> grandparentFiles = manifest.level(grandparentLevel).stream()
+            .sorted(metadataOrder())
+            .toList();
+        return findOverlapping(inputs, grandparentFiles);
+    }
+
+    private SSTableMetadata selectLevelSeed(
+        List<SSTableMetadata> levelFiles,
+        List<SSTableMetadata> nextLevelFiles,
+        int startIndex
+    ) {
+        if (levelFiles.size() == 1 || nextLevelFiles.isEmpty()) {
+            return levelFiles.get(startIndex);
+        }
+
+        CandidateChoice best = null;
+
+        for (int offset = 0; offset < levelFiles.size(); offset++) {
+            SSTableMetadata candidate = levelFiles.get((startIndex + offset) % levelFiles.size());
+            List<SSTableMetadata> overlapping = findOverlapping(List.of(candidate), nextLevelFiles);
+            long overlapBytes = overlapping.stream()
+                .mapToLong(SSTableMetadata::fileSizeBytes)
+                .sum();
+
+            CandidateChoice choice = new CandidateChoice(
+                candidate,
+                overlapBytes,
+                overlapping.size(),
+                offset
+            );
+
+            if (best == null || choice.betterThan(best)) {
+                best = choice;
+            }
+        }
+
+        return best.metadata();
+    }
+
+    private static Comparator<SSTableMetadata> metadataOrder() {
+        return Comparator
+            .comparing(SSTableMetadata::smallestKey)
+            .thenComparing(SSTableMetadata::largestKey)
+            .thenComparingLong(SSTableMetadata::id);
+    }
+
     private record ScoredTask(int sourceLevel, double score, CompactionTask task) {}
+
+    private record CandidateChoice(
+        SSTableMetadata metadata,
+        long overlapBytes,
+        int overlapCount,
+        int rotationDistance
+    ) {
+        boolean betterThan(CandidateChoice other) {
+            return overlapBytes < other.overlapBytes
+                || (overlapBytes == other.overlapBytes && overlapCount < other.overlapCount)
+                || (overlapBytes == other.overlapBytes
+                && overlapCount == other.overlapCount
+                && rotationDistance < other.rotationDistance);
+        }
+    }
 }

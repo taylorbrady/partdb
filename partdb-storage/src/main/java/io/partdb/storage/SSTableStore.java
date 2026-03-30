@@ -47,14 +47,14 @@ final class SSTableStore implements AutoCloseable {
     private final CompactionScheduler compactionScheduler;
     private final AtomicBoolean closed;
 
-    private volatile Manifest manifest;
+    private volatile SSTableManifest manifest;
     private volatile SSTableSetRef currentSet;
 
     private SSTableStore(
         Path directory,
         LSMConfig config,
         BlockCache cache,
-        Manifest manifest,
+        SSTableManifest manifest,
         SSTableSetRef initialSet
     ) {
         this.directory = Objects.requireNonNull(directory, "directory");
@@ -85,7 +85,7 @@ final class SSTableStore implements AutoCloseable {
                 ? new S3FifoBlockCache(config.blockCacheMaxBytes())
                 : NoOpBlockCache.INSTANCE;
 
-            Manifest manifest = Manifest.readFrom(directory);
+            SSTableManifest manifest = SSTableManifest.readFrom(directory);
             List<Long> discoveredIds = discoverSSTableIds(directory);
             validateManifestState(manifest, discoveredIds);
 
@@ -106,16 +106,16 @@ final class SSTableStore implements AutoCloseable {
     }
 
     void flush(Iterator<Mutation> mutations) {
-        SSTableDescriptor descriptor;
+        SSTableMetadata metadata;
         try (SSTable.Builder builder = createBuilder(0)) {
             while (mutations.hasNext()) {
                 builder.add(mutations.next());
             }
-            descriptor = builder.finish();
+            metadata = builder.finish();
         }
 
-        SSTable reader = openReader(descriptor);
-        addFlushed(descriptor, reader);
+        SSTable reader = openReader(metadata);
+        addFlushed(metadata, reader);
         scheduleCompaction();
     }
 
@@ -126,7 +126,7 @@ final class SSTableStore implements AutoCloseable {
             stateLock.lock();
             try {
                 SSTableSetRef current = currentSet;
-                Manifest manifestSnapshot = manifest;
+                SSTableManifest manifestSnapshot = manifest;
 
                 switch (current.tryAcquire()) {
                     case SSTableSetRef.AcquireResult.Success(var acquired) -> {
@@ -152,7 +152,7 @@ final class SSTableStore implements AutoCloseable {
         );
     }
 
-    Manifest manifest() {
+    SSTableManifest manifest() {
         stateLock.lock();
         try {
             return manifest;
@@ -169,34 +169,45 @@ final class SSTableStore implements AutoCloseable {
 
     void restore(byte[] data) {
         StoreCheckpoint checkpoint = StoreCheckpoint.fromBytes(data);
+        boolean restored = false;
         try {
             checkpoint.stage(directory);
         } catch (IOException e) {
             throw new StorageException.IO("Failed to stage checkpoint files", e);
         }
 
-        stateLock.lock();
         try {
-            Manifest newManifest = checkpoint.manifest();
-            SSTableSetRef oldSet = currentSet;
-            oldSet.retire(List.copyOf(oldSet.readers()));
-            awaitDrain(oldSet, SHUTDOWN_DRAIN_TIMEOUT);
+            try (CompactionScheduler.Pause ignored = compactionScheduler.pauseAndAwaitQuiescence(SHUTDOWN_DRAIN_TIMEOUT)) {
+                stateLock.lock();
+                try {
+                    SSTableManifest newManifest = checkpoint.manifest();
+                    SSTableSetRef oldSet = currentSet;
+                    oldSet.retire(List.copyOf(oldSet.readers()));
+                    awaitDrain(oldSet, SHUTDOWN_DRAIN_TIMEOUT);
 
-            deleteAllSSTables();
-            checkpoint.commitTo(directory);
-            manifest = newManifest;
-            manifest.writeTo(directory);
-            nextId.set(newManifest.nextSSTableId());
-            currentSet = SSTableSetRef.of(loadSSTablesFromManifest(directory, cache, newManifest));
-        } catch (IOException e) {
-            resetAfterFailedRestore();
-            throw new StorageException.IO("Failed to restore checkpoint", e);
-        } catch (RuntimeException e) {
-            resetAfterFailedRestore();
-            throw e;
+                    deleteAllSSTables();
+                    checkpoint.commitTo(directory);
+                    manifest = newManifest;
+                    manifest.writeTo(directory);
+                    nextId.set(newManifest.nextSSTableId());
+                    currentSet = SSTableSetRef.of(loadSSTablesFromManifest(directory, cache, newManifest));
+                    restored = true;
+                } catch (IOException e) {
+                    resetAfterFailedRestore();
+                    throw new StorageException.IO("Failed to restore checkpoint", e);
+                } catch (RuntimeException e) {
+                    resetAfterFailedRestore();
+                    throw e;
+                } finally {
+                    stateLock.unlock();
+                }
+            }
         } finally {
-            stateLock.unlock();
             checkpoint.cleanup(directory);
+        }
+
+        if (restored) {
+            scheduleCompaction();
         }
     }
 
@@ -205,14 +216,14 @@ final class SSTableStore implements AutoCloseable {
         return SSTable.builder(id, level, resolvePath(id), config);
     }
 
-    SSTable openReader(SSTableDescriptor descriptor) {
-        Path path = resolvePath(descriptor.id());
-        return SSTable.open(descriptor.id(), descriptor.level(), path, cache);
+    SSTable openReader(SSTableMetadata metadata) {
+        Path path = resolvePath(metadata.id());
+        return SSTable.open(metadata.id(), metadata.level(), path, cache);
     }
 
-    SSTable openForCompaction(SSTableDescriptor descriptor) {
-        Path path = resolvePath(descriptor.id());
-        return SSTable.open(descriptor.id(), descriptor.level(), path, NoOpBlockCache.INSTANCE);
+    SSTable openForCompaction(SSTableMetadata metadata) {
+        Path path = resolvePath(metadata.id());
+        return SSTable.open(metadata.id(), metadata.level(), path, NoOpBlockCache.INSTANCE);
     }
 
     void delete(long id) throws IOException {
@@ -233,12 +244,12 @@ final class SSTableStore implements AutoCloseable {
         awaitDrain(finalSet, SHUTDOWN_DRAIN_TIMEOUT);
     }
 
-    private void addFlushed(SSTableDescriptor descriptor, SSTable reader) {
+    private void addFlushed(SSTableMetadata metadata, SSTable reader) {
         stateLock.lock();
         try {
-            List<SSTableDescriptor> updatedDescriptors = new ArrayList<>(manifest.sstables());
-            updatedDescriptors.addFirst(descriptor);
-            manifest = new Manifest(nextId.get(), updatedDescriptors);
+            List<SSTableMetadata> updatedMetadata = new ArrayList<>(manifest.sstables());
+            updatedMetadata.addFirst(metadata);
+            manifest = new SSTableManifest(nextId.get(), updatedMetadata);
             manifest.writeTo(directory);
 
             List<SSTable> newReaders = new ArrayList<>();
@@ -253,17 +264,17 @@ final class SSTableStore implements AutoCloseable {
         }
     }
 
-    private void applyCompaction(List<SSTableDescriptor> removed, List<SSTableDescriptor> added) {
+    private void applyCompaction(List<SSTableMetadata> removed, List<SSTableMetadata> added) {
         stateLock.lock();
         try {
-            List<SSTableDescriptor> updated = new ArrayList<>(manifest.sstables());
+            List<SSTableMetadata> updated = new ArrayList<>(manifest.sstables());
             updated.removeAll(removed);
             updated.addAll(added);
-            manifest = new Manifest(nextId.get(), updated);
+            manifest = new SSTableManifest(nextId.get(), updated);
             manifest.writeTo(directory);
 
             Set<Long> removedIds = removed.stream()
-                .map(SSTableDescriptor::id)
+                .map(SSTableMetadata::id)
                 .collect(Collectors.toSet());
 
             List<SSTable> orphanedReaders = new ArrayList<>();
@@ -277,7 +288,7 @@ final class SSTableStore implements AutoCloseable {
                 }
             }
 
-            for (SSTableDescriptor desc : added) {
+            for (SSTableMetadata desc : added) {
                 retainedReaders.add(openReader(desc));
             }
 
@@ -310,13 +321,13 @@ final class SSTableStore implements AutoCloseable {
         }
     }
 
-    private void deleteOldSSTables(List<SSTableDescriptor> descriptors) {
-        for (SSTableDescriptor desc : descriptors) {
+    private void deleteOldSSTables(List<SSTableMetadata> metadata) {
+        for (SSTableMetadata table : metadata) {
             try {
-                delete(desc.id());
+                delete(table.id());
             } catch (IOException e) {
                 log.atWarn()
-                    .addKeyValue("sstableId", desc.id())
+                    .addKeyValue("sstableId", table.id())
                     .log("Failed to delete old SSTable");
             }
         }
@@ -358,10 +369,10 @@ final class SSTableStore implements AutoCloseable {
     private static List<SSTable> loadSSTablesFromManifest(
         Path directory,
         BlockCache cache,
-        Manifest manifest
+        SSTableManifest manifest
     ) {
         List<SSTable> readers = new ArrayList<>(manifest.sstables().size());
-        for (SSTableDescriptor desc : manifest.sstables()) {
+        for (SSTableMetadata desc : manifest.sstables()) {
             Path path = directory.resolve("%06d.sst".formatted(desc.id()));
             readers.add(SSTable.open(desc.id(), desc.level(), path, cache));
         }
@@ -369,7 +380,7 @@ final class SSTableStore implements AutoCloseable {
         return readers;
     }
 
-    private static void validateManifestState(Manifest manifest, List<Long> discoveredIds) {
+    private static void validateManifestState(SSTableManifest manifest, List<Long> discoveredIds) {
         if (manifest.sstables().isEmpty()) {
             if (!discoveredIds.isEmpty()) {
                 throw new StorageException.Corruption(
@@ -380,7 +391,7 @@ final class SSTableStore implements AutoCloseable {
         }
 
         Set<Long> manifestIds = manifest.sstables().stream()
-            .map(SSTableDescriptor::id)
+            .map(SSTableMetadata::id)
             .collect(Collectors.toCollection(TreeSet::new));
         Set<Long> discoveredIdSet = new TreeSet<>(discoveredIds);
 
@@ -392,7 +403,7 @@ final class SSTableStore implements AutoCloseable {
             untrackedOnDisk.removeAll(manifestIds);
 
             throw new StorageException.Corruption(
-                "Manifest does not match on-disk SSTables. missingFromDisk=%s, untrackedOnDisk=%s"
+                "SSTable manifest does not match on-disk SSTables. missingFromDisk=%s, untrackedOnDisk=%s"
                     .formatted(missingFromDisk, untrackedOnDisk)
             );
         }
@@ -430,34 +441,34 @@ final class SSTableStore implements AutoCloseable {
                 .log("Failed to clean manifest after restore failure");
         }
 
-        manifest = new Manifest(0, List.of());
+        manifest = new SSTableManifest(0, List.of());
         nextId.set(0);
         currentSet = SSTableSetRef.of(List.of());
     }
 
     private static final class StoreCheckpoint {
-        private final Manifest manifest;
+        private final SSTableManifest manifest;
         private final List<CheckpointSSTable> sstables;
 
-        private StoreCheckpoint(Manifest manifest, List<CheckpointSSTable> sstables) {
+        private StoreCheckpoint(SSTableManifest manifest, List<CheckpointSSTable> sstables) {
             this.manifest = manifest;
             this.sstables = List.copyOf(sstables);
         }
 
         static StoreCheckpoint capture(SSTableView view) {
-            Manifest manifest = view.manifest();
+            SSTableManifest manifest = view.manifest();
             var readersById = view.all().stream()
                 .collect(Collectors.toMap(SSTable::id, reader -> reader));
 
             List<CheckpointSSTable> sstables = new ArrayList<>(manifest.sstables().size());
-            for (SSTableDescriptor descriptor : manifest.sstables()) {
-                SSTable reader = readersById.get(descriptor.id());
+            for (SSTableMetadata metadata : manifest.sstables()) {
+                SSTable reader = readersById.get(metadata.id());
                 if (reader == null) {
                     throw new StorageException.Corruption(
-                        "Missing SSTable reader for checkpoint: " + descriptor.id()
+                        "Missing SSTable reader for checkpoint: " + metadata.id()
                     );
                 }
-                sstables.add(new CheckpointSSTable(descriptor.id(), reader.fileBytes()));
+                sstables.add(new CheckpointSSTable(metadata.id(), reader.fileBytes()));
             }
 
             return new StoreCheckpoint(manifest, sstables);
@@ -490,15 +501,15 @@ final class SSTableStore implements AutoCloseable {
 
                 byte[] manifestBytes = new byte[manifestLength];
                 buffer.get(manifestBytes);
-                Manifest manifest = Manifest.fromBytes(manifestBytes);
+                SSTableManifest manifest = SSTableManifest.fromBytes(manifestBytes);
                 if (manifest.sstables().size() != sstableCount) {
                     throw new StorageException.Corruption("Checkpoint SSTable count does not match manifest");
                 }
 
                 List<CheckpointSSTable> sstables = new ArrayList<>(sstableCount);
-                for (SSTableDescriptor descriptor : manifest.sstables()) {
+                for (SSTableMetadata metadata : manifest.sstables()) {
                     long id = buffer.getLong();
-                    if (id != descriptor.id()) {
+                    if (id != metadata.id()) {
                         throw new StorageException.Corruption(
                             "Checkpoint SSTable id does not match manifest: " + id
                         );
@@ -524,7 +535,7 @@ final class SSTableStore implements AutoCloseable {
             }
         }
 
-        Manifest manifest() {
+        SSTableManifest manifest() {
             return manifest;
         }
 

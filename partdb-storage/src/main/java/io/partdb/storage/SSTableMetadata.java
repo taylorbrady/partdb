@@ -3,7 +3,7 @@ package io.partdb.storage;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
-record SSTableDescriptor(
+record SSTableMetadata(
     long id,
     int level,
     Slice smallestKey,
@@ -14,7 +14,7 @@ record SSTableDescriptor(
     long entryCount
 ) {
 
-    public SSTableDescriptor {
+    public SSTableMetadata {
         Objects.requireNonNull(smallestKey, "smallestKey");
         Objects.requireNonNull(largestKey, "largestKey");
         if (id < 0) {
@@ -64,7 +64,7 @@ record SSTableDescriptor(
         buffer.putLong(entryCount);
     }
 
-    public static SSTableDescriptor readFrom(ByteBuffer buffer) {
+    public static SSTableMetadata readFrom(ByteBuffer buffer) {
         long id = buffer.getLong();
         int level = buffer.getInt();
 
@@ -81,7 +81,7 @@ record SSTableDescriptor(
         long fileSizeBytes = buffer.getLong();
         long entryCount = buffer.getLong();
 
-        return new SSTableDescriptor(
+        return new SSTableMetadata(
             id,
             level,
             Slice.of(smallestKeyBytes),
