@@ -17,14 +17,14 @@ public final class GrpcServer implements AutoCloseable {
 
     public GrpcServer(
         PartDbNode node,
-        Map<String, String> peerAddresses,
-        String selfAddress,
+        Map<String, String> raftPeerAddresses,
+        String selfRaftAddress,
         GrpcServerConfig config
     ) {
         this.config = config;
         this.server = ServerBuilder.forPort(config.port())
             .addService(new KvServiceImpl(node, config))
-            .addService(new ClusterServiceImpl(node, peerAddresses, selfAddress))
+            .addService(new ClusterServiceImpl(node, raftPeerAddresses, selfRaftAddress))
             .executor(Executors.newVirtualThreadPerTaskExecutor())
             .build();
     }

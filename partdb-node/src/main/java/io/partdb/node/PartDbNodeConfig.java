@@ -53,19 +53,19 @@ public final class PartDbNodeConfig {
         return Set.copyOf(memberIds);
     }
 
-    public Path dataDirectory() {
+    Path dataDirectory() {
         return dataDirectory;
     }
 
-    public LSMConfig storeConfig() {
+    LSMConfig storeConfig() {
         return storeConfig;
     }
 
-    public RaftConfig raftConfig() {
+    RaftConfig raftConfig() {
         return raftConfig;
     }
 
-    public Duration tickInterval() {
+    Duration tickInterval() {
         return tickInterval;
     }
 

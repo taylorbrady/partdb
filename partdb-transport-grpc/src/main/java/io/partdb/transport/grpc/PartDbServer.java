@@ -26,14 +26,14 @@ public final class PartDbServer implements AutoCloseable {
         RaftTransport raftTransport = transport != null ? transport : createDefaultTransport();
         this.node = new PartDbNode(config.nodeConfig(), raftTransport, storage);
 
-        String selfAddress = config.peerAddresses().getOrDefault(
+        String selfRaftAddress = config.raftPeerAddresses().getOrDefault(
             config.nodeId(),
-            config.nodeId() + ":" + config.grpcPort()
+            ""
         );
         this.grpcServer = new GrpcServer(
             node,
-            config.peerAddresses(),
-            selfAddress,
+            config.raftPeerAddresses(),
+            selfRaftAddress,
             config.grpcServerConfig()
         );
     }
@@ -42,7 +42,7 @@ public final class PartDbServer implements AutoCloseable {
         var transportConfig = GrpcRaftTransportConfig.create(
             config.nodeId(),
             config.raftPort(),
-            config.peerAddresses()
+            config.raftPeerAddresses()
         );
         return new GrpcRaftTransport(transportConfig);
     }

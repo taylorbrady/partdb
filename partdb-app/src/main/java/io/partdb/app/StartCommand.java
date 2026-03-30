@@ -41,7 +41,7 @@ final class StartCommand {
         try {
             config = PartDbServerConfig.create(
                 options.nodeId,
-                options.peerAddresses,
+                options.raftPeerAddresses,
                 options.dataDir,
                 options.raftPort,
                 options.grpcPort
@@ -64,10 +64,10 @@ final class StartCommand {
             out.println("  Raft port: " + options.raftPort);
             out.println("  gRPC port: " + options.grpcPort);
             out.println("  Data dir:  " + options.dataDir.toAbsolutePath());
-            if (options.peerAddresses.isEmpty()) {
+            if (options.raftPeerAddresses.isEmpty()) {
                 out.println("  Mode:      single-node");
             } else {
-                out.println("  Peers:     " + options.peerAddresses.size());
+                out.println("  Raft peers: " + options.raftPeerAddresses.size());
             }
             out.println();
             out.println("Press Ctrl+C to stop");
@@ -94,9 +94,9 @@ final class StartCommand {
             switch (arg) {
                 case "--help", "-h" -> options.help = true;
                 case "--node-id", "-n" -> options.nodeId = requireValue(args, ++i, "--node-id");
-                case "--peer", "-p" -> {
-                    String peerSpec = requireValue(args, ++i, "--peer");
-                    parsePeer(peerSpec, options.peerAddresses);
+                case "--raft-peer", "-r" -> {
+                    String peerSpec = requireValue(args, ++i, "--raft-peer");
+                    parseRaftPeer(peerSpec, options.raftPeerAddresses);
                 }
                 case "--data-dir", "-d" -> options.dataDir = Path.of(requireValue(args, ++i, "--data-dir"));
                 case "--raft-port" -> options.raftPort = requireIntValue(args, ++i, "--raft-port");
@@ -108,26 +108,26 @@ final class StartCommand {
         return options;
     }
 
-    private static void parsePeer(String peerSpec, Map<String, String> peerAddresses) {
+    private static void parseRaftPeer(String peerSpec, Map<String, String> raftPeerAddresses) {
         String[] parts = peerSpec.split("=", 2);
         if (parts.length != 2) {
             throw new IllegalArgumentException(
-                "Invalid peer format: '" + peerSpec + "'. Expected: nodeId=host:port"
+                "Invalid raft peer format: '" + peerSpec + "'. Expected: nodeId=host:port"
             );
         }
         String nodeId = parts[0].trim();
-        String address = parts[1].trim();
-        if (nodeId.isEmpty() || address.isEmpty()) {
+        String raftAddress = parts[1].trim();
+        if (nodeId.isEmpty() || raftAddress.isEmpty()) {
             throw new IllegalArgumentException(
-                "Invalid peer format: '" + peerSpec + "'. Expected: nodeId=host:port"
+                "Invalid raft peer format: '" + peerSpec + "'. Expected: nodeId=host:port"
             );
         }
-        if (!address.contains(":")) {
+        if (!raftAddress.contains(":")) {
             throw new IllegalArgumentException(
-                "Invalid peer address: '" + address + "'. Expected: host:port"
+                "Invalid raft peer address: '" + raftAddress + "'. Expected: host:port"
             );
         }
-        peerAddresses.put(nodeId, address);
+        raftPeerAddresses.put(nodeId, raftAddress);
     }
 
     private static String requireValue(String[] args, int index, String optionName) {
@@ -153,7 +153,7 @@ final class StartCommand {
         out.println();
         out.println("Options:");
         out.println("  -n, --node-id <id>              Node identifier (required)");
-        out.println("  -p, --peer <id=host:port>       Peer node (repeatable, omit for single-node)");
+        out.println("  -r, --raft-peer <id=host:port>  Raft peer endpoint (repeatable, omit for single-node)");
         out.println("  -d, --data-dir <path>           Directory for data storage (required)");
         out.println("      --raft-port <port>          Port for Raft communication (default: " + DEFAULT_RAFT_PORT + ")");
         out.println("      --grpc-port <port>          Port for gRPC API traffic (default: " + DEFAULT_GRPC_PORT + ")");
@@ -166,16 +166,16 @@ final class StartCommand {
         out.println();
         out.println("  Three-node cluster (run on node1):");
         out.println("    partdb start --node-id node1 \\");
-        out.println("                 --peer node1=192.168.1.1:8100 \\");
-        out.println("                 --peer node2=192.168.1.2:8100 \\");
-        out.println("                 --peer node3=192.168.1.3:8100 \\");
+        out.println("                 --raft-peer node1=192.168.1.1:8100 \\");
+        out.println("                 --raft-peer node2=192.168.1.2:8100 \\");
+        out.println("                 --raft-peer node3=192.168.1.3:8100 \\");
         out.println("                 --data-dir ./data/node1");
     }
 
     private static final class Options {
         boolean help;
         String nodeId;
-        Map<String, String> peerAddresses = new HashMap<>();
+        Map<String, String> raftPeerAddresses = new HashMap<>();
         Path dataDir;
         int raftPort = DEFAULT_RAFT_PORT;
         int grpcPort = DEFAULT_GRPC_PORT;

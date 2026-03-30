@@ -113,11 +113,11 @@ public final class GrpcRaftTransport implements RaftTransport {
 
     private RaftServiceGrpc.RaftServiceStub getOrCreateStub(String peerId) {
         return stubs.computeIfAbsent(peerId, id -> {
-            String address = config.peerAddresses().get(id);
-            if (address == null) {
+            String raftAddress = config.raftPeerAddresses().get(id);
+            if (raftAddress == null) {
                 return null;
             }
-            ManagedChannel channel = getOrCreateChannel(id, address);
+            ManagedChannel channel = getOrCreateChannel(id, raftAddress);
             return RaftServiceGrpc.newStub(channel)
                 .withInterceptors(senderIdInterceptor());
         });
@@ -142,9 +142,9 @@ public final class GrpcRaftTransport implements RaftTransport {
         };
     }
 
-    private ManagedChannel getOrCreateChannel(String peerId, String address) {
+    private ManagedChannel getOrCreateChannel(String peerId, String raftAddress) {
         return channels.computeIfAbsent(peerId, _ -> {
-            String[] parts = address.split(":");
+            String[] parts = raftAddress.split(":");
             String host = parts[0];
             int port = Integer.parseInt(parts[1]);
             return ManagedChannelBuilder.forAddress(host, port)

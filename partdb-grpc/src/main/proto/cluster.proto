@@ -59,7 +59,7 @@ message MemberListRequest {
 
 message Member {
   string node_id = 1;
-  string address = 2;
+  string raft_address = 2;
   MemberRole role = 3;
   bool is_leader = 4;
   bool is_self = 5;

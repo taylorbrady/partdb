@@ -100,12 +100,12 @@ final class MemberCommand {
     }
 
     private static void printText(ClusterMembership response, PrintStream out) {
-        out.printf("%-12s %-24s %-8s %-8s%n", "NODE ID", "ADDRESS", "ROLE", "STATUS");
+        out.printf("%-12s %-24s %-8s %-8s%n", "NODE ID", "RAFT ADDRESS", "ROLE", "STATUS");
         for (ClusterMember member : response.members()) {
             String status = member.leader() ? "leader" : (member.self() ? "self" : "");
             out.printf("%-12s %-24s %-8s %-8s%n",
                 member.nodeId(),
-                member.address().orElse("(unknown)"),
+                member.raftAddress().orElse("(unknown)"),
                 member.role().name().toLowerCase(),
                 status);
         }
@@ -122,8 +122,8 @@ final class MemberCommand {
                 out.print(",");
             }
             out.print("{\"nodeId\":\"" + member.nodeId() + "\"");
-            out.print(",\"address\":"
-                + member.address().map(address -> "\"" + address + "\"").orElse("null"));
+            out.print(",\"raftAddress\":"
+                + member.raftAddress().map(raftAddress -> "\"" + raftAddress + "\"").orElse("null"));
             out.print(",\"role\":\"" + member.role().name().toLowerCase() + "\"");
             out.print(",\"isLeader\":" + member.leader());
             out.print(",\"isSelf\":" + member.self() + "}");

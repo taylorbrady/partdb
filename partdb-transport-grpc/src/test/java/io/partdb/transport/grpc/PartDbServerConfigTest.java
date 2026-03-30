@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class PartDbServerConfigTest {
 
     @Test
-    void createKeepsPeerAddressesInTransportLayer() {
+    void createKeepsRaftPeerAddressesInTransportLayer() {
         var config = PartDbServerConfig.create(
             "node2",
             Map.of(
@@ -33,12 +33,12 @@ class PartDbServerConfigTest {
                 "node1", "127.0.0.1:8100",
                 "node2", "127.0.0.1:8101"
             ),
-            config.peerAddresses()
+            config.raftPeerAddresses()
         );
     }
 
     @Test
-    void createRejectsPeerAddressesThatExcludeLocalNode() {
+    void createRejectsRaftPeerAddressesThatExcludeLocalNode() {
         assertThrows(
             IllegalArgumentException.class,
             () -> PartDbServerConfig.create(

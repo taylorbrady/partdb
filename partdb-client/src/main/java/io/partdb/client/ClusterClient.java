@@ -109,7 +109,7 @@ public final class ClusterClient implements AutoCloseable {
         List<ClusterMember> members = response.getMembersList().stream()
             .map(member -> new ClusterMember(
                 member.getNodeId(),
-                emptyToOptional(member.getAddress()),
+                emptyToOptional(member.getRaftAddress()),
                 toClusterMemberRole(member.getRole()),
                 member.getIsLeader(),
                 member.getIsSelf()

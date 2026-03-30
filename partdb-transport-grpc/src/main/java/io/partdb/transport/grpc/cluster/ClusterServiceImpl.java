@@ -21,13 +21,13 @@ import java.util.Map;
 public final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase {
 
     private final PartDbNode node;
-    private final Map<String, String> peerAddresses;
-    private final String selfAddress;
+    private final Map<String, String> raftPeerAddresses;
+    private final String selfRaftAddress;
 
-    public ClusterServiceImpl(PartDbNode node, Map<String, String> peerAddresses, String selfAddress) {
+    public ClusterServiceImpl(PartDbNode node, Map<String, String> raftPeerAddresses, String selfRaftAddress) {
         this.node = node;
-        this.peerAddresses = Map.copyOf(peerAddresses);
-        this.selfAddress = selfAddress;
+        this.raftPeerAddresses = Map.copyOf(raftPeerAddresses);
+        this.selfRaftAddress = selfRaftAddress;
     }
 
     @Override
@@ -69,10 +69,12 @@ public final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceI
     }
 
     private Member buildMember(String nodeId, MemberRole role, String leaderId, String selfId) {
-        String address = nodeId.equals(selfId) ? selfAddress : peerAddresses.getOrDefault(nodeId, "");
+        String raftAddress = nodeId.equals(selfId)
+            ? selfRaftAddress
+            : raftPeerAddresses.getOrDefault(nodeId, "");
         return Member.newBuilder()
             .setNodeId(nodeId)
-            .setAddress(address)
+            .setRaftAddress(raftAddress)
             .setRole(role)
             .setIsLeader(nodeId.equals(leaderId))
             .setIsSelf(nodeId.equals(selfId))

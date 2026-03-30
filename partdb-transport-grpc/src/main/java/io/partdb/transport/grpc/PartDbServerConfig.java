@@ -9,24 +9,24 @@ import java.util.Objects;
 
 public final class PartDbServerConfig {
     private final PartDbNodeConfig nodeConfig;
-    private final Map<String, String> peerAddresses;
+    private final Map<String, String> raftPeerAddresses;
     private final int raftPort;
     private final GrpcServerConfig grpcServerConfig;
 
     PartDbServerConfig(
         PartDbNodeConfig nodeConfig,
-        Map<String, String> peerAddresses,
+        Map<String, String> raftPeerAddresses,
         int raftPort,
         GrpcServerConfig grpcServerConfig
     ) {
         Objects.requireNonNull(nodeConfig, "nodeConfig must not be null");
-        Objects.requireNonNull(peerAddresses, "peerAddresses must not be null");
+        Objects.requireNonNull(raftPeerAddresses, "raftPeerAddresses must not be null");
         Objects.requireNonNull(grpcServerConfig, "grpcServerConfig must not be null");
         if (raftPort <= 0 || raftPort > 65535) {
             throw new IllegalArgumentException("raftPort must be between 1 and 65535");
         }
         this.nodeConfig = nodeConfig;
-        this.peerAddresses = Map.copyOf(peerAddresses);
+        this.raftPeerAddresses = Map.copyOf(raftPeerAddresses);
         this.raftPort = raftPort;
         this.grpcServerConfig = grpcServerConfig;
     }
@@ -39,8 +39,8 @@ public final class PartDbServerConfig {
         return nodeConfig.nodeId();
     }
 
-    public Map<String, String> peerAddresses() {
-        return peerAddresses;
+    public Map<String, String> raftPeerAddresses() {
+        return raftPeerAddresses;
     }
 
     public int raftPort() {
@@ -57,35 +57,38 @@ public final class PartDbServerConfig {
 
     public static PartDbServerConfig create(
         String nodeId,
-        Map<String, String> peerAddresses,
+        Map<String, String> raftPeerAddresses,
         Path dataDirectory,
         int raftPort,
         int grpcPort
     ) {
-        var normalizedPeerAddresses = normalizePeerAddresses(nodeId, peerAddresses);
+        var normalizedRaftPeerAddresses = normalizeRaftPeerAddresses(nodeId, raftPeerAddresses);
         var nodeConfigBuilder = PartDbNodeConfig.builder(nodeId, dataDirectory);
-        if (!normalizedPeerAddresses.isEmpty()) {
-            nodeConfigBuilder.members(normalizedPeerAddresses.keySet().toArray(String[]::new));
+        if (!normalizedRaftPeerAddresses.isEmpty()) {
+            nodeConfigBuilder.members(normalizedRaftPeerAddresses.keySet().toArray(String[]::new));
         }
         return new PartDbServerConfig(
             nodeConfigBuilder.build(),
-            normalizedPeerAddresses,
+            normalizedRaftPeerAddresses,
             raftPort,
             GrpcServerConfig.defaultConfig(grpcPort)
         );
     }
 
-    private static Map<String, String> normalizePeerAddresses(String nodeId, Map<String, String> peerAddresses) {
-        Objects.requireNonNull(peerAddresses, "peerAddresses must not be null");
+    private static Map<String, String> normalizeRaftPeerAddresses(
+        String nodeId,
+        Map<String, String> raftPeerAddresses
+    ) {
+        Objects.requireNonNull(raftPeerAddresses, "raftPeerAddresses must not be null");
 
         var normalized = new LinkedHashMap<String, String>();
-        peerAddresses.forEach((peerId, address) -> normalized.put(
+        raftPeerAddresses.forEach((peerId, raftAddress) -> normalized.put(
             requireNonBlank(peerId, "peerId"),
-            requireNonBlank(address, "peerAddress")
+            requireNonBlank(raftAddress, "raftPeerAddress")
         ));
 
         if (!normalized.isEmpty() && !normalized.containsKey(nodeId)) {
-            throw new IllegalArgumentException("peerAddresses must include the local nodeId");
+            throw new IllegalArgumentException("raftPeerAddresses must include the local nodeId");
         }
         return normalized;
     }
