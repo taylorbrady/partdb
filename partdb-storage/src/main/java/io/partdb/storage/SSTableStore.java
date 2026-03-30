@@ -38,6 +38,10 @@ final class SSTableStore implements AutoCloseable {
     private static final int CHECKPOINT_MAGIC = 0x53544350;
     private static final int CHECKPOINT_VERSION = 1;
     private static final String RESTORE_SUFFIX = ".restore";
+    private static final String BACKUP_SUFFIX = ".backup";
+    private static final String MANIFEST_FILENAME = "MANIFEST";
+    private static final String MANIFEST_TEMP_FILENAME = "MANIFEST.tmp";
+    private static final String MANIFEST_BACKUP_FILENAME = MANIFEST_FILENAME + BACKUP_SUFFIX;
 
     private final Path directory;
     private final LsmConfig config;
@@ -171,33 +175,48 @@ final class SSTableStore implements AutoCloseable {
         StoreCheckpoint checkpoint = StoreCheckpoint.fromBytes(data);
         boolean restored = false;
         try {
-            checkpoint.stage(directory);
-        } catch (IOException e) {
-            throw new StorageException.IO("Failed to stage checkpoint files", e);
-        }
+            try {
+                checkpoint.stage(directory);
+                checkpoint.validate(directory);
+            } catch (IOException e) {
+                throw new StorageException.IO("Failed to stage checkpoint files", e);
+            }
 
-        try {
             try (CompactionScheduler.Pause ignored = compactionScheduler.pauseAndAwaitQuiescence(SHUTDOWN_DRAIN_TIMEOUT)) {
                 stateLock.lock();
                 try {
+                    SSTableManifest previousManifest = manifest;
                     SSTableManifest newManifest = checkpoint.manifest();
                     SSTableSetRef oldSet = currentSet;
                     oldSet.retire(List.copyOf(oldSet.readers()));
                     awaitDrain(oldSet, SHUTDOWN_DRAIN_TIMEOUT);
 
-                    deleteAllSSTables();
-                    checkpoint.commitTo(directory);
-                    manifest = newManifest;
-                    manifest.writeTo(directory);
-                    nextId.set(newManifest.nextSSTableId());
-                    currentSet = SSTableSetRef.of(loadSSTablesFromManifest(directory, cache, newManifest));
-                    restored = true;
+                    backupCurrentState(previousManifest);
+                    try {
+                        ActivatedRestore activated = checkpoint.activate(directory, cache);
+                        manifest = activated.manifest();
+                        nextId.set(activated.manifest().nextSSTableId());
+                        currentSet = SSTableSetRef.of(activated.readers());
+                        restored = true;
+                    } catch (IOException e) {
+                        rollbackRestore(previousManifest);
+                        throw new StorageException.IO("Failed to restore checkpoint", e);
+                    } catch (RuntimeException e) {
+                        rollbackRestore(previousManifest);
+                        throw e;
+                    }
+
+                    if (restored) {
+                        try {
+                            cleanupRestoreBackups(previousManifest);
+                        } catch (IOException e) {
+                            log.atWarn()
+                                .setCause(e)
+                                .log("Failed to clean restore backup files");
+                        }
+                    }
                 } catch (IOException e) {
-                    resetAfterFailedRestore();
                     throw new StorageException.IO("Failed to restore checkpoint", e);
-                } catch (RuntimeException e) {
-                    resetAfterFailedRestore();
-                    throw e;
                 } finally {
                     stateLock.unlock();
                 }
@@ -423,27 +442,74 @@ final class SSTableStore implements AutoCloseable {
         }
     }
 
-    private void resetAfterFailedRestore() {
-        try {
-            deleteAllSSTables();
-        } catch (IOException e) {
-            log.atWarn()
-                .setCause(e)
-                .log("Failed to clean SSTables after restore failure");
+    private void backupCurrentState(SSTableManifest previousManifest) throws IOException {
+        for (SSTableMetadata metadata : previousManifest.sstables()) {
+            Path livePath = resolvePath(metadata.id());
+            if (Files.exists(livePath)) {
+                Files.move(
+                    livePath,
+                    backupPath(metadata.id()),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE
+                );
+            }
         }
 
-        try {
-            Files.deleteIfExists(directory.resolve("MANIFEST"));
-            Files.deleteIfExists(directory.resolve("MANIFEST.tmp"));
-        } catch (IOException e) {
-            log.atWarn()
-                .setCause(e)
-                .log("Failed to clean manifest after restore failure");
+        Path manifestPath = directory.resolve(MANIFEST_FILENAME);
+        if (Files.exists(manifestPath)) {
+            Files.move(
+                manifestPath,
+                directory.resolve(MANIFEST_BACKUP_FILENAME),
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE
+            );
         }
 
-        manifest = new SSTableManifest(0, List.of());
-        nextId.set(0);
-        currentSet = SSTableSetRef.of(List.of());
+        Files.deleteIfExists(directory.resolve(MANIFEST_TEMP_FILENAME));
+    }
+
+    private void rollbackRestore(SSTableManifest previousManifest) throws IOException {
+        deleteAllSSTables();
+
+        for (SSTableMetadata metadata : previousManifest.sstables()) {
+            Path backupPath = backupPath(metadata.id());
+            if (Files.exists(backupPath)) {
+                Files.move(
+                    backupPath,
+                    resolvePath(metadata.id()),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE
+                );
+            }
+        }
+
+        Files.deleteIfExists(directory.resolve(MANIFEST_FILENAME));
+        Files.deleteIfExists(directory.resolve(MANIFEST_TEMP_FILENAME));
+
+        Path manifestBackupPath = directory.resolve(MANIFEST_BACKUP_FILENAME);
+        if (Files.exists(manifestBackupPath)) {
+            Files.move(
+                manifestBackupPath,
+                directory.resolve(MANIFEST_FILENAME),
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE
+            );
+        }
+
+        manifest = previousManifest;
+        nextId.set(previousManifest.nextSSTableId());
+        currentSet = SSTableSetRef.of(loadSSTablesFromManifest(directory, cache, previousManifest));
+    }
+
+    private void cleanupRestoreBackups(SSTableManifest previousManifest) throws IOException {
+        for (SSTableMetadata metadata : previousManifest.sstables()) {
+            Files.deleteIfExists(backupPath(metadata.id()));
+        }
+        Files.deleteIfExists(directory.resolve(MANIFEST_BACKUP_FILENAME));
+    }
+
+    private Path backupPath(long id) {
+        return directory.resolve("%06d.sst%s".formatted(id, BACKUP_SUFFIX));
     }
 
     private static final class StoreCheckpoint {
@@ -477,6 +543,9 @@ final class SSTableStore implements AutoCloseable {
         static StoreCheckpoint fromBytes(byte[] data) {
             try {
                 ByteBuffer buffer = ByteBuffer.wrap(data);
+                if (buffer.remaining() < Integer.BYTES * 4) {
+                    throw new StorageException.Corruption("Checkpoint too small");
+                }
                 int magic = buffer.getInt();
                 if (magic != CHECKPOINT_MAGIC) {
                     throw new StorageException.Corruption(
@@ -498,6 +567,9 @@ final class SSTableStore implements AutoCloseable {
                 if (sstableCount < 0) {
                     throw new StorageException.Corruption("Negative checkpoint SSTable count");
                 }
+                if (buffer.remaining() < manifestLength) {
+                    throw new StorageException.Corruption("Truncated checkpoint manifest");
+                }
 
                 byte[] manifestBytes = new byte[manifestLength];
                 buffer.get(manifestBytes);
@@ -508,6 +580,9 @@ final class SSTableStore implements AutoCloseable {
 
                 List<CheckpointSSTable> sstables = new ArrayList<>(sstableCount);
                 for (SSTableMetadata metadata : manifest.sstables()) {
+                    if (buffer.remaining() < Long.BYTES + Integer.BYTES) {
+                        throw new StorageException.Corruption("Truncated checkpoint SSTable header");
+                    }
                     long id = buffer.getLong();
                     if (id != metadata.id()) {
                         throw new StorageException.Corruption(
@@ -518,6 +593,9 @@ final class SSTableStore implements AutoCloseable {
                     int fileLength = buffer.getInt();
                     if (fileLength < 0) {
                         throw new StorageException.Corruption("Negative checkpoint SSTable length");
+                    }
+                    if (buffer.remaining() < fileLength) {
+                        throw new StorageException.Corruption("Truncated checkpoint SSTable payload");
                     }
 
                     byte[] fileBytes = new byte[fileLength];
@@ -530,8 +608,8 @@ final class SSTableStore implements AutoCloseable {
                 }
 
                 return new StoreCheckpoint(manifest, sstables);
-            } catch (BufferUnderflowException e) {
-                throw new StorageException.Corruption("Truncated checkpoint", e);
+            } catch (BufferUnderflowException | IllegalArgumentException e) {
+                throw new StorageException.Corruption("Malformed checkpoint", e);
             }
         }
 
@@ -575,6 +653,38 @@ final class SSTableStore implements AutoCloseable {
             }
         }
 
+        void validate(Path directory) {
+            List<SSTable> readers = new ArrayList<>(sstables.size());
+            try {
+                for (SSTableMetadata metadata : manifest.sstables()) {
+                    SSTable reader = SSTable.open(
+                        metadata.id(),
+                        metadata.level(),
+                        stagedPath(directory, metadata.id()),
+                        NoOpBlockCache.INSTANCE
+                    );
+                    readers.add(reader);
+                    if (!reader.metadata().equals(metadata)) {
+                        throw new StorageException.Corruption(
+                            "Checkpoint SSTable metadata does not match file contents: " + metadata.id()
+                        );
+                    }
+                }
+            } catch (RuntimeException e) {
+                throw new StorageException.Corruption("Checkpoint validation failed", e);
+            } finally {
+                for (SSTable reader : readers) {
+                    reader.close();
+                }
+            }
+        }
+
+        ActivatedRestore activate(Path directory, BlockCache cache) throws IOException {
+            commitTo(directory);
+            manifest.writeTo(directory);
+            return new ActivatedRestore(manifest, loadSSTablesFromManifest(directory, cache, manifest));
+        }
+
         void commitTo(Path directory) throws IOException {
             for (CheckpointSSTable sstable : sstables) {
                 Files.move(
@@ -602,6 +712,8 @@ final class SSTableStore implements AutoCloseable {
             return directory.resolve("%06d.sst%s".formatted(id, RESTORE_SUFFIX));
         }
     }
+
+    private record ActivatedRestore(SSTableManifest manifest, List<SSTable> readers) {}
 
     private record CheckpointSSTable(long id, byte[] data) {}
 }

@@ -1,5 +1,6 @@
 package io.partdb.storage;
 
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
@@ -65,31 +66,46 @@ record SSTableMetadata(
     }
 
     public static SSTableMetadata readFrom(ByteBuffer buffer) {
-        long id = buffer.getLong();
-        int level = buffer.getInt();
+        try {
+            long id = buffer.getLong();
+            int level = buffer.getInt();
 
-        int smallestKeySize = buffer.getInt();
-        byte[] smallestKeyBytes = new byte[smallestKeySize];
-        buffer.get(smallestKeyBytes);
+            int smallestKeySize = buffer.getInt();
+            byte[] smallestKeyBytes = readSizedBytes(buffer, smallestKeySize, "smallest key");
 
-        int largestKeySize = buffer.getInt();
-        byte[] largestKeyBytes = new byte[largestKeySize];
-        buffer.get(largestKeyBytes);
+            int largestKeySize = buffer.getInt();
+            byte[] largestKeyBytes = readSizedBytes(buffer, largestKeySize, "largest key");
 
-        long smallestRevision = buffer.getLong();
-        long largestRevision = buffer.getLong();
-        long fileSizeBytes = buffer.getLong();
-        long entryCount = buffer.getLong();
+            long smallestRevision = buffer.getLong();
+            long largestRevision = buffer.getLong();
+            long fileSizeBytes = buffer.getLong();
+            long entryCount = buffer.getLong();
 
-        return new SSTableMetadata(
-            id,
-            level,
-            Slice.of(smallestKeyBytes),
-            Slice.of(largestKeyBytes),
-            smallestRevision,
-            largestRevision,
-            fileSizeBytes,
-            entryCount
-        );
+            return new SSTableMetadata(
+                id,
+                level,
+                Slice.of(smallestKeyBytes),
+                Slice.of(largestKeyBytes),
+                smallestRevision,
+                largestRevision,
+                fileSizeBytes,
+                entryCount
+            );
+        } catch (BufferUnderflowException | IllegalArgumentException e) {
+            throw new StorageException.Corruption("Malformed SSTable metadata", e);
+        }
+    }
+
+    private static byte[] readSizedBytes(ByteBuffer buffer, int size, String fieldName) {
+        if (size < 0) {
+            throw new StorageException.Corruption("Negative SSTable metadata " + fieldName + " length");
+        }
+        if (buffer.remaining() < size) {
+            throw new StorageException.Corruption("Truncated SSTable metadata " + fieldName);
+        }
+
+        byte[] bytes = new byte[size];
+        buffer.get(bytes);
+        return bytes;
     }
 }

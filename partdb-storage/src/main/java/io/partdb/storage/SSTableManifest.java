@@ -1,6 +1,7 @@
 package io.partdb.storage;
 
 import java.io.IOException;
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
@@ -21,6 +22,7 @@ record SSTableManifest(
     private static final int VERSION = 4;
     private static final String MANIFEST_FILENAME = "MANIFEST";
     private static final String MANIFEST_TEMP_FILENAME = "MANIFEST.tmp";
+    private static final int MIN_SERIALIZED_SIZE = 4 + 4 + 8 + 4 + 4;
 
     public SSTableManifest {
         Objects.requireNonNull(sstables, "sstables");
@@ -118,38 +120,53 @@ record SSTableManifest(
     }
 
     private static SSTableManifest fromByteBuffer(ByteBuffer buffer) {
-        int magic = buffer.getInt();
-        if (magic != MAGIC_NUMBER) {
-            throw new StorageException.Corruption(
-                "Invalid SSTable manifest magic number: " + Integer.toHexString(magic)
-            );
+        try {
+            if (buffer.remaining() < MIN_SERIALIZED_SIZE) {
+                throw new StorageException.Corruption("SSTable manifest too small");
+            }
+
+            int magic = buffer.getInt();
+            if (magic != MAGIC_NUMBER) {
+                throw new StorageException.Corruption(
+                    "Invalid SSTable manifest magic number: " + Integer.toHexString(magic)
+                );
+            }
+
+            int version = buffer.getInt();
+            if (version != VERSION) {
+                throw new StorageException.Corruption("Unsupported SSTable manifest version: " + version);
+            }
+
+            int checksumPosition = buffer.limit() - 4;
+            int expectedChecksum = buffer.getInt(checksumPosition);
+
+            CRC32C crc = new CRC32C();
+            crc.update(buffer.array(), 0, checksumPosition);
+            int actualChecksum = (int) crc.getValue();
+
+            if (actualChecksum != expectedChecksum) {
+                throw new StorageException.Corruption("SSTable manifest checksum mismatch");
+            }
+
+            long nextSSTableId = buffer.getLong();
+            int sstableCount = buffer.getInt();
+            if (sstableCount < 0) {
+                throw new StorageException.Corruption("Negative SSTable manifest entry count");
+            }
+
+            List<SSTableMetadata> sstables = new ArrayList<>(sstableCount);
+            for (int i = 0; i < sstableCount; i++) {
+                sstables.add(SSTableMetadata.readFrom(buffer));
+            }
+
+            if (buffer.position() != checksumPosition) {
+                throw new StorageException.Corruption("Trailing SSTable manifest data");
+            }
+
+            return new SSTableManifest(nextSSTableId, sstables);
+        } catch (BufferUnderflowException | IllegalArgumentException e) {
+            throw new StorageException.Corruption("Malformed SSTable manifest", e);
         }
-
-        int version = buffer.getInt();
-        if (version != VERSION) {
-            throw new StorageException.Corruption("Unsupported SSTable manifest version: " + version);
-        }
-
-        int checksumPosition = buffer.limit() - 4;
-        int expectedChecksum = buffer.getInt(checksumPosition);
-
-        CRC32C crc = new CRC32C();
-        crc.update(buffer.array(), 0, checksumPosition);
-        int actualChecksum = (int) crc.getValue();
-
-        if (actualChecksum != expectedChecksum) {
-            throw new StorageException.Corruption("SSTable manifest checksum mismatch");
-        }
-
-        long nextSSTableId = buffer.getLong();
-        int sstableCount = buffer.getInt();
-
-        List<SSTableMetadata> sstables = new ArrayList<>(sstableCount);
-        for (int i = 0; i < sstableCount; i++) {
-            sstables.add(SSTableMetadata.readFrom(buffer));
-        }
-
-        return new SSTableManifest(nextSSTableId, sstables);
     }
 
     private int calculateSize() {

@@ -3,6 +3,7 @@ package io.partdb.storage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -152,7 +153,63 @@ class StateStoreTest {
         assertTrue(error.getMessage().contains("manifest"));
     }
 
+    @Test
+    void openFailsWithMalformedManifestAsCorruption() throws Exception {
+        Path storeDir = tempDir.resolve("malformed-manifest");
+        Files.createDirectories(storeDir);
+        Files.write(storeDir.resolve("MANIFEST"), new byte[]{0x01, 0x02, 0x03});
+
+        StorageException.Corruption error = assertThrows(
+            StorageException.Corruption.class,
+            () -> StateStore.open(storeDir, StorageConfig.defaults())
+        );
+
+        assertTrue(error.getMessage().contains("manifest"));
+    }
+
+    @Test
+    void restoreRejectsCorruptedSnapshotWithoutDiscardingLiveState() {
+        try (StateStore store = StateStore.open(tempDir, StorageConfig.defaults())) {
+            byte[] key = bytes("key");
+            store.put(key, bytes("before"), 1);
+            StorageSnapshot snapshot = store.snapshot();
+
+            store.put(key, bytes("after"), 2);
+
+            StorageException.Corruption error = assertThrows(
+                StorageException.Corruption.class,
+                () -> store.restore(new StorageSnapshot(corruptFirstSstableByte(snapshot)))
+            );
+
+            assertTrue(error.getMessage().contains("Checkpoint"));
+            Optional<VersionedEntry> loaded = store.get(key);
+            assertTrue(loaded.isPresent());
+            assertArrayEquals(bytes("after"), loaded.get().value());
+            assertEquals(2, loaded.get().revision());
+        }
+    }
+
     private static byte[] bytes(String value) {
         return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static byte[] corruptFirstSstableByte(StorageSnapshot snapshot) {
+        byte[] bytes = snapshot.bytes();
+        ByteBuffer buffer = ByteBuffer.wrap(bytes);
+        buffer.getInt();
+        buffer.getInt();
+        int manifestLength = buffer.getInt();
+        int sstableCount = buffer.getInt();
+        if (sstableCount <= 0) {
+            throw new IllegalArgumentException("snapshot does not contain any SSTables");
+        }
+
+        int payloadOffset = Integer.BYTES * 4 + manifestLength + Long.BYTES + Integer.BYTES;
+        if (payloadOffset >= bytes.length) {
+            throw new IllegalArgumentException("snapshot payload offset out of range");
+        }
+
+        bytes[payloadOffset] ^= 0x01;
+        return bytes;
     }
 }
