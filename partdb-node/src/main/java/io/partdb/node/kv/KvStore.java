@@ -4,7 +4,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import io.partdb.raft.StateMachine;
 import io.partdb.node.command.proto.CommandProto.Command;
 import io.partdb.node.lease.LeaseRegistry;
-import io.partdb.storage.Entry;
+import io.partdb.storage.StorageEntry;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
 import io.partdb.storage.Slice;
@@ -85,7 +85,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
     }
 
     private void detachKeyFromLease(Slice key) {
-        Optional<Entry> existing = store.get(key);
+        Optional<StorageEntry> existing = store.get(key);
         if (existing.isPresent()) {
             StoredValue stored = StoredValue.decode(existing.get().value().toByteArray());
             if (stored.leaseId() != 0) {
@@ -95,7 +95,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
     }
 
     public Optional<byte[]> get(byte[] keyBytes) {
-        Optional<Entry> raw = store.get(Slice.of(keyBytes));
+        Optional<StorageEntry> raw = store.get(Slice.of(keyBytes));
         if (raw.isEmpty()) {
             return Optional.empty();
         }
@@ -109,7 +109,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
     public Stream<KvEntry> scan(byte[] startKeyBytes, byte[] endKeyBytes) {
         Slice startKey = startKeyBytes != null ? Slice.of(startKeyBytes) : null;
         Slice endKey = endKeyBytes != null ? Slice.of(endKeyBytes) : null;
-        Stream<Entry> raw = store.scan(startKey, endKey);
+        Stream<StorageEntry> raw = store.scan(startKey, endKey);
 
         return raw
             .<KvEntry>mapMulti((entry, consumer) -> {

@@ -1,6 +1,6 @@
 package io.partdb.benchmark;
 
-import io.partdb.storage.Entry;
+import io.partdb.storage.StorageEntry;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
 import io.partdb.storage.Slice;
@@ -85,7 +85,7 @@ public class MixedWorkloadBenchmark {
         }
     }
 
-    private Optional<Entry> doRead() {
+    private Optional<StorageEntry> doRead() {
         long maxKey = keyCounter.get();
         long keyNum = ThreadLocalRandom.current().nextLong(maxKey);
         Slice key = formatKey(keyNum);

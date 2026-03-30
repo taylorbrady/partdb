@@ -1,8 +1,6 @@
 package io.partdb.storage;
 
 import io.partdb.storage.manifest.Manifest;
-import io.partdb.storage.memtable.MemtableConfig;
-import io.partdb.storage.sstable.SSTableConfig;
 import io.partdb.storage.sstable.SSTableDescriptor;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -48,10 +46,7 @@ class LSMTreeTest {
     }
 
     private static LSMConfig smallMemtableConfig(int sizeBytes) {
-        return new LSMConfig(
-            new MemtableConfig(sizeBytes),
-            SSTableConfig.defaults()
-        );
+        return LSMConfig.defaults().withMemtableMaxSizeBytes(sizeBytes);
     }
 
     private final AtomicLong revisionCounter = new AtomicLong(0);
@@ -68,7 +63,7 @@ class LSMTreeTest {
             try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
                 tree.put(key(1), value(10), nextRevision());
 
-                Optional<Entry> result = tree.get(key(1));
+                Optional<StorageEntry> result = tree.get(key(1));
 
                 assertTrue(result.isPresent());
                 assertEquals(value(10), result.get().value());
@@ -78,7 +73,7 @@ class LSMTreeTest {
         @Test
         void getNonExistentKey() {
             try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
-                Optional<Entry> result = tree.get(key(99));
+                Optional<StorageEntry> result = tree.get(key(99));
                 assertTrue(result.isEmpty());
             }
         }
@@ -89,7 +84,7 @@ class LSMTreeTest {
                 tree.put(key(1), value(10), nextRevision());
                 tree.delete(key(1), nextRevision());
 
-                Optional<Entry> result = tree.get(key(1));
+                Optional<StorageEntry> result = tree.get(key(1));
                 assertTrue(result.isEmpty());
             }
         }
@@ -99,7 +94,7 @@ class LSMTreeTest {
             try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
                 tree.delete(key(1), nextRevision());
 
-                Optional<Entry> result = tree.get(key(1));
+                Optional<StorageEntry> result = tree.get(key(1));
                 assertTrue(result.isEmpty());
             }
         }
@@ -110,7 +105,7 @@ class LSMTreeTest {
                 tree.put(key(1), value(10), nextRevision());
                 tree.put(key(1), value(20), nextRevision());
 
-                Optional<Entry> result = tree.get(key(1));
+                Optional<StorageEntry> result = tree.get(key(1));
 
                 assertTrue(result.isPresent());
                 assertEquals(value(20), result.get().value());
@@ -128,8 +123,8 @@ class LSMTreeTest {
                 tree.put(key(2), value(20), nextRevision());
                 tree.put(key(3), value(30), nextRevision());
 
-                try (Stream<Entry> stream = tree.scan(null, null)) {
-                    List<Entry> entries = stream.toList();
+                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
+                    List<StorageEntry> entries = stream.toList();
 
                     assertEquals(3, entries.size());
                     assertEquals(key(1), entries.get(0).key());
@@ -147,8 +142,8 @@ class LSMTreeTest {
                 tree.put(key(3), value(30), nextRevision());
                 tree.put(key(4), value(40), nextRevision());
 
-                try (Stream<Entry> stream = tree.scan(key(2), key(4))) {
-                    List<Entry> entries = stream.toList();
+                try (Stream<StorageEntry> stream = tree.scan(key(2), key(4))) {
+                    List<StorageEntry> entries = stream.toList();
 
                     assertEquals(2, entries.size());
                     assertEquals(key(2), entries.get(0).key());
@@ -165,8 +160,8 @@ class LSMTreeTest {
                 tree.delete(key(2), nextRevision());
                 tree.put(key(3), value(30), nextRevision());
 
-                try (Stream<Entry> stream = tree.scan(null, null)) {
-                    List<Entry> entries = stream.toList();
+                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
+                    List<StorageEntry> entries = stream.toList();
 
                     assertEquals(2, entries.size());
                     assertEquals(key(1), entries.get(0).key());
@@ -184,8 +179,8 @@ class LSMTreeTest {
                     tree.put(key(i), largeValue(100), nextRevision());
                 }
 
-                try (Stream<Entry> stream = tree.scan(null, null)) {
-                    List<Entry> entries = stream.toList();
+                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
+                    List<StorageEntry> entries = stream.toList();
 
                     assertEquals(20, entries.size());
                     for (int i = 0; i < 20; i++) {
@@ -204,10 +199,10 @@ class LSMTreeTest {
                 tree.put(key(2), largeValue(100), nextRevision());
                 tree.put(key(1), value(20), nextRevision());
 
-                try (Stream<Entry> stream = tree.scan(null, null)) {
-                    List<Entry> entries = stream.toList();
+                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
+                    List<StorageEntry> entries = stream.toList();
 
-                    Optional<Entry> keyEntry = entries.stream()
+                    Optional<StorageEntry> keyEntry = entries.stream()
                         .filter(e -> e.key().equals(key(1)))
                         .findFirst();
 
@@ -264,8 +259,8 @@ class LSMTreeTest {
             }
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
-                Optional<Entry> result1 = tree.get(key(1));
-                Optional<Entry> result2 = tree.get(key(2));
+                Optional<StorageEntry> result1 = tree.get(key(1));
+                Optional<StorageEntry> result2 = tree.get(key(2));
 
                 assertTrue(result1.isPresent());
                 assertEquals(value(10), result1.get().value());
@@ -282,7 +277,7 @@ class LSMTreeTest {
                 tree.flush();
                 tree.put(key(1), value(20), nextRevision());
 
-                Optional<Entry> result = tree.get(key(1));
+                Optional<StorageEntry> result = tree.get(key(1));
 
                 assertTrue(result.isPresent());
                 assertEquals(value(20), result.get().value());
@@ -346,7 +341,7 @@ class LSMTreeTest {
                 Thread.sleep(1000);
 
                 for (int i = 0; i < 20; i++) {
-                    Optional<Entry> result = tree.get(key(String.format("key-%02d", i)));
+                    Optional<StorageEntry> result = tree.get(key(String.format("key-%02d", i)));
                     assertTrue(result.isPresent());
                     assertTrue(new String(result.get().value().toByteArray(), StandardCharsets.UTF_8).startsWith("v4"));
                 }
@@ -391,11 +386,10 @@ class LSMTreeTest {
                 Thread.sleep(2000);
 
                 Manifest manifest = tree.manifest();
-                SSTableConfig sstableConfig = SSTableConfig.defaults();
 
                 for (int level = 1; level < manifest.maxLevel(); level++) {
                     long levelSize = manifest.levelSize(level);
-                    long maxSize = sstableConfig.maxBytesForLevel(level);
+                    long maxSize = config.maxBytesForLevel(level);
 
                     assertTrue(levelSize <= maxSize * 2);
                 }
@@ -422,7 +416,7 @@ class LSMTreeTest {
                 Thread.sleep(1000);
 
                 for (int i = 0; i < 30; i++) {
-                    Optional<Entry> result = tree.get(key(String.format("key-%02d", i)));
+                    Optional<StorageEntry> result = tree.get(key(String.format("key-%02d", i)));
                     assertTrue(result.isPresent());
                     assertEquals(expectedValues.get(i), new String(result.get().value().toByteArray(), StandardCharsets.UTF_8));
                 }
@@ -478,7 +472,7 @@ class LSMTreeTest {
 
             try (LSMTree tree = LSMTree.open(tempDir, config)) {
                 for (int i = 0; i < keys.size(); i++) {
-                    Optional<Entry> result = tree.get(keys.get(i));
+                    Optional<StorageEntry> result = tree.get(keys.get(i));
                     assertTrue(result.isPresent());
                     assertEquals(values.get(i), result.get().value());
                 }
@@ -500,11 +494,11 @@ class LSMTreeTest {
                 Slice startKey = key("key-020");
                 Slice endKey = key("key-030");
 
-                try (Stream<Entry> stream = tree.scan(startKey, endKey)) {
-                    List<Entry> entries = stream.toList();
+                try (Stream<StorageEntry> stream = tree.scan(startKey, endKey)) {
+                    List<StorageEntry> entries = stream.toList();
 
                     assertEquals(10, entries.size());
-                    for (Entry e : entries) {
+                    for (StorageEntry e : entries) {
                         assertTrue(e.key().compareTo(startKey) >= 0);
                         assertTrue(e.key().compareTo(endKey) < 0);
                     }
@@ -694,7 +688,7 @@ class LSMTreeTest {
                         executor.submit(() -> {
                             for (int i = 0; i < readsPerThread; i++) {
                                 int keyIndex = i % 100;
-                                Optional<Entry> result = tree.get(key(keyIndex));
+                                Optional<StorageEntry> result = tree.get(key(keyIndex));
                                 if (result.isEmpty() || !result.get().value().equals(value(keyIndex))) {
                                     failed.set(true);
                                 }
@@ -735,8 +729,8 @@ class LSMTreeTest {
 
                 tree.flush();
 
-                try (Stream<Entry> stream = tree.scan(null, null)) {
-                    List<Entry> entries = stream.toList();
+                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
+                    List<StorageEntry> entries = stream.toList();
                     assertFalse(entries.isEmpty());
                 }
             }
@@ -856,7 +850,7 @@ class LSMTreeTest {
                             try {
                                 for (int round = 0; round < 50; round++) {
                                     for (int i = 0; i < 50; i++) {
-                                        Optional<Entry> result = tree.get(key(String.format("key-%03d", i)));
+                                        Optional<StorageEntry> result = tree.get(key(String.format("key-%03d", i)));
                                         if (result.isEmpty()) {
                                             failed.set(true);
                                         }
@@ -895,7 +889,7 @@ class LSMTreeTest {
                         try {
                             startLatch.await();
                             for (int round = 0; round < 10; round++) {
-                                try (Stream<Entry> stream = tree.scan(null, null)) {
+                                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
                                     stream.forEach(_ -> {});
                                 }
                             }
@@ -940,7 +934,7 @@ class LSMTreeTest {
                 }
                 tree.flush();
 
-                try (Stream<Entry> stream = tree.scan(null, null)) {
+                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
                     assertTrue(stream.findFirst().isPresent());
                 }
             }
@@ -954,13 +948,13 @@ class LSMTreeTest {
                 }
                 tree.flush();
 
-                try (Stream<Entry> stream1 = tree.scan(null, null);
-                     Stream<Entry> stream2 = tree.scan(null, null);
-                     Stream<Entry> stream3 = tree.scan(null, null)) {
+                try (Stream<StorageEntry> stream1 = tree.scan(null, null);
+                     Stream<StorageEntry> stream2 = tree.scan(null, null);
+                     Stream<StorageEntry> stream3 = tree.scan(null, null)) {
 
-                    List<Entry> entries1 = stream1.toList();
-                    List<Entry> entries2 = stream2.toList();
-                    List<Entry> entries3 = stream3.toList();
+                    List<StorageEntry> entries1 = stream1.toList();
+                    List<StorageEntry> entries2 = stream2.toList();
+                    List<StorageEntry> entries3 = stream3.toList();
 
                     assertEquals(20, entries1.size());
                     assertEquals(20, entries2.size());
@@ -981,12 +975,12 @@ class LSMTreeTest {
                     tree.flush();
                 }
 
-                try (Stream<Entry> stream = tree.scan(null, null)) {
+                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
                     Thread.sleep(1000);
 
-                    List<Entry> entries = stream.toList();
+                    List<StorageEntry> entries = stream.toList();
                     assertEquals(30, entries.size());
-                    for (Entry e : entries) {
+                    for (StorageEntry e : entries) {
                         assertNotNull(e.key());
                         assertNotNull(e.value());
                     }
@@ -1002,8 +996,8 @@ class LSMTreeTest {
                 }
                 tree.flush();
 
-                try (Stream<Entry> stream = tree.scan(null, null)) {
-                    List<Entry> first10 = stream.limit(10).toList();
+                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
+                    List<StorageEntry> first10 = stream.limit(10).toList();
                     assertEquals(10, first10.size());
                 }
             }

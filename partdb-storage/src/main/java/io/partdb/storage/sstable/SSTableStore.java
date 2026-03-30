@@ -1,11 +1,12 @@
 package io.partdb.storage.sstable;
 
+import io.partdb.storage.LSMConfig;
 import io.partdb.storage.Mutation;
 import io.partdb.storage.StorageException;
 import io.partdb.storage.compaction.CompactionResult;
 import io.partdb.storage.compaction.CompactionScheduler;
-import io.partdb.storage.compaction.CompactionStrategy;
 import io.partdb.storage.compaction.Compactor;
+import io.partdb.storage.compaction.LeveledCompactionStrategy;
 import io.partdb.storage.manifest.Manifest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,7 +40,7 @@ public final class SSTableStore implements AutoCloseable {
     private static final Duration SHUTDOWN_DRAIN_TIMEOUT = Duration.ofSeconds(30);
 
     private final Path directory;
-    private final SSTableConfig config;
+    private final LSMConfig config;
     private final BlockCache cache;
     private final AtomicLong nextId;
     private final ReentrantLock stateLock;
@@ -51,7 +52,7 @@ public final class SSTableStore implements AutoCloseable {
 
     private SSTableStore(
         Path directory,
-        SSTableConfig config,
+        LSMConfig config,
         BlockCache cache,
         Manifest manifest,
         SSTableSetRef initialSet
@@ -65,7 +66,7 @@ public final class SSTableStore implements AutoCloseable {
         this.currentSet = initialSet;
         this.closed = new AtomicBoolean(false);
 
-        CompactionStrategy strategy = config.createStrategy();
+        LeveledCompactionStrategy strategy = new LeveledCompactionStrategy(config);
         Compactor compactor = new Compactor(this, config);
         this.compactionScheduler = new CompactionScheduler(
             strategy,
@@ -76,7 +77,7 @@ public final class SSTableStore implements AutoCloseable {
         );
     }
 
-    public static SSTableStore open(Path directory, SSTableConfig config) {
+    public static SSTableStore open(Path directory, LSMConfig config) {
         try {
             Files.createDirectories(directory);
 

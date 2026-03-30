@@ -59,7 +59,7 @@ public final class LSMTree implements AutoCloseable {
     public static LSMTree open(Path dataDirectory, LSMConfig config) {
         try {
             Files.createDirectories(dataDirectory);
-            SSTableStore sstableStore = SSTableStore.open(dataDirectory, config.sstableConfig());
+            SSTableStore sstableStore = SSTableStore.open(dataDirectory, config);
             return new LSMTree(config, sstableStore);
         } catch (IOException e) {
             throw new StorageException.IO("Failed to open store", e);
@@ -76,7 +76,7 @@ public final class LSMTree implements AutoCloseable {
         applyMutation(mutation);
     }
 
-    public Optional<Entry> get(Slice key) {
+    public Optional<StorageEntry> get(Slice key) {
         Optional<Mutation> result = activeMemtable.get().get(key);
         if (result.isPresent()) {
             return resolveEntry(result.get());
@@ -100,7 +100,7 @@ public final class LSMTree implements AutoCloseable {
         }
     }
 
-    public Stream<Entry> scan(Slice startKey, Slice endKey) {
+    public Stream<StorageEntry> scan(Slice startKey, Slice endKey) {
         List<Iterator<Mutation>> iterators = new ArrayList<>();
 
         iterators.add(activeMemtable.get().scan(startKey, endKey));
@@ -123,13 +123,13 @@ public final class LSMTree implements AutoCloseable {
 
         MergingIterator merged = new MergingIterator(iterators);
 
-        Iterator<Entry> entryIterator = new Iterator<>() {
-            private Entry next = advance();
+        Iterator<StorageEntry> entryIterator = new Iterator<>() {
+            private StorageEntry next = advance();
 
-            private Entry advance() {
+            private StorageEntry advance() {
                 while (merged.hasNext()) {
                     if (merged.next() instanceof Mutation.Put p) {
-                        return new Entry(p.key(), p.value(), p.revision());
+                        return new StorageEntry(p.key(), p.value(), p.revision());
                     }
                 }
                 return null;
@@ -141,11 +141,11 @@ public final class LSMTree implements AutoCloseable {
             }
 
             @Override
-            public Entry next() {
+            public StorageEntry next() {
                 if (next == null) {
                     throw new NoSuchElementException();
                 }
-                Entry result = next;
+                StorageEntry result = next;
                 next = advance();
                 return result;
             }
@@ -237,7 +237,7 @@ public final class LSMTree implements AutoCloseable {
         Memtable memtable = activeMemtable.get();
         memtable.put(mutation);
 
-        if (memtable.sizeInBytes() >= config.memtableConfig().maxSizeInBytes()) {
+        if (memtable.sizeInBytes() >= config.memtableMaxSizeBytes()) {
             tryRotateMemtable(memtable);
         }
     }
@@ -251,7 +251,7 @@ public final class LSMTree implements AutoCloseable {
             if (current != fullMemtable) {
                 return;
             }
-            if (current.sizeInBytes() < config.memtableConfig().maxSizeInBytes()) {
+            if (current.sizeInBytes() < config.memtableMaxSizeBytes()) {
                 return;
             }
 
@@ -279,10 +279,10 @@ public final class LSMTree implements AutoCloseable {
         }
     }
 
-    private Optional<Entry> resolveEntry(Mutation mutation) {
+    private Optional<StorageEntry> resolveEntry(Mutation mutation) {
         return switch (mutation) {
             case Mutation.Tombstone _ -> Optional.empty();
-            case Mutation.Put p -> Optional.of(new Entry(p.key(), p.value(), p.revision()));
+            case Mutation.Put p -> Optional.of(new StorageEntry(p.key(), p.value(), p.revision()));
         };
     }
 

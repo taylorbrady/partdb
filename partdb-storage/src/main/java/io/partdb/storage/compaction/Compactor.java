@@ -1,9 +1,9 @@
 package io.partdb.storage.compaction;
 
+import io.partdb.storage.LSMConfig;
 import io.partdb.storage.MergingIterator;
 import io.partdb.storage.Mutation;
 import io.partdb.storage.sstable.SSTable;
-import io.partdb.storage.sstable.SSTableConfig;
 import io.partdb.storage.sstable.SSTableDescriptor;
 import io.partdb.storage.sstable.SSTableStore;
 import org.slf4j.Logger;
@@ -21,9 +21,9 @@ public final class Compactor {
     private static final Logger log = LoggerFactory.getLogger(Compactor.class);
 
     private final SSTableStore sstableStore;
-    private final SSTableConfig config;
+    private final LSMConfig config;
 
-    public Compactor(SSTableStore sstableStore, SSTableConfig config) {
+    public Compactor(SSTableStore sstableStore, LSMConfig config) {
         this.sstableStore = Objects.requireNonNull(sstableStore, "sstableStore");
         this.config = Objects.requireNonNull(config, "config");
     }

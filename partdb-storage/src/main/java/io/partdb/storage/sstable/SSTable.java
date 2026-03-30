@@ -1,7 +1,9 @@
 package io.partdb.storage.sstable;
 
-import io.partdb.storage.Slice;
+import io.partdb.storage.BlockCodec;
+import io.partdb.storage.LSMConfig;
 import io.partdb.storage.Mutation;
+import io.partdb.storage.Slice;
 import io.partdb.storage.StorageException;
 
 import java.io.IOException;
@@ -86,7 +88,7 @@ public final class SSTable implements AutoCloseable {
         }
     }
 
-    static Builder builder(long id, int level, Path path, SSTableConfig config) {
+    static Builder builder(long id, int level, Path path, LSMConfig config) {
         try {
             FileChannel channel = FileChannel.open(path,
                 StandardOpenOption.CREATE_NEW,
@@ -321,7 +323,7 @@ public final class SSTable implements AutoCloseable {
         private final long id;
         private final int level;
         private final Path path;
-        private final SSTableConfig config;
+        private final LSMConfig config;
         private final FileChannel channel;
         private final List<BlockIndex.Entry> indexEntries;
         private final Block.Builder currentBlock;
@@ -337,7 +339,7 @@ public final class SSTable implements AutoCloseable {
         private boolean hasRevision;
         private boolean finished;
 
-        private Builder(long id, int level, Path path, SSTableConfig config, FileChannel channel) {
+        private Builder(long id, int level, Path path, LSMConfig config, FileChannel channel) {
             this.id = id;
             this.level = level;
             this.path = path;
@@ -511,7 +513,7 @@ public final class SSTable implements AutoCloseable {
                 ByteBuffer buffer = ByteBuffer.allocate(SSTableHeader.HEADER_SIZE).order(ByteOrder.nativeOrder());
                 buffer.putInt(SSTableHeader.MAGIC_NUMBER);
                 buffer.putInt(SSTableHeader.CURRENT_VERSION);
-                buffer.put(config.codec().id());
+                buffer.put(config.blockCodec().id());
                 buffer.putInt(0);
                 buffer.flip();
 
@@ -532,9 +534,9 @@ public final class SSTable implements AutoCloseable {
             Slice blockFirstKey = currentBlock.firstKey();
             byte[] uncompressedData = currentBlock.build();
 
-            byte[] compressedData = config.codec().compress(uncompressedData);
+            byte[] compressedData = config.blockCodec().compress(uncompressedData);
             CompressedBlock compressedBlock = new CompressedBlock(
-                config.codec().id(),
+                config.blockCodec().id(),
                 uncompressedData.length,
                 compressedData
             );

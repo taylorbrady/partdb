@@ -1,6 +1,6 @@
 package io.partdb.benchmark;
 
-import io.partdb.storage.Entry;
+import io.partdb.storage.StorageEntry;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
 import io.partdb.storage.Slice;
@@ -58,7 +58,7 @@ public class LSMTreeScanBenchmark {
     @BenchmarkMode(Mode.AverageTime)
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
     public long scanFull() {
-        try (Stream<Entry> stream = tree.scan(null, null)) {
+        try (Stream<StorageEntry> stream = tree.scan(null, null)) {
             return stream.count();
         }
     }
@@ -71,7 +71,7 @@ public class LSMTreeScanBenchmark {
         int start = ThreadLocalRandom.current().nextInt(KEY_COUNT - 100);
         Slice startKey = existingKeys[start];
         Slice endKey = existingKeys[start + 100];
-        try (Stream<Entry> stream = tree.scan(startKey, endKey)) {
+        try (Stream<StorageEntry> stream = tree.scan(startKey, endKey)) {
             stream.forEach(bh::consume);
         }
     }
@@ -84,7 +84,7 @@ public class LSMTreeScanBenchmark {
         int start = ThreadLocalRandom.current().nextInt(KEY_COUNT - 1000);
         Slice startKey = existingKeys[start];
         Slice endKey = existingKeys[start + 1000];
-        try (Stream<Entry> stream = tree.scan(startKey, endKey)) {
+        try (Stream<StorageEntry> stream = tree.scan(startKey, endKey)) {
             stream.forEach(bh::consume);
         }
     }

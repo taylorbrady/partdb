@@ -5,7 +5,7 @@ import io.partdb.storage.StorageException;
 record SSTableHeader(int magic, int version, byte codecId) {
 
     static final int MAGIC_NUMBER = 0x53535442;
-    static final int CURRENT_VERSION = 1;
+    static final int CURRENT_VERSION = 2;
     static final int HEADER_SIZE = 13;
 
     SSTableHeader {

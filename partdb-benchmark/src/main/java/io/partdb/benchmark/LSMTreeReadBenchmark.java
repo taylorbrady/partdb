@@ -1,6 +1,6 @@
 package io.partdb.benchmark;
 
-import io.partdb.storage.Entry;
+import io.partdb.storage.StorageEntry;
 import io.partdb.storage.LSMConfig;
 import io.partdb.storage.LSMTree;
 import io.partdb.storage.Slice;
@@ -58,13 +58,13 @@ public class LSMTreeReadBenchmark {
     }
 
     @Benchmark
-    public Optional<Entry> pointGet() {
+    public Optional<StorageEntry> pointGet() {
         int index = ThreadLocalRandom.current().nextInt(existingKeys.length);
         return tree.get(existingKeys[index]);
     }
 
     @Benchmark
-    public Optional<Entry> pointGetMissing() {
+    public Optional<StorageEntry> pointGetMissing() {
         Slice key = formatMissingKey(ThreadLocalRandom.current().nextInt());
         return tree.get(key);
     }

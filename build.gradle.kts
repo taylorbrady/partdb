@@ -36,6 +36,5 @@ subprojects {
 
     tasks.test {
         useJUnitPlatform()
-        jvmArgs("--enable-native-access=ALL-UNNAMED")
     }
 }

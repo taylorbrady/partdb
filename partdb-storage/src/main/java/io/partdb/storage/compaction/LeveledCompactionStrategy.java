@@ -1,8 +1,8 @@
 package io.partdb.storage.compaction;
 
+import io.partdb.storage.LSMConfig;
 import io.partdb.storage.Slice;
 import io.partdb.storage.manifest.Manifest;
-import io.partdb.storage.sstable.SSTableConfig;
 import io.partdb.storage.sstable.SSTableDescriptor;
 
 import java.util.ArrayList;
@@ -17,10 +17,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public final class LeveledCompactionStrategy implements CompactionStrategy {
 
-    private final SSTableConfig config;
+    private final LSMConfig config;
     private final Map<Integer, AtomicInteger> levelRoundRobin;
 
-    public LeveledCompactionStrategy(SSTableConfig config) {
+    public LeveledCompactionStrategy(LSMConfig config) {
         this.config = config;
         this.levelRoundRobin = new ConcurrentHashMap<>();
     }
