@@ -179,8 +179,16 @@ final class LsmEngine implements AutoCloseable {
     }
 
     private void applyMutation(Mutation mutation) {
+        ValidationResult validation = validateMutation(mutation);
+        if (validation == ValidationResult.DUPLICATE) {
+            return;
+        }
+
         Memtable memtable = activeMemtable.get();
-        memtable.put(mutation);
+        Memtable.WriteResult writeResult = memtable.put(mutation);
+        if (writeResult == Memtable.WriteResult.DUPLICATE) {
+            return;
+        }
 
         if (memtable.sizeInBytes() >= config.memtableMaxSizeBytes()) {
             tryRotateMemtable(memtable);
@@ -304,6 +312,45 @@ final class LsmEngine implements AutoCloseable {
         return Optional.empty();
     }
 
+    private ValidationResult validateMutation(Mutation mutation) {
+        Optional<Mutation> existing = lookupVisibleMutation(mutation.key());
+        if (existing.isEmpty()) {
+            return ValidationResult.APPLY;
+        }
+
+        Mutation current = existing.get();
+        if (mutation.revision() > current.revision()) {
+            return ValidationResult.APPLY;
+        }
+
+        if (mutation.revision() == current.revision() && mutation.equals(current)) {
+            return ValidationResult.DUPLICATE;
+        }
+
+        if (mutation.revision() < current.revision()) {
+            throw new StorageException.InvalidRevision(
+                "Revision %d for key %s is older than current revision %d"
+                    .formatted(mutation.revision(), mutation.key(), current.revision())
+            );
+        }
+
+        throw new StorageException.InvalidRevision(
+            "Conflicting mutation for key %s at revision %d"
+                .formatted(mutation.key(), mutation.revision())
+        );
+    }
+
+    private Optional<Mutation> lookupVisibleMutation(Slice key) {
+        Optional<Mutation> result = lookupMutation(key, activeMemtable.get(), immutableMemtables);
+        if (result.isPresent()) {
+            return result;
+        }
+
+        try (SSTableView readers = sstableStore.acquire()) {
+            return readers.get(key);
+        }
+    }
+
     private static void addImmutableMemtableIterators(
         List<Iterator<Mutation>> iterators,
         Slice startKey,
@@ -359,5 +406,10 @@ final class LsmEngine implements AutoCloseable {
             }
             return null;
         }
+    }
+
+    private enum ValidationResult {
+        APPLY,
+        DUPLICATE
     }
 }

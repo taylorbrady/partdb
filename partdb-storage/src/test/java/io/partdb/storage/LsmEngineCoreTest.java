@@ -8,6 +8,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LsmEngineCoreTest extends LsmEngineTestSupport {
@@ -229,6 +230,22 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
             assertTrue(result.isPresent());
             assertEquals(value(20), result.get().value());
+        }
+    }
+
+    @Test
+    void rejectsOlderRevisionThanPersistedValue() {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+            tree.put(key(1), value(10), 10);
+            tree.flush();
+
+            StorageException.InvalidRevision error = assertThrows(
+                StorageException.InvalidRevision.class,
+                () -> tree.put(key(1), value(20), 9)
+            );
+
+            assertTrue(error.getMessage().contains("older"));
+            assertEquals(value(10), tree.get(key(1)).orElseThrow().value());
         }
     }
 

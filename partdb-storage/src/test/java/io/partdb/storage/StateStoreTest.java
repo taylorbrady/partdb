@@ -84,6 +84,56 @@ class StateStoreTest {
     }
 
     @Test
+    void rejectsStaleRevisionForExistingValue() {
+        try (StateStore store = StateStore.open(tempDir, StorageConfig.defaults())) {
+            byte[] key = bytes("key");
+            store.put(key, bytes("value-1"), 10);
+
+            StorageException.InvalidRevision error = assertThrows(
+                StorageException.InvalidRevision.class,
+                () -> store.put(key, bytes("value-2"), 9)
+            );
+
+            assertTrue(error.getMessage().contains("older"));
+            assertArrayEquals(bytes("value-1"), store.get(key).orElseThrow().value());
+        }
+    }
+
+    @Test
+    void allowsIdempotentReplayAtSameRevision() {
+        try (StateStore store = StateStore.open(tempDir, StorageConfig.defaults())) {
+            byte[] key = bytes("key");
+            byte[] value = bytes("value");
+
+            store.put(key, value, 10);
+            store.put(key, value, 10);
+
+            Optional<VersionedEntry> loaded = store.get(key);
+            assertTrue(loaded.isPresent());
+            assertArrayEquals(value, loaded.get().value());
+            assertEquals(10, loaded.get().revision());
+        }
+    }
+
+    @Test
+    void rejectsStaleRevisionAgainstPersistedTombstone() {
+        try (StateStore store = StateStore.open(tempDir, StorageConfig.defaults())) {
+            byte[] key = bytes("key");
+            store.put(key, bytes("value"), 10);
+            store.delete(key, 11);
+            store.snapshot();
+
+            StorageException.InvalidRevision error = assertThrows(
+                StorageException.InvalidRevision.class,
+                () -> store.put(key, bytes("late-value"), 10)
+            );
+
+            assertTrue(error.getMessage().contains("older"));
+            assertTrue(store.get(key).isEmpty());
+        }
+    }
+
+    @Test
     void openFailsWhenManifestIsMissingButSstablesRemain() throws Exception {
         Path storeDir = tempDir.resolve("store");
 

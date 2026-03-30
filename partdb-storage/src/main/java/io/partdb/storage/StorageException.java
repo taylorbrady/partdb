@@ -2,6 +2,7 @@ package io.partdb.storage;
 
 public sealed class StorageException extends RuntimeException
     permits StorageException.IO,
+            StorageException.InvalidRevision,
             StorageException.Corruption,
             StorageException.Timeout,
             StorageException.Closed {
@@ -21,6 +22,12 @@ public sealed class StorageException extends RuntimeException
 
         public IO(String message, Throwable cause) {
             super(message, cause);
+        }
+    }
+
+    public static final class InvalidRevision extends StorageException {
+        public InvalidRevision(String message) {
+            super(message);
         }
     }
 
