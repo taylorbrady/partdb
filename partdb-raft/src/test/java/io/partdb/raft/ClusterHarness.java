@@ -11,35 +11,46 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
 
-final class Network {
-    private final Map<String, Raft> nodes = new LinkedHashMap<>();
+final class ClusterHarness {
+    private final Map<String, SimulatedNode> nodes = new LinkedHashMap<>();
     private final Deque<Envelope> inFlight = new ArrayDeque<>();
     private final Set<String> isolated = new HashSet<>();
     private final List<ReadState> readStates = new ArrayList<>();
     private final List<MembershipChangeEvent> membershipChanges = new ArrayList<>();
 
+    private record SimulatedNode(Raft raft, InMemoryStorage storage) {}
+
     private record Envelope(String from, String to, RaftMessage message) {}
 
-    record ReadState(String nodeId, long index, byte[] context) {}
+    record ReadState(String nodeId, long index, byte[] context) {
+        ReadState {
+            context = context.clone();
+        }
+
+        @Override
+        public byte[] context() {
+            return context.clone();
+        }
+    }
 
     record MembershipChangeEvent(String nodeId, long index, Membership previous, Membership current) {}
 
-    private Network() {}
+    private ClusterHarness() {}
 
     static String nodeId(int index) {
         return "node-" + index;
     }
 
-    static Network create(int voterCount) {
+    static ClusterHarness create(int voterCount) {
         return create(voterCount, 0, RaftConfig.defaults());
     }
 
-    static Network create(int voterCount, int learnerCount) {
+    static ClusterHarness create(int voterCount, int learnerCount) {
         return create(voterCount, learnerCount, RaftConfig.defaults());
     }
 
-    static Network create(int voterCount, int learnerCount, RaftConfig config) {
-        var network = new Network();
+    static ClusterHarness create(int voterCount, int learnerCount, RaftConfig config) {
+        var cluster = new ClusterHarness();
 
         var voters = new HashSet<String>();
         for (int i = 0; i < voterCount; i++) {
@@ -56,34 +67,26 @@ final class Network {
         int nodeIndex = 0;
         for (String nodeId : voters) {
             int jitter = nodeIndex++;
-            var storage = new InMemoryStorage(membership);
-            var raft = Raft.builder(nodeId, membership, config, storage)
-                .random(_ -> jitter)
-                .build();
-            network.nodes.put(nodeId, raft);
+            cluster.addNode(nodeId, membership, config, jitter);
         }
         for (String nodeId : learners) {
             int jitter = nodeIndex++;
-            var storage = new InMemoryStorage(membership);
-            var raft = Raft.builder(nodeId, membership, config, storage)
-                .random(_ -> jitter)
-                .build();
-            network.nodes.put(nodeId, raft);
+            cluster.addNode(nodeId, membership, config, jitter);
         }
 
-        return network;
+        return cluster;
     }
 
     void tick() {
-        for (var nodeId : nodes.keySet()) {
+        for (var nodeId : List.copyOf(nodes.keySet())) {
             tickNode(nodeId);
         }
     }
 
     void tickNode(String nodeId) {
-        var raft = nodes.get(nodeId);
-        if (raft != null) {
-            var ready = raft.step(new RaftEvent.Tick());
+        var node = nodes.get(nodeId);
+        if (node != null) {
+            var ready = node.raft().step(new RaftEvent.Tick());
             processReady(nodeId, ready);
         }
     }
@@ -98,9 +101,9 @@ final class Network {
             return true;
         }
 
-        var raft = nodes.get(envelope.to);
-        if (raft != null) {
-            var ready = raft.step(new RaftEvent.Receive(envelope.from, envelope.message));
+        var node = nodes.get(envelope.to);
+        if (node != null) {
+            var ready = node.raft().step(new RaftEvent.Receive(envelope.from, envelope.message));
             processReady(envelope.to, ready);
         }
         return true;
@@ -117,9 +120,9 @@ final class Network {
             if (envelope.from().equals(from) && envelope.to().equals(to)) {
                 it.remove();
                 if (!isolated.contains(from) && !isolated.contains(to)) {
-                    var raft = nodes.get(to);
-                    if (raft != null) {
-                        var ready = raft.step(new RaftEvent.Receive(from, envelope.message()));
+                    var node = nodes.get(to);
+                    if (node != null) {
+                        var ready = node.raft().step(new RaftEvent.Receive(from, envelope.message()));
                         processReady(to, ready);
                     }
                 }
@@ -139,42 +142,46 @@ final class Network {
     }
 
     Raft node(String id) {
-        return nodes.get(id);
+        var node = nodes.get(id);
+        return node != null ? node.raft() : null;
     }
 
     Raft node(int index) {
-        return nodes.get(nodeId(index));
+        return node(nodeId(index));
     }
 
     List<Raft> allNodes() {
-        return List.copyOf(nodes.values());
+        return nodes.values().stream()
+            .map(SimulatedNode::raft)
+            .toList();
     }
 
     Optional<String> leader() {
         return nodes.entrySet().stream()
-            .filter(e -> e.getValue().isLeader())
+            .filter(e -> e.getValue().raft().isLeader())
             .map(Map.Entry::getKey)
             .findFirst();
     }
 
     long leaderCount() {
         return nodes.values().stream()
+            .map(SimulatedNode::raft)
             .filter(Raft::isLeader)
             .count();
     }
 
     void propose(String nodeId, byte[] data) {
-        var raft = nodes.get(nodeId);
-        if (raft != null) {
-            var ready = raft.step(new RaftEvent.Propose(data));
+        var node = nodes.get(nodeId);
+        if (node != null) {
+            var ready = node.raft().step(new RaftEvent.Propose(data));
             processReady(nodeId, ready);
         }
     }
 
     void readIndex(String nodeId, byte[] context) {
-        var raft = nodes.get(nodeId);
-        if (raft != null) {
-            var ready = raft.step(new RaftEvent.ReadIndex(context));
+        var node = nodes.get(nodeId);
+        if (node != null) {
+            var ready = node.raft().step(new RaftEvent.ReadIndex(context));
             processReady(nodeId, ready);
         }
     }
@@ -190,9 +197,9 @@ final class Network {
     }
 
     void proposeConfigChange(String nodeId, ConfigChange change) {
-        var raft = nodes.get(nodeId);
-        if (raft != null) {
-            var ready = raft.step(new RaftEvent.ChangeConfig(change));
+        var node = nodes.get(nodeId);
+        if (node != null) {
+            var ready = node.raft().step(new RaftEvent.ChangeConfig(change));
             processReady(nodeId, ready);
         }
     }
@@ -203,11 +210,11 @@ final class Network {
         return result;
     }
 
-    void addNode(String nodeId, Raft raft) {
-        nodes.put(nodeId, raft);
+    void addNode(String nodeId, Raft raft, InMemoryStorage storage) {
+        nodes.put(nodeId, new SimulatedNode(raft, storage));
     }
 
-    void runUntil(Predicate<Network> condition, int maxTicks) {
+    void runUntil(Predicate<ClusterHarness> condition, int maxTicks) {
         for (int i = 0; i < maxTicks && !condition.test(this); i++) {
             tick();
             deliverAll();
@@ -215,30 +222,74 @@ final class Network {
     }
 
     private void processReady(String from, Ready ready) {
+        if (!ready.hasWork()) {
+            return;
+        }
+
+        var node = nodes.get(from);
+        if (node == null) {
+            return;
+        }
+
+        // Mirror the node runtime contract: persist first, then send, then apply/advance.
+        var persist = ready.persist();
+        if (persist.hasWork()) {
+            node.storage().append(persist.hardState(), persist.entries());
+            if (persist.incomingSnapshot() != null) {
+                node.storage().saveSnapshot(persist.incomingSnapshot());
+            }
+            if (persist.mustSync()) {
+                node.storage().sync();
+            }
+        }
+
         for (var outbound : ready.messages()) {
             inFlight.addLast(new Envelope(from, outbound.to(), outbound.message()));
+        }
+
+        long lastAppliedIndex = 0;
+        long lastAppliedTerm = 0;
+        for (var change : ready.apply().membershipChanges()) {
+            membershipChanges.add(new MembershipChangeEvent(from, change.index(), change.previous(), change.current()));
+            if (change.index() > lastAppliedIndex) {
+                lastAppliedIndex = change.index();
+                lastAppliedTerm = node.storage().term(change.index());
+            }
+        }
+
+        for (var entry : ready.apply().entries()) {
+            lastAppliedIndex = entry.index();
+            lastAppliedTerm = entry.term();
+        }
+        if (lastAppliedIndex > 0) {
+            node.raft().advance(lastAppliedIndex, lastAppliedTerm);
         }
 
         for (var readState : ready.apply().readStates()) {
             readStates.add(new ReadState(from, readState.index(), readState.context()));
         }
 
-        for (var change : ready.apply().membershipChanges()) {
-            membershipChanges.add(new MembershipChangeEvent(from, change.index(), change.previous(), change.current()));
-        }
-
         var snapshot = ready.snapshotToSend();
         if (snapshot != null) {
-            var node = nodes.get(from);
+            var outgoingSnapshot = node.storage().snapshot()
+                .orElseGet(() -> new Snapshot(snapshot.index(), snapshot.term(), node.raft().membership(), new byte[0]));
             var msg = new RaftMessage.InstallSnapshot(
-                node.term(),
+                node.raft().term(),
                 from,
-                snapshot.index(),
-                snapshot.term(),
-                node.membership(),
-                new byte[0]
+                outgoingSnapshot.index(),
+                outgoingSnapshot.term(),
+                outgoingSnapshot.membership(),
+                outgoingSnapshot.data()
             );
             inFlight.addLast(new Envelope(from, snapshot.peer(), msg));
         }
+    }
+
+    private void addNode(String nodeId, Membership membership, RaftConfig config, int jitter) {
+        var storage = new InMemoryStorage(membership);
+        var raft = Raft.builder(nodeId, membership, config, storage)
+            .random(_ -> jitter)
+            .build();
+        addNode(nodeId, raft, storage);
     }
 }

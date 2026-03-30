@@ -13,15 +13,15 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ClusterTest {
 
-    private void electLeader(Network network) {
-        network.runUntil(n -> n.leader().isPresent(), 50);
+    private void electLeader(ClusterHarness cluster) {
+        cluster.runUntil(harness -> harness.leader().isPresent(), 50);
     }
 
     @Nested
     class LeaderElection {
         @Test
         void singleNodeClusterElectsLeader() {
-            var network = Network.create(1);
+            var network = ClusterHarness.create(1);
 
             electLeader(network);
 
@@ -30,7 +30,7 @@ class ClusterTest {
 
         @Test
         void threeNodeClusterElectsLeader() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
 
             electLeader(network);
 
@@ -39,7 +39,7 @@ class ClusterTest {
 
         @Test
         void fiveNodeClusterElectsLeader() {
-            var network = Network.create(5);
+            var network = ClusterHarness.create(5);
 
             electLeader(network);
 
@@ -48,7 +48,7 @@ class ClusterTest {
 
         @Test
         void atMostOneLeaderPerTerm() {
-            var network = Network.create(5);
+            var network = ClusterHarness.create(5);
 
             for (int i = 0; i < 100; i++) {
                 network.tick();
@@ -72,7 +72,7 @@ class ClusterTest {
 
         @Test
         void leaderKnowsItsOwnId() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
 
             electLeader(network);
 
@@ -86,7 +86,7 @@ class ClusterTest {
     class Partitions {
         @Test
         void majorityElectsNewLeaderDuringPartition() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var oldLeaderId = network.leader().orElseThrow();
@@ -105,17 +105,17 @@ class ClusterTest {
 
         @Test
         void healedNodeRejoinsAndFollowsNewLeader() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
-            network.isolate(Network.nodeId(2));
+            network.isolate(ClusterHarness.nodeId(2));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
                 network.deliverAll();
             }
 
-            network.heal(Network.nodeId(2));
+            network.heal(ClusterHarness.nodeId(2));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -127,7 +127,7 @@ class ClusterTest {
 
         @Test
         void oldLeaderBecomesFollowerOnRejoin() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var oldLeaderId = network.leader().orElseThrow();
@@ -154,12 +154,12 @@ class ClusterTest {
 
         @Test
         void minorityCannotElectLeader() {
-            var network = Network.create(5);
+            var network = ClusterHarness.create(5);
             electLeader(network);
 
-            network.isolate(Network.nodeId(0));
-            network.isolate(Network.nodeId(1));
-            network.isolate(Network.nodeId(2));
+            network.isolate(ClusterHarness.nodeId(0));
+            network.isolate(ClusterHarness.nodeId(1));
+            network.isolate(ClusterHarness.nodeId(2));
 
             for (int i = 0; i < 50; i++) {
                 network.tick();
@@ -176,7 +176,7 @@ class ClusterTest {
     class Replication {
         @Test
         void proposalReplicatesToAllNodes() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
@@ -194,11 +194,11 @@ class ClusterTest {
 
         @Test
         void proposalCommitsWithMajority() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
-            network.isolate(Network.nodeId(2));
+            network.isolate(ClusterHarness.nodeId(2));
 
             network.propose(leaderId, "hello".getBytes());
 
@@ -213,11 +213,11 @@ class ClusterTest {
 
         @Test
         void laggedFollowerCatchesUp() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
-            network.isolate(Network.nodeId(2));
+            network.isolate(ClusterHarness.nodeId(2));
 
             network.propose(leaderId, "entry1".getBytes());
             network.propose(leaderId, "entry2".getBytes());
@@ -228,7 +228,7 @@ class ClusterTest {
                 network.deliverAll();
             }
 
-            network.heal(Network.nodeId(2));
+            network.heal(ClusterHarness.nodeId(2));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -242,7 +242,7 @@ class ClusterTest {
 
         @Test
         void multipleProposalsReplicateInOrder() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
@@ -268,7 +268,7 @@ class ClusterTest {
     class Consistency {
         @Test
         void allNodesAgreeOnCommittedEntries() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
@@ -291,7 +291,7 @@ class ClusterTest {
 
         @Test
         void termsOnlyIncrease() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
 
             Map<String, Long> lastSeenTerm = new HashMap<>();
             for (var node : network.allNodes()) {
@@ -315,7 +315,7 @@ class ClusterTest {
     class PreVoteCluster {
         @Test
         void clusterElectsLeaderWithPreVote() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
 
             electLeader(network);
 
@@ -326,16 +326,16 @@ class ClusterTest {
 
         @Test
         void partitionedNodeDoesNotInflateTerm() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var isolatedNode = network.node(2);
             var termBeforeIsolation = isolatedNode.term();
 
-            network.isolate(Network.nodeId(2));
+            network.isolate(ClusterHarness.nodeId(2));
 
             for (int i = 0; i < 100; i++) {
-                network.tickNode(Network.nodeId(2));
+                network.tickNode(ClusterHarness.nodeId(2));
             }
 
             var termDuringIsolation = isolatedNode.term();
@@ -344,21 +344,21 @@ class ClusterTest {
 
         @Test
         void healedNodeRejoinsWithoutTermInflation() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var isolatedNode = network.node(2);
             var termBeforeIsolation = isolatedNode.term();
 
-            network.isolate(Network.nodeId(2));
+            network.isolate(ClusterHarness.nodeId(2));
 
             for (int i = 0; i < 100; i++) {
-                network.tickNode(Network.nodeId(2));
+                network.tickNode(ClusterHarness.nodeId(2));
             }
 
             assertEquals(termBeforeIsolation, isolatedNode.term());
 
-            network.heal(Network.nodeId(2));
+            network.heal(ClusterHarness.nodeId(2));
 
             for (int i = 0; i < 50; i++) {
                 network.tick();
@@ -370,7 +370,7 @@ class ClusterTest {
 
         @Test
         void preVoteAllowsElectionWhenLeaderFails() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var oldLeaderId = network.leader().orElseThrow();
@@ -396,11 +396,11 @@ class ClusterTest {
     class SnapshotRecovery {
         @Test
         void laggedFollowerReceivesSnapshotWhenLogCompacted() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
-            network.isolate(Network.nodeId(2));
+            network.isolate(ClusterHarness.nodeId(2));
 
             for (int i = 0; i < 5; i++) {
                 network.propose(leaderId, ("entry-" + i).getBytes());
@@ -415,7 +415,7 @@ class ClusterTest {
             long commitBeforeCompaction = leader.commitIndex();
             assertTrue(commitBeforeCompaction >= 5);
 
-            network.heal(Network.nodeId(2));
+            network.heal(ClusterHarness.nodeId(2));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -431,7 +431,7 @@ class ClusterTest {
     class ReadIndex {
         @Test
         void leaderServesReadIndexDirectly() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
@@ -457,11 +457,11 @@ class ClusterTest {
 
         @Test
         void followerForwardsReadIndexToLeader() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
-            String followerId = Network.nodeId(0).equals(leaderId) ? Network.nodeId(1) : Network.nodeId(0);
+            String followerId = ClusterHarness.nodeId(0).equals(leaderId) ? ClusterHarness.nodeId(1) : ClusterHarness.nodeId(0);
 
             byte[] context = "follower-read".getBytes();
             network.readIndex(followerId, context);
@@ -481,7 +481,7 @@ class ClusterTest {
 
         @Test
         void readIndexWorksAfterLeaderChange() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var oldLeaderId = network.leader().orElseThrow();
@@ -514,10 +514,10 @@ class ClusterTest {
 
         @Test
         void readIndexDuringPartitionFailsGracefully() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
-            String followerId = Network.nodeId(2);
+            String followerId = ClusterHarness.nodeId(2);
             network.isolate(followerId);
 
             byte[] context = "partitioned-read".getBytes();
@@ -533,7 +533,7 @@ class ClusterTest {
 
         @Test
         void multipleReadIndexRequestsFromDifferentNodes() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
@@ -543,8 +543,8 @@ class ClusterTest {
             byte[] ctx3 = "read-from-follower-2".getBytes();
 
             network.readIndex(leaderId, ctx1);
-            network.readIndex(Network.nodeId(1), ctx2);
-            network.readIndex(Network.nodeId(2), ctx3);
+            network.readIndex(ClusterHarness.nodeId(1), ctx2);
+            network.readIndex(ClusterHarness.nodeId(2), ctx3);
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -560,7 +560,7 @@ class ClusterTest {
     class Learners {
         @Test
         void learnerReplicatesWithCluster() {
-            var network = Network.create(3, 1);
+            var network = ClusterHarness.create(3, 1);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
@@ -578,11 +578,11 @@ class ClusterTest {
 
         @Test
         void clusterCommitsWithOnlyVoterMajority() {
-            var network = Network.create(3, 1);
+            var network = ClusterHarness.create(3, 1);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
-            network.isolate(Network.nodeId(3));
+            network.isolate(ClusterHarness.nodeId(3));
 
             network.propose(leaderId, "hello".getBytes());
 
@@ -597,14 +597,14 @@ class ClusterTest {
 
         @Test
         void learnerDoesNotAffectQuorum() {
-            var network = Network.create(2, 1);
+            var network = ClusterHarness.create(2, 1);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
             var leader = network.node(leaderId);
             long commitBeforeIsolation = leader.commitIndex();
 
-            String otherVoter = leaderId.equals(Network.nodeId(0)) ? Network.nodeId(1) : Network.nodeId(0);
+            String otherVoter = leaderId.equals(ClusterHarness.nodeId(0)) ? ClusterHarness.nodeId(1) : ClusterHarness.nodeId(0);
             network.isolate(otherVoter);
 
             network.propose(leaderId, "hello".getBytes());
@@ -619,11 +619,11 @@ class ClusterTest {
 
         @Test
         void learnerCatchesUpWithCluster() {
-            var network = Network.create(3, 1);
+            var network = ClusterHarness.create(3, 1);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
-            network.isolate(Network.nodeId(3));
+            network.isolate(ClusterHarness.nodeId(3));
 
             network.propose(leaderId, "entry1".getBytes());
             network.propose(leaderId, "entry2".getBytes());
@@ -634,7 +634,7 @@ class ClusterTest {
                 network.deliverAll();
             }
 
-            network.heal(Network.nodeId(3));
+            network.heal(ClusterHarness.nodeId(3));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -648,7 +648,7 @@ class ClusterTest {
 
         @Test
         void learnerDoesNotBecomeLeader() {
-            var network = Network.create(3, 1);
+            var network = ClusterHarness.create(3, 1);
             electLeader(network);
 
             for (int i = 0; i < 100; i++) {
@@ -663,11 +663,11 @@ class ClusterTest {
 
         @Test
         void learnerReceivesSnapshotFromLeader() {
-            var network = Network.create(3, 1);
+            var network = ClusterHarness.create(3, 1);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
-            network.isolate(Network.nodeId(3));
+            network.isolate(ClusterHarness.nodeId(3));
 
             for (int i = 0; i < 5; i++) {
                 network.propose(leaderId, ("entry-" + i).getBytes());
@@ -682,7 +682,7 @@ class ClusterTest {
             long commitBeforeCompaction = leader.commitIndex();
             assertTrue(commitBeforeCompaction >= 5);
 
-            network.heal(Network.nodeId(3));
+            network.heal(ClusterHarness.nodeId(3));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -698,7 +698,7 @@ class ClusterTest {
     class ConfigChanges {
         @Test
         void addLearnerReplicatesAfterCommit() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
@@ -722,22 +722,22 @@ class ClusterTest {
 
         @Test
         void promotedVoterAffectsQuorum() {
-            var network = Network.create(2, 1);
+            var network = ClusterHarness.create(2, 1);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
             var leader = network.node(leaderId);
 
-            network.proposeConfigChange(leaderId, new ConfigChange.PromoteVoter(Network.nodeId(2)));
+            network.proposeConfigChange(leaderId, new ConfigChange.PromoteVoter(ClusterHarness.nodeId(2)));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
                 network.deliverAll();
             }
 
-            assertTrue(leader.membership().isVoter(Network.nodeId(2)));
+            assertTrue(leader.membership().isVoter(ClusterHarness.nodeId(2)));
 
-            String otherVoter = leaderId.equals(Network.nodeId(0)) ? Network.nodeId(1) : Network.nodeId(0);
+            String otherVoter = leaderId.equals(ClusterHarness.nodeId(0)) ? ClusterHarness.nodeId(1) : ClusterHarness.nodeId(0);
             network.isolate(otherVoter);
 
             long commitBefore = leader.commitIndex();
@@ -753,7 +753,7 @@ class ClusterTest {
 
         @Test
         void leaderStepsDownAfterSelfRemoval() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
@@ -771,12 +771,12 @@ class ClusterTest {
 
         @Test
         void configChangeCommitsWithMajority() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
             var leader = network.node(leaderId);
-            network.isolate(Network.nodeId(2));
+            network.isolate(ClusterHarness.nodeId(2));
 
             long commitBefore = leader.commitIndex();
             network.proposeConfigChange(leaderId, new ConfigChange.AddLearner("node-3"));
@@ -792,11 +792,11 @@ class ClusterTest {
 
         @Test
         void removedNodeStopsReceivingAppends() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
-            var removedNodeId = Network.nodeId(2);
+            var removedNodeId = ClusterHarness.nodeId(2);
             var removedNode = network.node(removedNodeId);
 
             network.proposeConfigChange(leaderId, new ConfigChange.RemoveNode(removedNodeId));
@@ -822,11 +822,11 @@ class ClusterTest {
 
         @Test
         void demotedVoterStillReplicates() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
-            var demotedNodeId = Network.nodeId(2);
+            var demotedNodeId = ClusterHarness.nodeId(2);
 
             network.proposeConfigChange(leaderId, new ConfigChange.DemoteToLearner(demotedNodeId));
 
@@ -851,7 +851,7 @@ class ClusterTest {
 
         @Test
         void newLearnerCatchesUpAfterJoining() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
@@ -879,7 +879,7 @@ class ClusterTest {
             var newLearner = Raft.builder("node-3", leader.membership(), RaftConfig.defaults(), storage)
                 .random(_ -> 5)
                 .build();
-            network.addNode("node-3", newLearner);
+            network.addNode("node-3", newLearner, storage);
 
             for (int i = 0; i < 50; i++) {
                 network.tick();
@@ -891,7 +891,7 @@ class ClusterTest {
 
         @Test
         void configChangeEmitsMembershipChange() {
-            var network = Network.create(3);
+            var network = ClusterHarness.create(3);
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();

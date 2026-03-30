@@ -251,7 +251,7 @@ public final class Raft {
     }
 
     private void tickElection(ReadyBuilder builder) {
-        if (isLearner) {
+        if (!membership.isVoter(id)) {
             return;
         }
         electionTicks++;
@@ -385,6 +385,9 @@ public final class Raft {
     }
 
     private void startPreVote(ReadyBuilder builder) {
+        if (!membership.isVoter(id)) {
+            return;
+        }
         if (quorum == 1) {
             startElection(builder);
             return;
@@ -403,6 +406,9 @@ public final class Raft {
     }
 
     private void startElection(ReadyBuilder builder) {
+        if (!membership.isVoter(id)) {
+            return;
+        }
         term++;
         votedFor = id;
         role = Role.CANDIDATE;

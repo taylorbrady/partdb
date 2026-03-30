@@ -1701,6 +1701,21 @@ class RaftTest {
         }
 
         @Test
+        void removedNodeDoesNotCampaignAfterSelfRemoval() {
+            var raft = createRaft("n1", "n1", "n2", "n3");
+            becomeLeader(raft, List.of("n2", "n3"));
+
+            raft.step(new RaftEvent.ChangeConfig(new ConfigChange.RemoveNode("n1")));
+            raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
+
+            for (int i = 0; i < CONFIG.electionTimeoutMax() * 2; i++) {
+                raft.step(new RaftEvent.Tick());
+            }
+
+            assertEquals(Role.FOLLOWER, raft.role());
+        }
+
+        @Test
         void leaderStepsDownAfterSelfDemotion() {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
