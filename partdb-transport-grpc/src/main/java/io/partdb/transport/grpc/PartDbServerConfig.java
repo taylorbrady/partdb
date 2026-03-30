@@ -54,7 +54,9 @@ public final class PartDbServerConfig {
         int grpcPort
     ) {
         return new PartDbServerConfig(
-            PartDbNodeConfig.create(nodeId, peerAddresses, dataDirectory),
+            PartDbNodeConfig.builder(nodeId, dataDirectory)
+                .peerAddresses(peerAddresses)
+                .build(),
             raftPort,
             GrpcServerConfig.defaultConfig(grpcPort)
         );
