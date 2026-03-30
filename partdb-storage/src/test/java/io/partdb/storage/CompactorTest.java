@@ -17,7 +17,7 @@ class CompactorTest {
 
     @Test
     void splitsOutputsBeforeOvershootingTargetSize() {
-        LSMConfig config = LSMConfig.defaults()
+        LsmConfig config = LsmConfig.defaults()
             .withTargetUncompressedSize(200);
 
         try (SSTableStore store = SSTableStore.open(tempDir, config)) {
@@ -42,7 +42,7 @@ class CompactorTest {
 
     @Test
     void splitsOutputsWhenGrandparentOverlapGetsTooLarge() {
-        LSMConfig config = LSMConfig.defaults()
+        LsmConfig config = LsmConfig.defaults()
             .withTargetUncompressedSize(1_000);
 
         try (SSTableStore store = SSTableStore.open(tempDir, config)) {

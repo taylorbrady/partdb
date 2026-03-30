@@ -7,11 +7,11 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class LSMTreeCheckpointTest extends LSMTreeTestSupport {
+class LsmEngineCheckpointTest extends LsmEngineTestSupport {
 
     @Test
     void roundtrip() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
             tree.flush();
@@ -32,14 +32,14 @@ class LSMTreeCheckpointTest extends LSMTreeTestSupport {
         Path restoredDir = tempDir.resolve("restored");
 
         byte[] checkpoint;
-        try (LSMTree source = LSMTree.open(sourceDir, LSMConfig.defaults())) {
+        try (LsmEngine source = LsmEngine.open(sourceDir, LsmConfig.defaults())) {
             source.put(key(1), value(10), nextRevision());
             source.put(key(2), value(20), nextRevision());
             source.flush();
             checkpoint = source.checkpoint();
         }
 
-        try (LSMTree restored = LSMTree.open(restoredDir, LSMConfig.defaults())) {
+        try (LsmEngine restored = LsmEngine.open(restoredDir, LsmConfig.defaults())) {
             restored.restoreFromCheckpoint(checkpoint);
 
             assertTrue(restored.get(key(1)).isPresent());
@@ -51,7 +51,7 @@ class LSMTreeCheckpointTest extends LSMTreeTestSupport {
 
     @Test
     void restoresToPreviousState() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
 
@@ -75,7 +75,7 @@ class LSMTreeCheckpointTest extends LSMTreeTestSupport {
 
     @Test
     void capturesMultipleSSTables() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
 
@@ -99,7 +99,7 @@ class LSMTreeCheckpointTest extends LSMTreeTestSupport {
 
     @Test
     void clearsMemtableOnRestore() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
 
@@ -118,7 +118,7 @@ class LSMTreeCheckpointTest extends LSMTreeTestSupport {
 
     @Test
     void manifestStateRestored() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
 
@@ -140,7 +140,7 @@ class LSMTreeCheckpointTest extends LSMTreeTestSupport {
 
     @Test
     void multipleCheckpoints() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
             byte[] checkpoint1 = tree.checkpoint();
@@ -166,7 +166,7 @@ class LSMTreeCheckpointTest extends LSMTreeTestSupport {
 
     @Test
     void emptyTree() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             byte[] checkpoint = tree.checkpoint();
 
             tree.put(key(1), value(10), nextRevision());

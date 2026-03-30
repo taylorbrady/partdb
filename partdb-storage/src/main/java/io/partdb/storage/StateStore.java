@@ -13,7 +13,7 @@ public interface StateStore extends AutoCloseable {
     static StateStore open(Path dataDirectory, StorageConfig config) {
         Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
         Objects.requireNonNull(config, "config must not be null");
-        return new LsmStateStore(LSMTree.open(dataDirectory, config.toLsmConfig()));
+        return new LsmStateStore(LsmEngine.open(dataDirectory, config.toLsmConfig()));
     }
 
     void put(byte[] key, byte[] value, long revision);

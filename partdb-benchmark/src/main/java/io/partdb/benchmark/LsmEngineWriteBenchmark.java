@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @Fork(1)
 @Warmup(iterations = 3, time = 3)
 @Measurement(iterations = 5, time = 5)
-public class LSMTreeWriteBenchmark {
+public class LsmEngineWriteBenchmark {
 
     @Param({"100", "1024", "4096"})
     private int valueSize;

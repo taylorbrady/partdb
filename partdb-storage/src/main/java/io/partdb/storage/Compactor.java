@@ -16,9 +16,9 @@ final class Compactor {
     private static final int GRANDPARENT_OVERLAP_MULTIPLIER = 10;
 
     private final SSTableStore sstableStore;
-    private final LSMConfig config;
+    private final LsmConfig config;
 
-    Compactor(SSTableStore sstableStore, LSMConfig config) {
+    Compactor(SSTableStore sstableStore, LsmConfig config) {
         this.sstableStore = Objects.requireNonNull(sstableStore, "sstableStore");
         this.config = Objects.requireNonNull(config, "config");
     }

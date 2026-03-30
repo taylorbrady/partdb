@@ -2,7 +2,7 @@ package io.partdb.storage;
 
 import java.util.Objects;
 
-record LSMConfig(
+record LsmConfig(
     long memtableMaxSizeBytes,
     int blockSize,
     double bloomFilterFalsePositiveRate,
@@ -27,7 +27,7 @@ record LSMConfig(
     public static final int DEFAULT_LEVEL_MULTIPLIER = 10;
     public static final int DEFAULT_MAX_LEVELS = 7;
 
-    public LSMConfig {
+    public LsmConfig {
         if (memtableMaxSizeBytes <= 0) {
             throw new IllegalArgumentException("memtableMaxSizeBytes must be positive");
         }
@@ -65,7 +65,7 @@ record LSMConfig(
         return new Builder();
     }
 
-    public static LSMConfig defaults() {
+    public static LsmConfig defaults() {
         return builder().build();
     }
 
@@ -73,47 +73,47 @@ record LSMConfig(
         return new Builder(this);
     }
 
-    public LSMConfig withMemtableMaxSizeBytes(long memtableMaxSizeBytes) {
+    public LsmConfig withMemtableMaxSizeBytes(long memtableMaxSizeBytes) {
         return toBuilder().memtableMaxSizeBytes(memtableMaxSizeBytes).build();
     }
 
-    public LSMConfig withBlockSize(int blockSize) {
+    public LsmConfig withBlockSize(int blockSize) {
         return toBuilder().blockSize(blockSize).build();
     }
 
-    public LSMConfig withBloomFilterFalsePositiveRate(double bloomFilterFalsePositiveRate) {
+    public LsmConfig withBloomFilterFalsePositiveRate(double bloomFilterFalsePositiveRate) {
         return toBuilder().bloomFilterFalsePositiveRate(bloomFilterFalsePositiveRate).build();
     }
 
-    public LSMConfig withBlockCodec(BlockCodec blockCodec) {
+    public LsmConfig withBlockCodec(BlockCodec blockCodec) {
         return toBuilder().blockCodec(blockCodec).build();
     }
 
-    public LSMConfig withBlockCacheMaxBytes(long blockCacheMaxBytes) {
+    public LsmConfig withBlockCacheMaxBytes(long blockCacheMaxBytes) {
         return toBuilder().blockCacheMaxBytes(blockCacheMaxBytes).build();
     }
 
-    public LSMConfig withTargetUncompressedSize(long targetUncompressedSize) {
+    public LsmConfig withTargetUncompressedSize(long targetUncompressedSize) {
         return toBuilder().targetUncompressedSize(targetUncompressedSize).build();
     }
 
-    public LSMConfig withMaxConcurrentCompactions(int maxConcurrentCompactions) {
+    public LsmConfig withMaxConcurrentCompactions(int maxConcurrentCompactions) {
         return toBuilder().maxConcurrentCompactions(maxConcurrentCompactions).build();
     }
 
-    public LSMConfig withL0CompactionTrigger(int l0CompactionTrigger) {
+    public LsmConfig withL0CompactionTrigger(int l0CompactionTrigger) {
         return toBuilder().l0CompactionTrigger(l0CompactionTrigger).build();
     }
 
-    public LSMConfig withMaxBytesForLevelBase(long maxBytesForLevelBase) {
+    public LsmConfig withMaxBytesForLevelBase(long maxBytesForLevelBase) {
         return toBuilder().maxBytesForLevelBase(maxBytesForLevelBase).build();
     }
 
-    public LSMConfig withLevelMultiplier(int levelMultiplier) {
+    public LsmConfig withLevelMultiplier(int levelMultiplier) {
         return toBuilder().levelMultiplier(levelMultiplier).build();
     }
 
-    public LSMConfig withMaxLevels(int maxLevels) {
+    public LsmConfig withMaxLevels(int maxLevels) {
         return toBuilder().maxLevels(maxLevels).build();
     }
 
@@ -144,7 +144,7 @@ record LSMConfig(
         private Builder() {
         }
 
-        private Builder(LSMConfig config) {
+        private Builder(LsmConfig config) {
             this.memtableMaxSizeBytes = config.memtableMaxSizeBytes;
             this.blockSize = config.blockSize;
             this.bloomFilterFalsePositiveRate = config.bloomFilterFalsePositiveRate;
@@ -213,8 +213,8 @@ record LSMConfig(
             return this;
         }
 
-        public LSMConfig build() {
-            return new LSMConfig(
+        public LsmConfig build() {
+            return new LsmConfig(
                 memtableMaxSizeBytes,
                 blockSize,
                 bloomFilterFalsePositiveRate,

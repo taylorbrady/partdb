@@ -7,9 +7,9 @@ import java.util.Optional;
 
 final class LsmStateStore implements StateStore {
 
-    private final LSMTree tree;
+    private final LsmEngine tree;
 
-    LsmStateStore(LSMTree tree) {
+    LsmStateStore(LsmEngine tree) {
         this.tree = Objects.requireNonNull(tree, "tree must not be null");
     }
 

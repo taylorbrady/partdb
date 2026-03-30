@@ -82,7 +82,7 @@ final class SSTable implements AutoCloseable {
         }
     }
 
-    static Builder builder(long id, int level, Path path, LSMConfig config) {
+    static Builder builder(long id, int level, Path path, LsmConfig config) {
         try {
             FileChannel channel = FileChannel.open(path,
                 StandardOpenOption.CREATE_NEW,
@@ -321,7 +321,7 @@ final class SSTable implements AutoCloseable {
         private final long id;
         private final int level;
         private final Path path;
-        private final LSMConfig config;
+        private final LsmConfig config;
         private final FileChannel channel;
         private final List<BlockIndex.Entry> indexEntries;
         private final Block.Builder currentBlock;
@@ -337,7 +337,7 @@ final class SSTable implements AutoCloseable {
         private boolean hasRevision;
         private boolean finished;
 
-        private Builder(long id, int level, Path path, LSMConfig config, FileChannel channel) {
+        private Builder(long id, int level, Path path, LsmConfig config, FileChannel channel) {
             this.id = id;
             this.level = level;
             this.path = path;

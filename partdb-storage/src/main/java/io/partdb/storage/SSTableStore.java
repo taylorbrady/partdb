@@ -40,7 +40,7 @@ final class SSTableStore implements AutoCloseable {
     private static final String RESTORE_SUFFIX = ".restore";
 
     private final Path directory;
-    private final LSMConfig config;
+    private final LsmConfig config;
     private final BlockCache cache;
     private final AtomicLong nextId;
     private final ReentrantLock stateLock;
@@ -52,7 +52,7 @@ final class SSTableStore implements AutoCloseable {
 
     private SSTableStore(
         Path directory,
-        LSMConfig config,
+        LsmConfig config,
         BlockCache cache,
         SSTableManifest manifest,
         SSTableSetRef initialSet
@@ -77,7 +77,7 @@ final class SSTableStore implements AutoCloseable {
         );
     }
 
-    static SSTableStore open(Path directory, LSMConfig config) {
+    static SSTableStore open(Path directory, LsmConfig config) {
         try {
             Files.createDirectories(directory);
 

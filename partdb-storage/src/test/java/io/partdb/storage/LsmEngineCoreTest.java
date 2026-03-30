@@ -10,11 +10,11 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class LSMTreeCoreTest extends LSMTreeTestSupport {
+class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void putAndGet() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
 
             Optional<StorageEntry> result = tree.get(key(1));
@@ -26,7 +26,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void getNonExistentKey() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             Optional<StorageEntry> result = tree.get(key(99));
             assertTrue(result.isEmpty());
         }
@@ -34,7 +34,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void deleteKey() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.delete(key(1), nextRevision());
 
@@ -45,7 +45,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void deleteNonExistentKey() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.delete(key(1), nextRevision());
 
             Optional<StorageEntry> result = tree.get(key(1));
@@ -55,7 +55,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void putOverwritesPreviousValue() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(1), value(20), nextRevision());
 
@@ -75,7 +75,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
         older.put(new Mutation.Put(key("key"), value("older"), 1));
         newer.put(new Mutation.Put(key("key"), value("newer"), 2));
 
-        Optional<Mutation> result = LSMTree.lookupMutation(key("key"), active, List.of(older, newer));
+        Optional<Mutation> result = LsmEngine.lookupMutation(key("key"), active, List.of(older, newer));
 
         assertTrue(result.isPresent());
         assertInstanceOf(Mutation.Put.class, result.get());
@@ -84,7 +84,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void entireRange() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
             tree.put(key(3), value(30), nextRevision());
@@ -100,7 +100,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void withBounds() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
             tree.put(key(3), value(30), nextRevision());
@@ -116,7 +116,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void excludesDeletedKeys() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
             tree.delete(key(2), nextRevision());
@@ -132,9 +132,9 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void mergesFromMultipleSources() {
-        LSMConfig config = smallMemtableConfig(512);
+        LsmConfig config = smallMemtableConfig(512);
 
-        try (LSMTree tree = LSMTree.open(tempDir, config)) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
             for (int i = 0; i < 20; i++) {
                 tree.put(key(i), largeValue(100), nextRevision());
             }
@@ -150,9 +150,9 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void usesLatestValueForDuplicateKeys() {
-        LSMConfig config = smallMemtableConfig(256);
+        LsmConfig config = smallMemtableConfig(256);
 
-        try (LSMTree tree = LSMTree.open(tempDir, config)) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), largeValue(100), nextRevision());
             tree.put(key(1), value(20), nextRevision());
@@ -170,7 +170,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void manualFlush() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
 
@@ -183,9 +183,9 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void automaticOnMemtableSize() {
-        LSMConfig config = smallMemtableConfig(1024);
+        LsmConfig config = smallMemtableConfig(1024);
 
-        try (LSMTree tree = LSMTree.open(tempDir, config)) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
             for (int i = 0; i < 10; i++) {
                 tree.put(key(i), largeValue(200), nextRevision());
             }
@@ -198,15 +198,15 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void fromSSTables() {
-        LSMConfig config = LSMConfig.defaults();
+        LsmConfig config = LsmConfig.defaults();
 
-        try (LSMTree tree = LSMTree.open(tempDir, config)) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
             tree.flush();
         }
 
-        try (LSMTree tree = LSMTree.open(tempDir, config)) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
             Optional<StorageEntry> result1 = tree.get(key(1));
             Optional<StorageEntry> result2 = tree.get(key(2));
 
@@ -220,7 +220,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void readPathPriority() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
             tree.put(key(1), value(20), nextRevision());
@@ -234,9 +234,9 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void multipleSSTables() {
-        LSMConfig config = smallMemtableConfig(512);
+        LsmConfig config = smallMemtableConfig(512);
 
-        try (LSMTree tree = LSMTree.open(tempDir, config)) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
             for (int i = 0; i < 30; i++) {
                 tree.put(key(i), largeValue(100), nextRevision());
             }
@@ -251,7 +251,7 @@ class LSMTreeCoreTest extends LSMTreeTestSupport {
 
     @Test
     void emptyManifestLoad() {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             SSTableManifest manifest = tree.manifest();
             assertNotNull(manifest);
             assertTrue(manifest.sstables().isEmpty());

@@ -12,10 +12,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 final class LeveledCompactionPlanner {
 
-    private final LSMConfig config;
+    private final LsmConfig config;
     private final Map<Integer, AtomicInteger> levelRoundRobin;
 
-    LeveledCompactionPlanner(LSMConfig config) {
+    LeveledCompactionPlanner(LsmConfig config) {
         this.config = config;
         this.levelRoundRobin = new ConcurrentHashMap<>();
     }

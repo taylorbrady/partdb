@@ -19,11 +19,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
-final class LSMTree implements AutoCloseable {
+final class LsmEngine implements AutoCloseable {
 
     private static final int MAX_IMMUTABLE_MEMTABLES = 4;
 
-    private final LSMConfig config;
+    private final LsmConfig config;
     private final AtomicReference<Memtable> activeMemtable;
     private final ReentrantLock immutableMemtablesLock;
     private volatile List<Memtable> immutableMemtables;
@@ -33,7 +33,7 @@ final class LSMTree implements AutoCloseable {
     private final AtomicBoolean closed;
     private final SSTableStore sstableStore;
 
-    private LSMTree(LSMConfig config, SSTableStore sstableStore) {
+    private LsmEngine(LsmConfig config, SSTableStore sstableStore) {
         this.config = config;
         this.sstableStore = sstableStore;
         this.activeMemtable = new AtomicReference<>(new Memtable());
@@ -45,11 +45,11 @@ final class LSMTree implements AutoCloseable {
         this.closed = new AtomicBoolean(false);
     }
 
-    static LSMTree open(Path dataDirectory, LSMConfig config) {
+    static LsmEngine open(Path dataDirectory, LsmConfig config) {
         try {
             Files.createDirectories(dataDirectory);
             SSTableStore sstableStore = SSTableStore.open(dataDirectory, config);
-            return new LSMTree(config, sstableStore);
+            return new LsmEngine(config, sstableStore);
         } catch (IOException e) {
             throw new StorageException.IO("Failed to open store", e);
         }

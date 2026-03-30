@@ -96,7 +96,7 @@ class SSTableViewTest {
     }
 
     private SSTableMetadata writeTable(long id, int level, String key, String value, long revision) {
-        try (SSTable.Builder builder = SSTable.builder(id, level, tablePath(id), LSMConfig.defaults())) {
+        try (SSTable.Builder builder = SSTable.builder(id, level, tablePath(id), LsmConfig.defaults())) {
             builder.add(new Mutation.Put(slice(key), slice(value), revision));
             return builder.finish();
         }

@@ -14,7 +14,7 @@ class LeveledCompactionPlannerTest {
 
     @Test
     void l0CompactionUsesBoundedOldestBatch() {
-        LSMConfig config = LSMConfig.defaults()
+        LsmConfig config = LsmConfig.defaults()
             .withL0CompactionTrigger(4)
             .withMaxLevels(4);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
@@ -38,7 +38,7 @@ class LeveledCompactionPlannerTest {
 
     @Test
     void doesNotCompactPastConfiguredLastLevel() {
-        LSMConfig config = LSMConfig.defaults()
+        LsmConfig config = LsmConfig.defaults()
             .withMaxLevels(3)
             .withMaxBytesForLevelBase(100);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
@@ -55,7 +55,7 @@ class LeveledCompactionPlannerTest {
 
     @Test
     void ordersTasksByCompactionScore() {
-        LSMConfig config = LSMConfig.defaults()
+        LsmConfig config = LsmConfig.defaults()
             .withL0CompactionTrigger(4)
             .withMaxLevels(4)
             .withMaxBytesForLevelBase(100);
@@ -79,7 +79,7 @@ class LeveledCompactionPlannerTest {
 
     @Test
     void prefersLowerOverlapSeedFileWithinOverfullLevel() {
-        LSMConfig config = LSMConfig.defaults()
+        LsmConfig config = LsmConfig.defaults()
             .withMaxLevels(4)
             .withMaxBytesForLevelBase(100);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
@@ -102,7 +102,7 @@ class LeveledCompactionPlannerTest {
 
     @Test
     void includesOnlyOverlappingGrandparentsForCompactionRange() {
-        LSMConfig config = LSMConfig.defaults()
+        LsmConfig config = LsmConfig.defaults()
             .withMaxLevels(5)
             .withMaxBytesForLevelBase(100);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);

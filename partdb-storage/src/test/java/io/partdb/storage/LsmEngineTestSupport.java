@@ -8,7 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
-abstract class LSMTreeTestSupport {
+abstract class LsmEngineTestSupport {
 
     @TempDir
     Path tempDir;
@@ -39,8 +39,8 @@ abstract class LSMTreeTestSupport {
         return Slice.of(new byte[size]);
     }
 
-    protected static LSMConfig smallMemtableConfig(int sizeBytes) {
-        return LSMConfig.defaults().withMemtableMaxSizeBytes(sizeBytes);
+    protected static LsmConfig smallMemtableConfig(int sizeBytes) {
+        return LsmConfig.defaults().withMemtableMaxSizeBytes(sizeBytes);
     }
 
     protected static List<StorageEntry> readAll(StorageEntryCursor cursor) {

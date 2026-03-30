@@ -32,8 +32,8 @@ public record StorageConfig(
         return new Builder(this);
     }
 
-    LSMConfig toLsmConfig() {
-        return new LSMConfig(
+    LsmConfig toLsmConfig() {
+        return new LsmConfig(
             writeBufferMaxBytes,
             tuning.dataBlockSizeBytes(),
             tuning.bloomFilterFalsePositiveRate(),
@@ -111,14 +111,14 @@ public record StorageConfig(
         }
 
         public static final class Builder {
-            private int dataBlockSizeBytes = LSMConfig.DEFAULT_BLOCK_SIZE;
-            private double bloomFilterFalsePositiveRate = LSMConfig.DEFAULT_BLOOM_FILTER_FPR;
-            private long targetTableSizeBytes = LSMConfig.DEFAULT_TARGET_UNCOMPRESSED_SIZE;
-            private int maxConcurrentCompactions = LSMConfig.DEFAULT_MAX_CONCURRENT_COMPACTIONS;
-            private int l0CompactionTrigger = LSMConfig.DEFAULT_L0_COMPACTION_TRIGGER;
-            private long maxBytesForLevelBase = LSMConfig.DEFAULT_MAX_BYTES_FOR_LEVEL_BASE;
-            private int levelMultiplier = LSMConfig.DEFAULT_LEVEL_MULTIPLIER;
-            private int maxLevels = LSMConfig.DEFAULT_MAX_LEVELS;
+            private int dataBlockSizeBytes = LsmConfig.DEFAULT_BLOCK_SIZE;
+            private double bloomFilterFalsePositiveRate = LsmConfig.DEFAULT_BLOOM_FILTER_FPR;
+            private long targetTableSizeBytes = LsmConfig.DEFAULT_TARGET_UNCOMPRESSED_SIZE;
+            private int maxConcurrentCompactions = LsmConfig.DEFAULT_MAX_CONCURRENT_COMPACTIONS;
+            private int l0CompactionTrigger = LsmConfig.DEFAULT_L0_COMPACTION_TRIGGER;
+            private long maxBytesForLevelBase = LsmConfig.DEFAULT_MAX_BYTES_FOR_LEVEL_BASE;
+            private int levelMultiplier = LsmConfig.DEFAULT_LEVEL_MULTIPLIER;
+            private int maxLevels = LsmConfig.DEFAULT_MAX_LEVELS;
 
             private Builder() {
             }
@@ -190,8 +190,8 @@ public record StorageConfig(
     }
 
     public static final class Builder {
-        private long writeBufferMaxBytes = LSMConfig.DEFAULT_MEMTABLE_MAX_SIZE_BYTES;
-        private long readCacheMaxBytes = LSMConfig.DEFAULT_BLOCK_CACHE_MAX_BYTES;
+        private long writeBufferMaxBytes = LsmConfig.DEFAULT_MEMTABLE_MAX_SIZE_BYTES;
+        private long readCacheMaxBytes = LsmConfig.DEFAULT_BLOCK_CACHE_MAX_BYTES;
         private Compression compression = Compression.DEFLATE;
         private Tuning tuning = Tuning.defaults();
 

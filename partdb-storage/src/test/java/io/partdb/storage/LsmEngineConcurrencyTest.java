@@ -12,11 +12,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class LSMTreeConcurrencyTest extends LSMTreeTestSupport {
+class LsmEngineConcurrencyTest extends LsmEngineTestSupport {
 
     @Test
     void concurrentReads() throws Exception {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 100; i++) {
                 tree.put(key(i), value(i), nextRevision());
             }
@@ -50,7 +50,7 @@ class LSMTreeConcurrencyTest extends LSMTreeTestSupport {
 
     @Test
     void concurrentWrites() throws Exception {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             int threadCount = 10;
             int writesPerThread = 100;
 
@@ -79,7 +79,7 @@ class LSMTreeConcurrencyTest extends LSMTreeTestSupport {
 
     @Test
     void concurrentReadsAndWrites() throws Exception {
-        try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 50; i++) {
                 tree.put(key(i), value(i), nextRevision());
             }
@@ -121,9 +121,9 @@ class LSMTreeConcurrencyTest extends LSMTreeTestSupport {
 
     @Test
     void readsWhileFlushing() throws Exception {
-        LSMConfig config = smallMemtableConfig(1024);
+        LsmConfig config = smallMemtableConfig(1024);
 
-        try (LSMTree tree = LSMTree.open(tempDir, config)) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
             for (int i = 0; i < 50; i++) {
                 tree.put(key(i), value(i), nextRevision());
             }
@@ -172,9 +172,9 @@ class LSMTreeConcurrencyTest extends LSMTreeTestSupport {
 
     @Test
     void readsWhileCompacting() throws Exception {
-        LSMConfig config = smallMemtableConfig(1024);
+        LsmConfig config = smallMemtableConfig(1024);
 
-        try (LSMTree tree = LSMTree.open(tempDir, config)) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
             for (int batch = 0; batch < 5; batch++) {
                 for (int i = 0; i < 50; i++) {
                     tree.put(key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextRevision());
@@ -215,9 +215,9 @@ class LSMTreeConcurrencyTest extends LSMTreeTestSupport {
 
     @Test
     void scanWhileFlushing() throws Exception {
-        LSMConfig config = smallMemtableConfig(1024);
+        LsmConfig config = smallMemtableConfig(1024);
 
-        try (LSMTree tree = LSMTree.open(tempDir, config)) {
+        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
             for (int i = 0; i < 50; i++) {
                 tree.put(key(i), value(i), nextRevision());
             }
