@@ -1,13 +1,12 @@
 package io.partdb.node;
 
+import io.partdb.raft.Membership;
 import io.partdb.raft.RaftConfig;
 import io.partdb.storage.LSMConfig;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 
@@ -15,7 +14,7 @@ public final class PartDbNodeConfig {
     private static final Duration DEFAULT_TICK_INTERVAL = Duration.ofMillis(10);
 
     private final String nodeId;
-    private final Map<String, String> peerAddresses;
+    private final Membership membership;
     private final Path dataDirectory;
     private final LSMConfig storeConfig;
     private final RaftConfig raftConfig;
@@ -30,23 +29,28 @@ public final class PartDbNodeConfig {
         if (tickInterval.isNegative() || tickInterval.isZero()) {
             throw new IllegalArgumentException("tickInterval must be positive");
         }
-
-        var peerCopy = new LinkedHashMap<String, String>();
-        builder.peerAddresses.forEach((peerId, address) ->
-            peerCopy.put(
-                requireNonBlank(peerId, "peerId"),
-                requireNonBlank(address, "peerAddress")
-            )
-        );
-        this.peerAddresses = Collections.unmodifiableMap(peerCopy);
+        this.membership = builder.membership != null
+            ? Objects.requireNonNull(builder.membership, "membership must not be null")
+            : Membership.ofVoters(nodeId);
+        validateMembership(this.membership);
+        if (!membership.isMember(nodeId)) {
+            throw new IllegalArgumentException("membership must include nodeId");
+        }
     }
 
     public String nodeId() {
         return nodeId;
     }
 
-    public Map<String, String> peerAddresses() {
-        return peerAddresses;
+    Membership membership() {
+        return membership;
+    }
+
+    public Set<String> memberIds() {
+        var memberIds = new LinkedHashSet<String>();
+        memberIds.addAll(membership.voters());
+        memberIds.addAll(membership.learners());
+        return Set.copyOf(memberIds);
     }
 
     public Path dataDirectory() {
@@ -65,22 +69,8 @@ public final class PartDbNodeConfig {
         return tickInterval;
     }
 
-    public Set<String> peerIds() {
-        return peerAddresses.keySet();
-    }
-
     public static Builder builder(String nodeId, Path dataDirectory) {
         return new Builder(nodeId, dataDirectory);
-    }
-
-    public static PartDbNodeConfig create(
-        String nodeId,
-        Map<String, String> peerAddresses,
-        Path dataDirectory
-    ) {
-        return builder(nodeId, dataDirectory)
-            .peerAddresses(peerAddresses)
-            .build();
     }
 
     @Override
@@ -92,7 +82,7 @@ public final class PartDbNodeConfig {
             return false;
         }
         return nodeId.equals(other.nodeId)
-            && peerAddresses.equals(other.peerAddresses)
+            && membership.equals(other.membership)
             && dataDirectory.equals(other.dataDirectory)
             && storeConfig.equals(other.storeConfig)
             && raftConfig.equals(other.raftConfig)
@@ -101,14 +91,14 @@ public final class PartDbNodeConfig {
 
     @Override
     public int hashCode() {
-        return Objects.hash(nodeId, peerAddresses, dataDirectory, storeConfig, raftConfig, tickInterval);
+        return Objects.hash(nodeId, membership, dataDirectory, storeConfig, raftConfig, tickInterval);
     }
 
     @Override
     public String toString() {
         return "PartDbNodeConfig{"
             + "nodeId='" + nodeId + '\''
-            + ", peerAddresses=" + peerAddresses
+            + ", membership=" + membership
             + ", dataDirectory=" + dataDirectory
             + ", storeConfig=" + storeConfig
             + ", raftConfig=" + raftConfig
@@ -119,7 +109,7 @@ public final class PartDbNodeConfig {
     public static final class Builder {
         private final String nodeId;
         private final Path dataDirectory;
-        private final Map<String, String> peerAddresses = new LinkedHashMap<>();
+        private Membership membership;
         private LSMConfig storeConfig = LSMConfig.defaults();
         private RaftConfig raftConfig = RaftConfig.defaults();
         private Duration tickInterval = DEFAULT_TICK_INTERVAL;
@@ -129,14 +119,14 @@ public final class PartDbNodeConfig {
             this.dataDirectory = dataDirectory;
         }
 
-        public Builder peer(String peerId, String address) {
-            peerAddresses.put(peerId, address);
+        public Builder members(String... memberIds) {
+            Objects.requireNonNull(memberIds, "memberIds must not be null");
+            this.membership = Membership.ofVoters(memberIds);
             return this;
         }
 
-        public Builder peerAddresses(Map<String, String> peerAddresses) {
-            Objects.requireNonNull(peerAddresses, "peerAddresses must not be null");
-            this.peerAddresses.putAll(peerAddresses);
+        public Builder membership(Membership membership) {
+            this.membership = Objects.requireNonNull(membership, "membership must not be null");
             return this;
         }
 
@@ -166,5 +156,10 @@ public final class PartDbNodeConfig {
             throw new IllegalArgumentException(name + " must not be blank");
         }
         return value;
+    }
+
+    private static void validateMembership(Membership membership) {
+        membership.voters().forEach(voterId -> requireNonBlank(voterId, "voterId"));
+        membership.learners().forEach(learnerId -> requireNonBlank(learnerId, "learnerId"));
     }
 }

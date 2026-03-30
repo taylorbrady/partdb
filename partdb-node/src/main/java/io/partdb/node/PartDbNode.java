@@ -36,7 +36,7 @@ public final class PartDbNode implements AutoCloseable {
             config.storeConfig()
         );
 
-        var membership = createMembership(config);
+        var membership = config.membership();
         RaftStorage raftStorage = storage != null ? storage : createDefaultStorage(config.dataDirectory(), membership);
 
         this.raftNode = RaftNode.builder()
@@ -116,13 +116,6 @@ public final class PartDbNode implements AutoCloseable {
         leaseManager.close();
         raftNode.close();
         kvStore.close();
-    }
-
-    private static Membership createMembership(PartDbNodeConfig config) {
-        if (config.peerAddresses().isEmpty()) {
-            return Membership.ofVoters(config.nodeId());
-        }
-        return Membership.ofVoters(config.peerIds().toArray(String[]::new));
     }
 
     private static RaftStorage createDefaultStorage(Path dataDirectory, Membership membership) {

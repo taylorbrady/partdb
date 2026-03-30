@@ -1,16 +1,16 @@
 package io.partdb.node;
 
+import io.partdb.raft.Membership;
 import io.partdb.raft.RaftConfig;
 import io.partdb.storage.LSMConfig;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PartDbNodeConfigTest {
 
@@ -21,7 +21,7 @@ class PartDbNodeConfigTest {
 
         assertEquals("node1", config.nodeId());
         assertEquals(Path.of("data/node1"), config.dataDirectory());
-        assertTrue(config.peerAddresses().isEmpty());
+        assertEquals(Set.of("node1"), config.memberIds());
         assertEquals(LSMConfig.defaults(), config.storeConfig());
         assertEquals(RaftConfig.defaults(), config.raftConfig());
         assertEquals(Duration.ofMillis(10), config.tickInterval());
@@ -32,34 +32,34 @@ class PartDbNodeConfigTest {
         var storeConfig = LSMConfig.defaults();
         var raftConfig = new RaftConfig(20, 40, 5, 250);
         var config = PartDbNodeConfig.builder("node2", Path.of("data/node2"))
-            .peer("node1", "127.0.0.1:8100")
-            .peer("node2", "127.0.0.1:8101")
+            .members("node1", "node2")
             .tickInterval(Duration.ofMillis(25))
             .storageConfig(storeConfig)
             .raftConfig(raftConfig)
             .build();
 
-        assertEquals(
-            Map.of(
-                "node1", "127.0.0.1:8100",
-                "node2", "127.0.0.1:8101"
-            ),
-            config.peerAddresses()
-        );
+        assertEquals(Set.of("node1", "node2"), config.memberIds());
         assertEquals(storeConfig, config.storeConfig());
         assertEquals(raftConfig, config.raftConfig());
         assertEquals(Duration.ofMillis(25), config.tickInterval());
     }
 
     @Test
-    void peerAddressesAreImmutable() {
-        var config = PartDbNodeConfig.builder("node1", Path.of("data/node1"))
-            .peer("node1", "127.0.0.1:8100")
+    void builderRejectsMembershipThatExcludesLocalNode() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> PartDbNodeConfig.builder("node3", Path.of("data/node3"))
+                .members("node1", "node2")
+                .build()
+        );
+    }
+
+    @Test
+    void builderSupportsAdvancedMembershipOverrides() {
+        var config = PartDbNodeConfig.builder("node3", Path.of("data/node3"))
+            .membership(Membership.ofVoters("node1", "node2").addLearner("node3"))
             .build();
 
-        assertThrows(
-            UnsupportedOperationException.class,
-            () -> config.peerAddresses().put("node2", "127.0.0.1:8101")
-        );
+        assertEquals(Set.of("node1", "node2", "node3"), config.memberIds());
     }
 }
