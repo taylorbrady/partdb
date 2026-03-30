@@ -21,25 +21,37 @@ final class LeveledCompactionPlanner {
     }
 
     List<CompactionTask> selectCompactions(Manifest manifest, Set<Long> excludedSSTableIds) {
+        if (config.maxLevels() <= 1) {
+            return List.of();
+        }
+
+        List<ScoredTask> candidates = new ArrayList<>();
+        l0Candidate(manifest, excludedSSTableIds).ifPresent(candidates::add);
+
+        for (int level = 1; level < config.maxLevels() - 1; level++) {
+            levelCandidate(manifest, level, excludedSSTableIds).ifPresent(candidates::add);
+        }
+
+        candidates.sort(Comparator
+            .comparingDouble(ScoredTask::score)
+            .reversed()
+            .thenComparingInt(ScoredTask::sourceLevel));
+
         List<CompactionTask> tasks = new ArrayList<>();
         Set<Long> usedIds = new HashSet<>(excludedSSTableIds);
 
-        selectL0Compaction(manifest, usedIds).ifPresent(task -> {
-            tasks.add(task);
-            task.inputs().forEach(sst -> usedIds.add(sst.id()));
-        });
-
-        for (int level = 1; level < config.maxLevels(); level++) {
-            selectLevelCompaction(manifest, level, usedIds).ifPresent(task -> {
-                tasks.add(task);
-                task.inputs().forEach(sst -> usedIds.add(sst.id()));
-            });
+        for (ScoredTask candidate : candidates) {
+            if (conflicts(candidate.task(), usedIds)) {
+                continue;
+            }
+            tasks.add(candidate.task());
+            candidate.task().inputs().forEach(sst -> usedIds.add(sst.id()));
         }
 
         return tasks;
     }
 
-    private Optional<CompactionTask> selectL0Compaction(Manifest manifest, Set<Long> excludedIds) {
+    private Optional<ScoredTask> l0Candidate(Manifest manifest, Set<Long> excludedIds) {
         List<SSTableDescriptor> l0Files = manifest.level(0).stream()
             .filter(sst -> !excludedIds.contains(sst.id()))
             .toList();
@@ -48,20 +60,22 @@ final class LeveledCompactionPlanner {
             return Optional.empty();
         }
 
+        List<SSTableDescriptor> l0Batch = selectL0Batch(l0Files);
         List<SSTableDescriptor> l1Files = manifest.level(1).stream()
             .filter(sst -> !excludedIds.contains(sst.id()))
             .toList();
-        List<SSTableDescriptor> overlappingL1 = findOverlapping(l0Files, l1Files);
+        List<SSTableDescriptor> overlappingL1 = findOverlapping(l0Batch, l1Files);
 
         List<SSTableDescriptor> allInputs = new ArrayList<>();
-        allInputs.addAll(l0Files);
+        allInputs.addAll(l0Batch);
         allInputs.addAll(overlappingL1);
 
         boolean gcTombstones = 1 == config.maxLevels() - 1;
-        return Optional.of(new CompactionTask(allInputs, 1, gcTombstones));
+        double score = (double) l0Files.size() / config.l0CompactionTrigger();
+        return Optional.of(new ScoredTask(0, score, new CompactionTask(allInputs, 1, gcTombstones)));
     }
 
-    private Optional<CompactionTask> selectLevelCompaction(Manifest manifest, int level, Set<Long> excludedIds) {
+    private Optional<ScoredTask> levelCandidate(Manifest manifest, int level, Set<Long> excludedIds) {
         long currentSize = manifest.levelSize(level);
         long maxSize = config.maxBytesForLevel(level);
 
@@ -91,7 +105,8 @@ final class LeveledCompactionPlanner {
 
         int targetLevel = level + 1;
         boolean gcTombstones = targetLevel == config.maxLevels() - 1;
-        return Optional.of(new CompactionTask(allInputs, targetLevel, gcTombstones));
+        double score = (double) currentSize / maxSize;
+        return Optional.of(new ScoredTask(level, score, new CompactionTask(allInputs, targetLevel, gcTombstones)));
     }
 
     private List<SSTableDescriptor> findOverlapping(
@@ -116,4 +131,15 @@ final class LeveledCompactionPlanner {
             .filter(sst -> sst.overlaps(minKey, maxKey))
             .toList();
     }
+
+    private List<SSTableDescriptor> selectL0Batch(List<SSTableDescriptor> l0Files) {
+        int batchSize = Math.min(l0Files.size(), config.l0CompactionTrigger());
+        return l0Files.subList(l0Files.size() - batchSize, l0Files.size());
+    }
+
+    private static boolean conflicts(CompactionTask task, Set<Long> usedIds) {
+        return task.inputs().stream().anyMatch(sst -> usedIds.contains(sst.id()));
+    }
+
+    private record ScoredTask(int sourceLevel, double score, CompactionTask task) {}
 }

@@ -6,7 +6,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 
-public final class Slice implements Comparable<Slice> {
+final class Slice implements Comparable<Slice> {
 
     private static final Slice EMPTY = new Slice(MemorySegment.ofArray(new byte[0]));
 

@@ -9,7 +9,6 @@ import io.partdb.storage.StorageConfig;
 import io.partdb.storage.StorageCursor;
 import io.partdb.storage.StorageSnapshot;
 import io.partdb.storage.VersionedEntry;
-import io.partdb.storage.Slice;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -20,7 +19,6 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Spliterator;
 import java.util.Spliterators;
-import java.util.Set;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -62,14 +60,14 @@ public final class KvStore implements StateMachine, AutoCloseable {
                 StoredValue stored = new StoredValue(value, index, leaseId);
                 store.put(key, stored.encode(), index);
                 if (leaseId != 0) {
-                    leaseRegistry.attachKey(leaseId, Slice.of(key));
+                    leaseRegistry.attachKey(leaseId, key);
                 }
             }
             case DELETE -> {
                 var delete = command.getDelete();
-                Slice key = Slice.of(delete.getKey().toByteArray());
+                byte[] key = delete.getKey().toByteArray();
                 detachKeyFromLease(key);
-                store.delete(key.toByteArray(), index);
+                store.delete(key, index);
             }
             case GRANT_LEASE -> {
                 var grant = command.getGrantLease();
@@ -77,9 +75,8 @@ public final class KvStore implements StateMachine, AutoCloseable {
             }
             case REVOKE_LEASE -> {
                 var revoke = command.getRevokeLease();
-                Set<Slice> keys = leaseRegistry.getKeys(revoke.getLeaseId());
-                for (Slice key : keys) {
-                    store.delete(key.toByteArray(), index);
+                for (byte[] key : leaseRegistry.attachedKeys(revoke.getLeaseId())) {
+                    store.delete(key, index);
                 }
                 leaseRegistry.revoke(revoke.getLeaseId());
             }
@@ -91,8 +88,8 @@ public final class KvStore implements StateMachine, AutoCloseable {
         }
     }
 
-    private void detachKeyFromLease(Slice key) {
-        Optional<VersionedEntry> existing = store.get(key.toByteArray());
+    private void detachKeyFromLease(byte[] key) {
+        Optional<VersionedEntry> existing = store.get(key);
         if (existing.isPresent()) {
             StoredValue stored = StoredValue.decode(existing.get().value());
             if (stored.leaseId() != 0) {
@@ -190,6 +187,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
 
         store.restore(new StorageSnapshot(storageData));
         leaseRegistry.restoreSnapshot(leaseData);
+        rebuildLeaseAttachments();
 
         lastApplied = index;
     }
@@ -205,5 +203,17 @@ public final class KvStore implements StateMachine, AutoCloseable {
     @Override
     public void close() {
         store.close();
+    }
+
+    private void rebuildLeaseAttachments() {
+        try (StorageCursor cursor = store.scan(null, null)) {
+            while (cursor.hasNext()) {
+                VersionedEntry entry = cursor.next();
+                StoredValue stored = StoredValue.decode(entry.value());
+                if (stored.leaseId() != 0 && leaseRegistry.isLeaseActive(stored.leaseId())) {
+                    leaseRegistry.attachKey(stored.leaseId(), entry.key());
+                }
+            }
+        }
     }
 }

@@ -8,8 +8,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
-import java.util.Spliterator;
-import java.util.Spliterators;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -20,8 +18,6 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
 final class LSMTree implements AutoCloseable {
 
@@ -80,59 +76,30 @@ final class LSMTree implements AutoCloseable {
         }
     }
 
-    Stream<StorageEntry> scan(Slice startKey, Slice endKey) {
-        List<Iterator<Mutation>> iterators = new ArrayList<>();
-
-        iterators.add(activeMemtable.get().scan(startKey, endKey));
-
-        addImmutableMemtableIterators(iterators, startKey, endKey, immutableMemtables);
-
+    StorageEntryCursor scan(Slice startKey, Slice endKey) {
         SSTableView readers = sstableStore.acquire();
-        for (SSTable sstable : readers.scanTables(startKey, endKey)) {
-            SSTable.Scan scan = sstable.scan();
-            if (startKey != null) {
-                scan = scan.from(startKey);
+        try {
+            List<Iterator<Mutation>> iterators = new ArrayList<>();
+
+            iterators.add(activeMemtable.get().scan(startKey, endKey));
+            addImmutableMemtableIterators(iterators, startKey, endKey, immutableMemtables);
+
+            for (SSTable sstable : readers.scanTables(startKey, endKey)) {
+                SSTable.Scan scan = sstable.scan();
+                if (startKey != null) {
+                    scan = scan.from(startKey);
+                }
+                if (endKey != null) {
+                    scan = scan.until(endKey);
+                }
+                iterators.add(scan.iterator());
             }
-            if (endKey != null) {
-                scan = scan.until(endKey);
-            }
-            iterators.add(scan.iterator());
+
+            return new ScanCursor(readers, new MergingIterator(iterators));
+        } catch (RuntimeException e) {
+            readers.close();
+            throw e;
         }
-
-        MergingIterator merged = new MergingIterator(iterators);
-
-        Iterator<StorageEntry> entryIterator = new Iterator<>() {
-            private StorageEntry next = advance();
-
-            private StorageEntry advance() {
-                while (merged.hasNext()) {
-                    if (merged.next() instanceof Mutation.Put p) {
-                        return new StorageEntry(p.key(), p.value(), p.revision());
-                    }
-                }
-                return null;
-            }
-
-            @Override
-            public boolean hasNext() {
-                return next != null;
-            }
-
-            @Override
-            public StorageEntry next() {
-                if (next == null) {
-                    throw new NoSuchElementException();
-                }
-                StorageEntry result = next;
-                next = advance();
-                return result;
-            }
-        };
-
-        return StreamSupport.stream(
-                Spliterators.spliteratorUnknownSize(entryIterator, Spliterator.ORDERED | Spliterator.NONNULL),
-                false)
-            .onClose(readers::close);
     }
 
     byte[] checkpoint() {
@@ -345,6 +312,52 @@ final class LSMTree implements AutoCloseable {
     ) {
         for (int i = immutableMemtables.size() - 1; i >= 0; i--) {
             iterators.add(immutableMemtables.get(i).scan(startKey, endKey));
+        }
+    }
+
+    private static final class ScanCursor implements StorageEntryCursor {
+        private final SSTableView readers;
+        private final MergingIterator merged;
+        private StorageEntry next;
+        private boolean closed;
+
+        private ScanCursor(SSTableView readers, MergingIterator merged) {
+            this.readers = readers;
+            this.merged = merged;
+            this.next = advance();
+            this.closed = false;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return next != null;
+        }
+
+        @Override
+        public StorageEntry next() {
+            if (next == null) {
+                throw new NoSuchElementException();
+            }
+            StorageEntry result = next;
+            next = advance();
+            return result;
+        }
+
+        @Override
+        public void close() {
+            if (!closed) {
+                closed = true;
+                readers.close();
+            }
+        }
+
+        private StorageEntry advance() {
+            while (merged.hasNext()) {
+                if (merged.next() instanceof Mutation.Put p) {
+                    return new StorageEntry(p.key(), p.value(), p.revision());
+                }
+            }
+            return null;
         }
     }
 }

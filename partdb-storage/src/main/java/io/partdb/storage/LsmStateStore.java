@@ -4,7 +4,6 @@ import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 final class LsmStateStore implements StateStore {
 
@@ -33,7 +32,7 @@ final class LsmStateStore implements StateStore {
     public StorageCursor scan(byte[] startKeyInclusive, byte[] endKeyExclusive) {
         Slice startKey = startKeyInclusive != null ? Slice.of(startKeyInclusive) : null;
         Slice endKey = endKeyExclusive != null ? Slice.of(endKeyExclusive) : null;
-        return new StreamStorageCursor(tree.scan(startKey, endKey));
+        return new CursorAdapter(tree.scan(startKey, endKey));
     }
 
     @Override
@@ -59,18 +58,16 @@ final class LsmStateStore implements StateStore {
         );
     }
 
-    private static final class StreamStorageCursor implements StorageCursor {
-        private final Stream<StorageEntry> stream;
-        private final Iterator<StorageEntry> iterator;
+    private static final class CursorAdapter implements StorageCursor {
+        private final StorageEntryCursor cursor;
 
-        private StreamStorageCursor(Stream<StorageEntry> stream) {
-            this.stream = stream;
-            this.iterator = stream.iterator();
+        private CursorAdapter(StorageEntryCursor cursor) {
+            this.cursor = cursor;
         }
 
         @Override
         public boolean hasNext() {
-            return iterator.hasNext();
+            return cursor.hasNext();
         }
 
         @Override
@@ -78,12 +75,12 @@ final class LsmStateStore implements StateStore {
             if (!hasNext()) {
                 throw new NoSuchElementException();
             }
-            return toVersionedEntry(iterator.next());
+            return toVersionedEntry(cursor.next());
         }
 
         @Override
         public void close() {
-            stream.close();
+            cursor.close();
         }
     }
 }

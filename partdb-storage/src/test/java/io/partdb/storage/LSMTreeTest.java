@@ -14,7 +14,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -51,6 +50,16 @@ class LSMTreeTest {
 
     private long nextRevision() {
         return revisionCounter.incrementAndGet();
+    }
+
+    private static List<StorageEntry> readAll(StorageEntryCursor cursor) {
+        try (cursor) {
+            List<StorageEntry> entries = new ArrayList<>();
+            while (cursor.hasNext()) {
+                entries.add(cursor.next());
+            }
+            return entries;
+        }
     }
 
     @Nested
@@ -137,14 +146,12 @@ class LSMTreeTest {
                 tree.put(key(2), value(20), nextRevision());
                 tree.put(key(3), value(30), nextRevision());
 
-                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
-                    List<StorageEntry> entries = stream.toList();
+                List<StorageEntry> entries = readAll(tree.scan(null, null));
 
-                    assertEquals(3, entries.size());
-                    assertEquals(key(1), entries.get(0).key());
-                    assertEquals(key(2), entries.get(1).key());
-                    assertEquals(key(3), entries.get(2).key());
-                }
+                assertEquals(3, entries.size());
+                assertEquals(key(1), entries.get(0).key());
+                assertEquals(key(2), entries.get(1).key());
+                assertEquals(key(3), entries.get(2).key());
             }
         }
 
@@ -156,13 +163,11 @@ class LSMTreeTest {
                 tree.put(key(3), value(30), nextRevision());
                 tree.put(key(4), value(40), nextRevision());
 
-                try (Stream<StorageEntry> stream = tree.scan(key(2), key(4))) {
-                    List<StorageEntry> entries = stream.toList();
+                List<StorageEntry> entries = readAll(tree.scan(key(2), key(4)));
 
-                    assertEquals(2, entries.size());
-                    assertEquals(key(2), entries.get(0).key());
-                    assertEquals(key(3), entries.get(1).key());
-                }
+                assertEquals(2, entries.size());
+                assertEquals(key(2), entries.get(0).key());
+                assertEquals(key(3), entries.get(1).key());
             }
         }
 
@@ -174,13 +179,11 @@ class LSMTreeTest {
                 tree.delete(key(2), nextRevision());
                 tree.put(key(3), value(30), nextRevision());
 
-                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
-                    List<StorageEntry> entries = stream.toList();
+                List<StorageEntry> entries = readAll(tree.scan(null, null));
 
-                    assertEquals(2, entries.size());
-                    assertEquals(key(1), entries.get(0).key());
-                    assertEquals(key(3), entries.get(1).key());
-                }
+                assertEquals(2, entries.size());
+                assertEquals(key(1), entries.get(0).key());
+                assertEquals(key(3), entries.get(1).key());
             }
         }
 
@@ -193,13 +196,11 @@ class LSMTreeTest {
                     tree.put(key(i), largeValue(100), nextRevision());
                 }
 
-                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
-                    List<StorageEntry> entries = stream.toList();
+                List<StorageEntry> entries = readAll(tree.scan(null, null));
 
-                    assertEquals(20, entries.size());
-                    for (int i = 0; i < 20; i++) {
-                        assertEquals(key(i), entries.get(i).key());
-                    }
+                assertEquals(20, entries.size());
+                for (int i = 0; i < 20; i++) {
+                    assertEquals(key(i), entries.get(i).key());
                 }
             }
         }
@@ -213,16 +214,14 @@ class LSMTreeTest {
                 tree.put(key(2), largeValue(100), nextRevision());
                 tree.put(key(1), value(20), nextRevision());
 
-                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
-                    List<StorageEntry> entries = stream.toList();
+                List<StorageEntry> entries = readAll(tree.scan(null, null));
 
-                    Optional<StorageEntry> keyEntry = entries.stream()
-                        .filter(e -> e.key().equals(key(1)))
-                        .findFirst();
+                Optional<StorageEntry> keyEntry = entries.stream()
+                    .filter(e -> e.key().equals(key(1)))
+                    .findFirst();
 
-                    assertTrue(keyEntry.isPresent());
-                    assertEquals(value(20), keyEntry.get().value());
-                }
+                assertTrue(keyEntry.isPresent());
+                assertEquals(value(20), keyEntry.get().value());
             }
         }
     }
@@ -508,14 +507,12 @@ class LSMTreeTest {
                 Slice startKey = key("key-020");
                 Slice endKey = key("key-030");
 
-                try (Stream<StorageEntry> stream = tree.scan(startKey, endKey)) {
-                    List<StorageEntry> entries = stream.toList();
+                List<StorageEntry> entries = readAll(tree.scan(startKey, endKey));
 
-                    assertEquals(10, entries.size());
-                    for (StorageEntry e : entries) {
-                        assertTrue(e.key().compareTo(startKey) >= 0);
-                        assertTrue(e.key().compareTo(endKey) < 0);
-                    }
+                assertEquals(10, entries.size());
+                for (StorageEntry e : entries) {
+                    assertTrue(e.key().compareTo(startKey) >= 0);
+                    assertTrue(e.key().compareTo(endKey) < 0);
                 }
             }
         }
@@ -766,10 +763,8 @@ class LSMTreeTest {
 
                 tree.flush();
 
-                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
-                    List<StorageEntry> entries = stream.toList();
-                    assertFalse(entries.isEmpty());
-                }
+                List<StorageEntry> entries = readAll(tree.scan(null, null));
+                assertFalse(entries.isEmpty());
             }
         }
 
@@ -926,8 +921,10 @@ class LSMTreeTest {
                         try {
                             startLatch.await();
                             for (int round = 0; round < 10; round++) {
-                                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
-                                    stream.forEach(_ -> {});
+                                try (StorageEntryCursor cursor = tree.scan(null, null)) {
+                                    while (cursor.hasNext()) {
+                                        cursor.next();
+                                    }
                                 }
                             }
                         } catch (Exception e) {
@@ -961,7 +958,7 @@ class LSMTreeTest {
     }
 
     @Nested
-    class StreamLifecycle {
+    class CursorLifecycle {
 
         @Test
         void closeReleasesResources() {
@@ -971,27 +968,28 @@ class LSMTreeTest {
                 }
                 tree.flush();
 
-                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
-                    assertTrue(stream.findFirst().isPresent());
+                try (StorageEntryCursor cursor = tree.scan(null, null)) {
+                    assertTrue(cursor.hasNext());
+                    assertNotNull(cursor.next());
                 }
             }
         }
 
         @Test
-        void multipleStreamsOnSameTree() {
+        void multipleCursorsOnSameTree() {
             try (LSMTree tree = LSMTree.open(tempDir, LSMConfig.defaults())) {
                 for (int i = 0; i < 20; i++) {
                     tree.put(key(i), value(i), nextRevision());
                 }
                 tree.flush();
 
-                try (Stream<StorageEntry> stream1 = tree.scan(null, null);
-                     Stream<StorageEntry> stream2 = tree.scan(null, null);
-                     Stream<StorageEntry> stream3 = tree.scan(null, null)) {
+                try (StorageEntryCursor cursor1 = tree.scan(null, null);
+                     StorageEntryCursor cursor2 = tree.scan(null, null);
+                     StorageEntryCursor cursor3 = tree.scan(null, null)) {
 
-                    List<StorageEntry> entries1 = stream1.toList();
-                    List<StorageEntry> entries2 = stream2.toList();
-                    List<StorageEntry> entries3 = stream3.toList();
+                    List<StorageEntry> entries1 = readAll(cursor1);
+                    List<StorageEntry> entries2 = readAll(cursor2);
+                    List<StorageEntry> entries3 = readAll(cursor3);
 
                     assertEquals(20, entries1.size());
                     assertEquals(20, entries2.size());
@@ -1012,10 +1010,10 @@ class LSMTreeTest {
                     tree.flush();
                 }
 
-                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
+                try (StorageEntryCursor cursor = tree.scan(null, null)) {
                     Thread.sleep(1000);
 
-                    List<StorageEntry> entries = stream.toList();
+                    List<StorageEntry> entries = readAll(cursor);
                     assertEquals(30, entries.size());
                     for (StorageEntry e : entries) {
                         assertNotNull(e.key());
@@ -1033,8 +1031,11 @@ class LSMTreeTest {
                 }
                 tree.flush();
 
-                try (Stream<StorageEntry> stream = tree.scan(null, null)) {
-                    List<StorageEntry> first10 = stream.limit(10).toList();
+                try (StorageEntryCursor cursor = tree.scan(null, null)) {
+                    List<StorageEntry> first10 = new ArrayList<>();
+                    while (cursor.hasNext() && first10.size() < 10) {
+                        first10.add(cursor.next());
+                    }
                     assertEquals(10, first10.size());
                 }
             }

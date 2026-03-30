@@ -1,12 +1,9 @@
 package io.partdb.node.lease;
 
-import io.partdb.storage.Slice;
-
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Set;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.DelayQueue;
 import java.util.concurrent.Delayed;
@@ -38,23 +35,29 @@ public final class LeaseRegistry {
         byId.remove(leaseId);
     }
 
-    public void attachKey(long leaseId, Slice key) {
+    public void attachKey(long leaseId, byte[] key) {
         var lease = byId.get(leaseId);
         if (lease != null) {
-            lease.keys().add(key);
+            lease.keys().add(LeaseKey.of(key));
         }
     }
 
-    public void detachKey(long leaseId, Slice key) {
+    public void detachKey(long leaseId, byte[] key) {
         var lease = byId.get(leaseId);
         if (lease != null) {
-            lease.keys().remove(key);
+            lease.keys().remove(LeaseKey.of(key));
         }
     }
 
-    public Set<Slice> getKeys(long leaseId) {
+    public List<byte[]> attachedKeys(long leaseId) {
         var lease = byId.get(leaseId);
-        return lease != null ? Collections.unmodifiableSet(lease.keys()) : Set.of();
+        if (lease == null) {
+            return List.of();
+        }
+
+        return lease.keys().stream()
+            .map(LeaseKey::toByteArray)
+            .toList();
     }
 
     public void keepAlive(long leaseId) {
