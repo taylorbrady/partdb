@@ -10,7 +10,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
-class CompactorTest {
+class CompactionExecutorTest {
 
     @TempDir
     Path tempDir;
@@ -29,8 +29,8 @@ class CompactorTest {
                 input = builder.finish();
             }
 
-            Compactor compactor = new Compactor(store, config);
-            CompactionResult result = compactor.compact(new CompactionTask(List.of(input), 1, false));
+            CompactionExecutor executor = new CompactionExecutor(store, config);
+            CompactionResult result = executor.compact(new CompactionTask(List.of(input), 1, false));
 
             CompactionResult.Success success = assertInstanceOf(CompactionResult.Success.class, result);
             List<SSTableMetadata> outputs = success.outputs();
@@ -59,8 +59,8 @@ class CompactorTest {
                 metadata(11, 2, "key-2", "key-2", 6_000)
             );
 
-            Compactor compactor = new Compactor(store, config);
-            CompactionResult result = compactor.compact(new CompactionTask(List.of(input), grandparents, 1, false));
+            CompactionExecutor executor = new CompactionExecutor(store, config);
+            CompactionResult result = executor.compact(new CompactionTask(List.of(input), grandparents, 1, false));
 
             CompactionResult.Success success = assertInstanceOf(CompactionResult.Success.class, result);
             List<SSTableMetadata> outputs = success.outputs();

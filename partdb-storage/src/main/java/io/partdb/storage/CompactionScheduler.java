@@ -17,7 +17,7 @@ import java.util.function.Supplier;
 final class CompactionScheduler implements AutoCloseable {
 
     private final LeveledCompactionPlanner planner;
-    private final Compactor compactor;
+    private final CompactionExecutor compactionExecutor;
     private final Supplier<SSTableManifest> manifestSupplier;
     private final Consumer<CompactionResult> resultHandler;
 
@@ -29,13 +29,13 @@ final class CompactionScheduler implements AutoCloseable {
 
     CompactionScheduler(
         LeveledCompactionPlanner planner,
-        Compactor compactor,
+        CompactionExecutor compactionExecutor,
         int maxConcurrent,
         Supplier<SSTableManifest> manifestSupplier,
         Consumer<CompactionResult> resultHandler
     ) {
         this.planner = planner;
-        this.compactor = compactor;
+        this.compactionExecutor = compactionExecutor;
         this.manifestSupplier = manifestSupplier;
         this.resultHandler = resultHandler;
 
@@ -126,7 +126,7 @@ final class CompactionScheduler implements AutoCloseable {
 
     private void runCompaction(CompactionTask task, ReservationToken token) {
         try {
-            CompactionResult result = compactor.compact(task);
+            CompactionResult result = compactionExecutor.compact(task);
             resultHandler.accept(result);
         } finally {
             reservations.release(token);

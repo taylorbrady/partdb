@@ -6,7 +6,7 @@ public record StorageConfig(
     long writeBufferMaxBytes,
     long readCacheMaxBytes,
     Compression compression,
-    Tuning tuning
+    AdvancedTuning advancedTuning
 ) {
 
     public StorageConfig {
@@ -17,7 +17,7 @@ public record StorageConfig(
             throw new IllegalArgumentException("readCacheMaxBytes must be non-negative");
         }
         Objects.requireNonNull(compression, "compression must not be null");
-        tuning = Objects.requireNonNull(tuning, "tuning must not be null");
+        advancedTuning = Objects.requireNonNull(advancedTuning, "advancedTuning must not be null");
     }
 
     public static Builder builder() {
@@ -35,16 +35,16 @@ public record StorageConfig(
     LsmConfig toLsmConfig() {
         return new LsmConfig(
             writeBufferMaxBytes,
-            tuning.dataBlockSizeBytes(),
-            tuning.bloomFilterFalsePositiveRate(),
+            advancedTuning.dataBlockSizeBytes(),
+            advancedTuning.bloomFilterFalsePositiveRate(),
             compression.toBlockCodec(),
             readCacheMaxBytes,
-            tuning.targetTableSizeBytes(),
-            tuning.maxConcurrentCompactions(),
-            tuning.l0CompactionTrigger(),
-            tuning.maxBytesForLevelBase(),
-            tuning.levelMultiplier(),
-            tuning.maxLevels()
+            advancedTuning.targetTableSizeBytes(),
+            advancedTuning.maxConcurrentCompactions(),
+            advancedTuning.l0CompactionTrigger(),
+            advancedTuning.maxBytesForLevelBase(),
+            advancedTuning.levelMultiplier(),
+            advancedTuning.maxLevels()
         );
     }
 
@@ -60,7 +60,7 @@ public record StorageConfig(
         }
     }
 
-    public record Tuning(
+    public record AdvancedTuning(
         int dataBlockSizeBytes,
         double bloomFilterFalsePositiveRate,
         long targetTableSizeBytes,
@@ -71,7 +71,7 @@ public record StorageConfig(
         int maxLevels
     ) {
 
-        public Tuning {
+        public AdvancedTuning {
             if (dataBlockSizeBytes <= 0) {
                 throw new IllegalArgumentException("dataBlockSizeBytes must be positive");
             }
@@ -102,7 +102,7 @@ public record StorageConfig(
             return new Builder();
         }
 
-        public static Tuning defaults() {
+        public static AdvancedTuning defaults() {
             return builder().build();
         }
 
@@ -123,15 +123,15 @@ public record StorageConfig(
             private Builder() {
             }
 
-            private Builder(Tuning tuning) {
-                this.dataBlockSizeBytes = tuning.dataBlockSizeBytes;
-                this.bloomFilterFalsePositiveRate = tuning.bloomFilterFalsePositiveRate;
-                this.targetTableSizeBytes = tuning.targetTableSizeBytes;
-                this.maxConcurrentCompactions = tuning.maxConcurrentCompactions;
-                this.l0CompactionTrigger = tuning.l0CompactionTrigger;
-                this.maxBytesForLevelBase = tuning.maxBytesForLevelBase;
-                this.levelMultiplier = tuning.levelMultiplier;
-                this.maxLevels = tuning.maxLevels;
+            private Builder(AdvancedTuning advancedTuning) {
+                this.dataBlockSizeBytes = advancedTuning.dataBlockSizeBytes;
+                this.bloomFilterFalsePositiveRate = advancedTuning.bloomFilterFalsePositiveRate;
+                this.targetTableSizeBytes = advancedTuning.targetTableSizeBytes;
+                this.maxConcurrentCompactions = advancedTuning.maxConcurrentCompactions;
+                this.l0CompactionTrigger = advancedTuning.l0CompactionTrigger;
+                this.maxBytesForLevelBase = advancedTuning.maxBytesForLevelBase;
+                this.levelMultiplier = advancedTuning.levelMultiplier;
+                this.maxLevels = advancedTuning.maxLevels;
             }
 
             public Builder dataBlockSizeBytes(int dataBlockSizeBytes) {
@@ -174,8 +174,8 @@ public record StorageConfig(
                 return this;
             }
 
-            public Tuning build() {
-                return new Tuning(
+            public AdvancedTuning build() {
+                return new AdvancedTuning(
                     dataBlockSizeBytes,
                     bloomFilterFalsePositiveRate,
                     targetTableSizeBytes,
@@ -193,7 +193,7 @@ public record StorageConfig(
         private long writeBufferMaxBytes = LsmConfig.DEFAULT_MEMTABLE_MAX_SIZE_BYTES;
         private long readCacheMaxBytes = LsmConfig.DEFAULT_BLOCK_CACHE_MAX_BYTES;
         private Compression compression = Compression.DEFLATE;
-        private Tuning tuning = Tuning.defaults();
+        private AdvancedTuning advancedTuning = AdvancedTuning.defaults();
 
         private Builder() {
         }
@@ -202,7 +202,7 @@ public record StorageConfig(
             this.writeBufferMaxBytes = config.writeBufferMaxBytes;
             this.readCacheMaxBytes = config.readCacheMaxBytes;
             this.compression = config.compression;
-            this.tuning = config.tuning;
+            this.advancedTuning = config.advancedTuning;
         }
 
         public Builder writeBufferMaxBytes(long writeBufferMaxBytes) {
@@ -220,13 +220,13 @@ public record StorageConfig(
             return this;
         }
 
-        public Builder tuning(Tuning tuning) {
-            this.tuning = Objects.requireNonNull(tuning, "tuning must not be null");
+        public Builder advancedTuning(AdvancedTuning advancedTuning) {
+            this.advancedTuning = Objects.requireNonNull(advancedTuning, "advancedTuning must not be null");
             return this;
         }
 
         public StorageConfig build() {
-            return new StorageConfig(writeBufferMaxBytes, readCacheMaxBytes, compression, tuning);
+            return new StorageConfig(writeBufferMaxBytes, readCacheMaxBytes, compression, advancedTuning);
         }
     }
 }

@@ -67,10 +67,10 @@ final class SSTableStore implements AutoCloseable {
         this.closed = new AtomicBoolean(false);
 
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
-        Compactor compactor = new Compactor(this, config);
+        CompactionExecutor compactionExecutor = new CompactionExecutor(this, config);
         this.compactionScheduler = new CompactionScheduler(
             planner,
-            compactor,
+            compactionExecutor,
             config.maxConcurrentCompactions(),
             this::manifest,
             this::handleCompactionResult

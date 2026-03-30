@@ -10,15 +10,15 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 
-final class Compactor {
+final class CompactionExecutor {
 
-    private static final Logger log = LoggerFactory.getLogger(Compactor.class);
+    private static final Logger log = LoggerFactory.getLogger(CompactionExecutor.class);
     private static final int GRANDPARENT_OVERLAP_MULTIPLIER = 10;
 
     private final SSTableStore sstableStore;
     private final LsmConfig config;
 
-    Compactor(SSTableStore sstableStore, LsmConfig config) {
+    CompactionExecutor(SSTableStore sstableStore, LsmConfig config) {
         this.sstableStore = Objects.requireNonNull(sstableStore, "sstableStore");
         this.config = Objects.requireNonNull(config, "config");
     }

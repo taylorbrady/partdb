@@ -24,7 +24,7 @@ class StateStoreInvariantTest {
     void randomizedOperationsPreserveVisibleStateAcrossReopenAndRestore() {
         StorageConfig config = StorageConfig.builder()
             .writeBufferMaxBytes(256)
-            .tuning(StorageConfig.Tuning.builder()
+            .advancedTuning(StorageConfig.AdvancedTuning.builder()
                 .targetTableSizeBytes(256)
                 .l0CompactionTrigger(2)
                 .maxBytesForLevelBase(512)
@@ -84,7 +84,7 @@ class StateStoreInvariantTest {
     void inPlaceRestoreRewindsVisibleStateAfterAggressiveCompaction() {
         StorageConfig config = StorageConfig.builder()
             .writeBufferMaxBytes(128)
-            .tuning(StorageConfig.Tuning.builder()
+            .advancedTuning(StorageConfig.AdvancedTuning.builder()
                 .targetTableSizeBytes(128)
                 .l0CompactionTrigger(2)
                 .maxBytesForLevelBase(256)
@@ -147,7 +147,7 @@ class StateStoreInvariantTest {
     void randomizedSnapshotsSupportInPlaceAndCrossDirectoryRestore() {
         StorageConfig config = StorageConfig.builder()
             .writeBufferMaxBytes(192)
-            .tuning(StorageConfig.Tuning.builder()
+            .advancedTuning(StorageConfig.AdvancedTuning.builder()
                 .targetTableSizeBytes(192)
                 .l0CompactionTrigger(2)
                 .maxBytesForLevelBase(384)
