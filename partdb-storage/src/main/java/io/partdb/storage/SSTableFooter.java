@@ -55,54 +55,78 @@ record SSTableFooter(
     }
 
     static SSTableFooter deserialize(MemorySegment segment) {
-        long offset = 0;
+        try {
+            long size = segment.byteSize();
+            long offset = 0;
 
-        long bloomFilterOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
-        offset += 8;
-        int bloomFilterSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
-        offset += 4;
-        long indexOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
-        offset += 8;
-        int blockCount = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
-        offset += 4;
+            if (size < 4) {
+                throw new StorageException.Corruption("Footer too small");
+            }
 
-        int smallestKeySize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
-        offset += 4;
-        Slice smallestKey = Slice.wrap(segment.asSlice(offset, smallestKeySize));
-        offset += smallestKeySize;
+            long footerSizeOffset = size - 8;
+            int footerSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, footerSizeOffset);
+            if (footerSize <= 0 || footerSize != size) {
+                throw new StorageException.Corruption("Invalid footer size: " + footerSize);
+            }
 
-        int largestKeySize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
-        offset += 4;
-        Slice largestKey = Slice.wrap(segment.asSlice(offset, largestKeySize));
-        offset += largestKeySize;
+            long bloomFilterOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
+            offset += 8;
+            int bloomFilterSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+            offset += 4;
+            long indexOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
+            offset += 8;
+            int blockCount = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+            offset += 4;
 
-        long smallestRevision = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
-        offset += 8;
-        long largestRevision = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
-        offset += 8;
+            int smallestKeySize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+            offset += 4;
+            if (smallestKeySize < 0 || offset + smallestKeySize > footerSizeOffset) {
+                throw new StorageException.Corruption("Invalid footer smallest key length");
+            }
+            Slice smallestKey = Slice.wrap(segment.asSlice(offset, smallestKeySize));
+            offset += smallestKeySize;
 
-        long entryCount = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
-        offset += 8;
+            int largestKeySize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+            offset += 4;
+            if (largestKeySize < 0 || offset + largestKeySize > footerSizeOffset) {
+                throw new StorageException.Corruption("Invalid footer largest key length");
+            }
+            Slice largestKey = Slice.wrap(segment.asSlice(offset, largestKeySize));
+            offset += largestKeySize;
 
-        int footerSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
-        offset += 4;
+            long smallestRevision = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
+            offset += 8;
+            long largestRevision = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
+            offset += 8;
 
-        int expectedChecksum = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+            long entryCount = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset);
+            offset += 8;
 
-        byte[] checksumData = segment.asSlice(0, footerSize - 4).toArray(ValueLayout.JAVA_BYTE);
-        CRC32C crc = new CRC32C();
-        crc.update(checksumData);
-        int actualChecksum = (int) crc.getValue();
+            int serializedFooterSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+            offset += 4;
 
-        if (actualChecksum != expectedChecksum) {
-            throw new StorageException.Corruption("Footer checksum mismatch");
+            int expectedChecksum = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+            if (serializedFooterSize != footerSize) {
+                throw new StorageException.Corruption("Footer size field does not match segment size");
+            }
+
+            byte[] checksumData = segment.asSlice(0, footerSize - 4).toArray(ValueLayout.JAVA_BYTE);
+            CRC32C crc = new CRC32C();
+            crc.update(checksumData);
+            int actualChecksum = (int) crc.getValue();
+
+            if (actualChecksum != expectedChecksum) {
+                throw new StorageException.Corruption("Footer checksum mismatch");
+            }
+
+            return new SSTableFooter(
+                bloomFilterOffset, bloomFilterSize, indexOffset, blockCount,
+                smallestKey, largestKey, smallestRevision, largestRevision,
+                entryCount, expectedChecksum
+            );
+        } catch (IndexOutOfBoundsException | IllegalArgumentException e) {
+            throw new StorageException.Corruption("Malformed SSTable footer", e);
         }
-
-        return new SSTableFooter(
-            bloomFilterOffset, bloomFilterSize, indexOffset, blockCount,
-            smallestKey, largestKey, smallestRevision, largestRevision,
-            entryCount, expectedChecksum
-        );
     }
 
     static int calculateFooterSize(Slice smallestKey, Slice largestKey) {

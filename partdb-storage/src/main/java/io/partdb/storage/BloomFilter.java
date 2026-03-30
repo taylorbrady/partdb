@@ -33,9 +33,27 @@ final class BloomFilter {
     }
 
     static BloomFilter from(MemorySegment segment) {
+        long size = segment.byteSize();
+        if (size < 8) {
+            throw new StorageException.Corruption("BloomFilter too small: " + size);
+        }
+
         int numHashFunctions = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 0);
         int numBlocks = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 4);
+        if (numHashFunctions <= 0) {
+            throw new StorageException.Corruption("BloomFilter numHashFunctions must be positive");
+        }
+        if (numBlocks <= 0) {
+            throw new StorageException.Corruption("BloomFilter numBlocks must be positive");
+        }
+
         int numLongs = numBlocks * CACHE_LINE_LONGS;
+        long expectedSize = 8L + numLongs * Long.BYTES;
+        if (size != expectedSize) {
+            throw new StorageException.Corruption(
+                "BloomFilter size mismatch: expected=%d actual=%d".formatted(expectedSize, size)
+            );
+        }
 
         long[] bits = new long[numLongs];
         for (int i = 0; i < numLongs; i++) {

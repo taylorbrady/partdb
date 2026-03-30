@@ -19,18 +19,38 @@ final class BlockIndex {
     }
 
     public static BlockIndex deserialize(MemorySegment segment, int blockCount) {
+        if (blockCount < 0) {
+            throw new StorageException.Corruption("Negative block count: " + blockCount);
+        }
+
         List<Entry> entries = new ArrayList<>(blockCount);
         long offset = 0;
+        long size = segment.byteSize();
 
         for (int i = 0; i < blockCount; i++) {
+            if (offset + Integer.BYTES > size) {
+                throw new StorageException.Corruption("Truncated block index key length");
+            }
             int keyLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
+            if (keyLength < 0) {
+                throw new StorageException.Corruption("Negative block index key length");
+            }
+            long entrySize = 4L + keyLength + Long.BYTES + Integer.BYTES;
+            if (offset + entrySize > size) {
+                throw new StorageException.Corruption("Truncated block index entry");
+            }
+
             Slice key = Slice.wrap(segment.asSlice(offset + 4, keyLength));
 
             long blockOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 4 + keyLength);
             int blockSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 4 + keyLength + 8);
 
             entries.add(new Entry(key, new BlockHandle(blockOffset, blockSize)));
-            offset += 4 + keyLength + 8 + 4;
+            offset += entrySize;
+        }
+
+        if (offset != size) {
+            throw new StorageException.Corruption("Trailing block index data");
         }
 
         return new BlockIndex(entries);

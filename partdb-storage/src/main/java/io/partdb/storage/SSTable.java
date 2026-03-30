@@ -76,6 +76,9 @@ final class SSTable implements AutoCloseable {
             BlockIndex index = readIndex(segment, footer, fileSize);
 
             return new SSTable(id, level, path, arena, segment, bloomFilter, index, footer, cache, codec, fileSize);
+        } catch (RuntimeException e) {
+            arena.close();
+            throw e;
         } catch (IOException e) {
             arena.close();
             throw new StorageException.IO("Failed to open SSTable: " + path, e);
@@ -195,6 +198,9 @@ final class SSTable implements AutoCloseable {
     }
 
     private static SSTableHeader readHeader(MemorySegment segment) {
+        if (segment.byteSize() < SSTableHeader.HEADER_SIZE) {
+            throw new StorageException.Corruption("SSTable too small for header");
+        }
         int magic = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 0);
         int version = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 4);
         byte codecId = segment.get(ValueLayout.JAVA_BYTE, 8);
@@ -202,13 +208,20 @@ final class SSTable implements AutoCloseable {
     }
 
     private static SSTableFooter readFooter(MemorySegment segment, long fileSize) {
+        if (fileSize < SSTableHeader.HEADER_SIZE + 8) {
+            throw new StorageException.Corruption("SSTable too small for footer");
+        }
         int footerSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, fileSize - 8);
+        if (footerSize <= 0 || footerSize > fileSize - SSTableHeader.HEADER_SIZE) {
+            throw new StorageException.Corruption("Invalid SSTable footer size: " + footerSize);
+        }
         long footerOffset = fileSize - footerSize;
         MemorySegment footerSegment = segment.asSlice(footerOffset, footerSize);
         return SSTableFooter.deserialize(footerSegment);
     }
 
     private static BloomFilter readBloomFilter(MemorySegment segment, SSTableFooter footer) {
+        validateRange(segment.byteSize(), footer.bloomFilterOffset(), footer.bloomFilterSize(), "bloom filter");
         MemorySegment bloomSegment = segment.asSlice(footer.bloomFilterOffset(), footer.bloomFilterSize());
         return BloomFilter.from(bloomSegment);
     }
@@ -217,8 +230,27 @@ final class SSTable implements AutoCloseable {
         long indexOffset = footer.indexOffset();
         int footerSize = SSTableFooter.calculateFooterSize(footer.smallestKey(), footer.largestKey());
         long indexSize = fileSize - footerSize - indexOffset;
+        if (indexSize < 0 || indexSize > Integer.MAX_VALUE) {
+            throw new StorageException.Corruption("Invalid SSTable index size: " + indexSize);
+        }
+        validateRange(segment.byteSize(), indexOffset, (int) indexSize, "index");
         MemorySegment indexSegment = segment.asSlice(indexOffset, indexSize);
         return BlockIndex.deserialize(indexSegment, footer.blockCount());
+    }
+
+    private static void validateRange(long totalSize, long offset, int size, String label) {
+        if (offset < 0) {
+            throw new StorageException.Corruption("Negative SSTable " + label + " offset");
+        }
+        if (size < 0) {
+            throw new StorageException.Corruption("Negative SSTable " + label + " size");
+        }
+        if (offset + size > totalSize) {
+            throw new StorageException.Corruption(
+                "SSTable " + label + " exceeds file bounds: offset=%d size=%d total=%d"
+                    .formatted(offset, size, totalSize)
+            );
+        }
     }
 
     public final class Scan implements Iterable<Mutation> {

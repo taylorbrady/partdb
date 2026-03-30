@@ -45,6 +45,17 @@ final class Block implements Iterable<Mutation> {
             throw new StorageException.Corruption("Block checksum mismatch");
         }
 
+        long offsetTableBytes = (long) entryCount * Integer.BYTES;
+        if (entryCount < 0) {
+            throw new StorageException.Corruption("Negative block entry count");
+        }
+        if (offsetTableStart < 0 || offsetTableStart > trailerOffset) {
+            throw new StorageException.Corruption("Invalid block offset table start");
+        }
+        if (offsetTableStart + offsetTableBytes > trailerOffset) {
+            throw new StorageException.Corruption("Block offset table exceeds block bounds");
+        }
+
         return new Block(segment, entryCount, offsetTableStart);
     }
 
@@ -91,12 +102,25 @@ final class Block implements Iterable<Mutation> {
     }
 
     private int getEntryOffset(int index) {
-        return segment.get(ValueLayout.JAVA_INT_UNALIGNED, offsetTableStart + (index * 4L));
+        int offset = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offsetTableStart + (index * 4L));
+        if (offset < 0 || offset >= offsetTableStart) {
+            throw new StorageException.Corruption("Invalid block entry offset: " + offset);
+        }
+        return offset;
     }
 
     private Slice keyAt(int index) {
         int offset = getEntryOffset(index);
+        if (offset + 13L > offsetTableStart) {
+            throw new StorageException.Corruption("Truncated block entry header");
+        }
         int keyLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 9);
+        if (keyLength < 0) {
+            throw new StorageException.Corruption("Negative block key length");
+        }
+        if (offset + 13L + keyLength > offsetTableStart) {
+            throw new StorageException.Corruption("Truncated block key");
+        }
         return Slice.wrap(segment.asSlice(offset + 13, keyLength));
     }
 
@@ -124,18 +148,36 @@ final class Block implements Iterable<Mutation> {
     }
 
     private Mutation parseEntryAt(int offset) {
+        if (offset + 13L > offsetTableStart) {
+            throw new StorageException.Corruption("Truncated block entry header");
+        }
         byte flags = segment.get(ValueLayout.JAVA_BYTE, offset);
         boolean tombstone = (flags & 0x01) != 0;
 
         long revision = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 1);
 
         int keyLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 9);
+        if (keyLength < 0) {
+            throw new StorageException.Corruption("Negative block key length");
+        }
+        if (offset + 13L + keyLength + Integer.BYTES > offsetTableStart) {
+            throw new StorageException.Corruption("Truncated block value header");
+        }
         Slice key = Slice.wrap(segment.asSlice(offset + 13, keyLength));
 
         int valueOffset = offset + 13 + keyLength;
         int valueLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, valueOffset);
+        if (valueLength < 0) {
+            throw new StorageException.Corruption("Negative block value length");
+        }
+        if (valueOffset + 4L + valueLength > offsetTableStart) {
+            throw new StorageException.Corruption("Truncated block value");
+        }
 
         if (tombstone) {
+            if (valueLength != 0) {
+                throw new StorageException.Corruption("Tombstone block entry must not carry a value");
+            }
             return new Mutation.Tombstone(key, revision);
         } else {
             Slice value = Slice.wrap(segment.asSlice(valueOffset + 4, valueLength));

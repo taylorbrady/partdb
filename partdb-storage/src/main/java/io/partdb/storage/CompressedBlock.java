@@ -51,6 +51,15 @@ record CompressedBlock(byte codecId, int uncompressedSize, byte[] data) {
         byte codecId = segment.get(ValueLayout.JAVA_BYTE, 0);
         int uncompressedSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 1);
         int compressedSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, 5);
+        if (uncompressedSize < 0) {
+            throw new StorageException.Corruption("Negative compressed block uncompressed size");
+        }
+        if (compressedSize < 0) {
+            throw new StorageException.Corruption("Negative compressed block size");
+        }
+        if ((long) HEADER_SIZE + compressedSize + CHECKSUM_SIZE != size) {
+            throw new StorageException.Corruption("CompressedBlock size mismatch");
+        }
 
         byte[] data = segment.asSlice(HEADER_SIZE, compressedSize)
             .toArray(ValueLayout.JAVA_BYTE);

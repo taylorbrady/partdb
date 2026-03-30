@@ -5,11 +5,14 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -168,6 +171,51 @@ class StateStoreTest {
     }
 
     @Test
+    void openFailsWithTruncatedSstableAsCorruption() throws Exception {
+        Path storeDir = tempDir.resolve("truncated-sstable");
+
+        try (StateStore store = StateStore.open(storeDir, StorageConfig.defaults())) {
+            store.put(bytes("key"), bytes("value"), 1);
+            store.snapshot();
+        }
+
+        Path sstable = firstSstable(storeDir);
+        byte[] bytes = Files.readAllBytes(sstable);
+        Files.write(sstable, Arrays.copyOf(bytes, SSTableHeader.HEADER_SIZE));
+
+        StorageException.Corruption error = assertThrows(
+            StorageException.Corruption.class,
+            () -> StateStore.open(storeDir, StorageConfig.defaults())
+        );
+
+        assertTrue(error.getMessage().contains("SSTable"));
+    }
+
+    @Test
+    void getFailsWithCorruptedSstableBlockAsCorruption() throws Exception {
+        Path storeDir = tempDir.resolve("corrupted-block");
+
+        try (StateStore store = StateStore.open(storeDir, StorageConfig.defaults())) {
+            store.put(bytes("key"), bytes("value"), 1);
+            store.snapshot();
+        }
+
+        Path sstable = firstSstable(storeDir);
+        byte[] fileBytes = Files.readAllBytes(sstable);
+        fileBytes[SSTableHeader.HEADER_SIZE] ^= 0x01;
+        Files.write(sstable, fileBytes);
+
+        try (StateStore reopened = StateStore.open(storeDir, StorageConfig.defaults())) {
+            StorageException.Corruption error = assertThrows(
+                StorageException.Corruption.class,
+                () -> reopened.get(bytes("key"))
+            );
+
+            assertTrue(error.getMessage().contains("Block") || error.getMessage().contains("CompressedBlock"));
+        }
+    }
+
+    @Test
     void restoreRejectsCorruptedSnapshotWithoutDiscardingLiveState() {
         try (StateStore store = StateStore.open(tempDir, StorageConfig.defaults())) {
             byte[] key = bytes("key");
@@ -211,5 +259,14 @@ class StateStoreTest {
 
         bytes[payloadOffset] ^= 0x01;
         return bytes;
+    }
+
+    private static Path firstSstable(Path directory) throws Exception {
+        try (Stream<Path> paths = Files.list(directory)) {
+            return paths
+                .filter(path -> path.getFileName().toString().endsWith(".sst"))
+                .findFirst()
+                .orElseThrow(() -> new NoSuchFileException("No SSTable in " + directory));
+        }
     }
 }
