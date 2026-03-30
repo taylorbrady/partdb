@@ -13,8 +13,8 @@ import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.stub.StreamObserver;
-import io.partdb.raft.RaftMessage;
-import io.partdb.raft.RaftTransport;
+import io.partdb.node.transport.ConsensusMessage;
+import io.partdb.node.transport.ConsensusTransport;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 import io.partdb.transport.grpc.raft.proto.RaftServiceGrpc;
 import org.slf4j.Logger;
@@ -28,7 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-final class GrpcRaftTransport implements RaftTransport {
+final class GrpcRaftTransport implements ConsensusTransport {
 
     private static final Logger log = LoggerFactory.getLogger(GrpcRaftTransport.class);
 
@@ -61,7 +61,7 @@ final class GrpcRaftTransport implements RaftTransport {
     }
 
     @Override
-    public CompletableFuture<RaftMessage.Response> send(String to, RaftMessage.Request request) {
+    public CompletableFuture<ConsensusMessage.Response> send(String to, ConsensusMessage.Request request) {
         var stub = getOrCreateStub(to);
         if (stub == null) {
             return CompletableFuture.failedFuture(
@@ -70,11 +70,11 @@ final class GrpcRaftTransport implements RaftTransport {
         }
 
         return switch (request) {
-            case RaftMessage.RequestVote msg -> sendRequestVote(stub, msg);
-            case RaftMessage.PreVote msg -> sendPreVote(stub, msg);
-            case RaftMessage.AppendEntries msg -> sendAppendEntries(stub, msg);
-            case RaftMessage.InstallSnapshot msg -> sendInstallSnapshot(stub, msg);
-            case RaftMessage.ReadIndex msg -> sendReadIndex(stub, msg);
+            case ConsensusMessage.RequestVote msg -> sendRequestVote(stub, msg);
+            case ConsensusMessage.PreVote msg -> sendPreVote(stub, msg);
+            case ConsensusMessage.AppendEntries msg -> sendAppendEntries(stub, msg);
+            case ConsensusMessage.InstallSnapshot msg -> sendInstallSnapshot(stub, msg);
+            case ConsensusMessage.ReadIndex msg -> sendReadIndex(stub, msg);
         };
     }
 
@@ -153,10 +153,10 @@ final class GrpcRaftTransport implements RaftTransport {
         });
     }
 
-    private CompletableFuture<RaftMessage.Response> sendRequestVote(
+    private CompletableFuture<ConsensusMessage.Response> sendRequestVote(
             RaftServiceGrpc.RaftServiceStub stub,
-            RaftMessage.RequestVote msg) {
-        var future = new CompletableFuture<RaftMessage.Response>();
+            ConsensusMessage.RequestVote msg) {
+        var future = new CompletableFuture<ConsensusMessage.Response>();
         stub.requestVote(ProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.RequestVoteResponse response) {
@@ -174,10 +174,10 @@ final class GrpcRaftTransport implements RaftTransport {
         return future;
     }
 
-    private CompletableFuture<RaftMessage.Response> sendPreVote(
+    private CompletableFuture<ConsensusMessage.Response> sendPreVote(
             RaftServiceGrpc.RaftServiceStub stub,
-            RaftMessage.PreVote msg) {
-        var future = new CompletableFuture<RaftMessage.Response>();
+            ConsensusMessage.PreVote msg) {
+        var future = new CompletableFuture<ConsensusMessage.Response>();
         stub.preVote(ProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.PreVoteResponse response) {
@@ -195,10 +195,10 @@ final class GrpcRaftTransport implements RaftTransport {
         return future;
     }
 
-    private CompletableFuture<RaftMessage.Response> sendAppendEntries(
+    private CompletableFuture<ConsensusMessage.Response> sendAppendEntries(
             RaftServiceGrpc.RaftServiceStub stub,
-            RaftMessage.AppendEntries msg) {
-        var future = new CompletableFuture<RaftMessage.Response>();
+            ConsensusMessage.AppendEntries msg) {
+        var future = new CompletableFuture<ConsensusMessage.Response>();
         stub.appendEntries(ProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.AppendEntriesResponse response) {
@@ -216,10 +216,10 @@ final class GrpcRaftTransport implements RaftTransport {
         return future;
     }
 
-    private CompletableFuture<RaftMessage.Response> sendInstallSnapshot(
+    private CompletableFuture<ConsensusMessage.Response> sendInstallSnapshot(
             RaftServiceGrpc.RaftServiceStub stub,
-            RaftMessage.InstallSnapshot msg) {
-        var future = new CompletableFuture<RaftMessage.Response>();
+            ConsensusMessage.InstallSnapshot msg) {
+        var future = new CompletableFuture<ConsensusMessage.Response>();
 
         var responseObserver = new StreamObserver<RaftProto.InstallSnapshotResponse>() {
             @Override
@@ -263,10 +263,10 @@ final class GrpcRaftTransport implements RaftTransport {
         return future;
     }
 
-    private CompletableFuture<RaftMessage.Response> sendReadIndex(
+    private CompletableFuture<ConsensusMessage.Response> sendReadIndex(
             RaftServiceGrpc.RaftServiceStub stub,
-            RaftMessage.ReadIndex msg) {
-        var future = new CompletableFuture<RaftMessage.Response>();
+            ConsensusMessage.ReadIndex msg) {
+        var future = new CompletableFuture<ConsensusMessage.Response>();
         stub.readIndex(ProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.ReadIndexResponse response) {

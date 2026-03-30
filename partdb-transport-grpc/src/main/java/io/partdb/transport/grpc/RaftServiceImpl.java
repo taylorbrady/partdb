@@ -7,8 +7,8 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.stub.StreamObserver;
-import io.partdb.raft.RaftMessage;
-import io.partdb.raft.RaftTransport;
+import io.partdb.node.transport.ConsensusMessage;
+import io.partdb.node.transport.ConsensusTransport;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 import io.partdb.transport.grpc.raft.proto.RaftServiceGrpc;
 import org.slf4j.Logger;
@@ -24,9 +24,9 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
         Metadata.Key.of("x-raft-sender-id", Metadata.ASCII_STRING_MARSHALLER);
     static final Context.Key<String> SENDER_ID_CONTEXT_KEY = Context.key("sender-id");
 
-    private final RaftTransport.RpcHandler handler;
+    private final ConsensusTransport.RpcHandler handler;
 
-    RaftServiceImpl(RaftTransport.RpcHandler handler) {
+    RaftServiceImpl(ConsensusTransport.RpcHandler handler) {
         this.handler = handler;
     }
 
@@ -53,7 +53,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void requestVote(RaftProto.RequestVoteRequest request,
                             StreamObserver<RaftProto.RequestVoteResponse> responseObserver) {
         String from = getSenderId();
-        RaftMessage.RequestVote msg = ProtoConverters.fromProto(request);
+        ConsensusMessage.RequestVote msg = ProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -65,7 +65,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                         .log("RPC failed");
                     responseObserver.onError(ex);
                 } else {
-                    var resp = (RaftMessage.RequestVoteResponse) response;
+                    var resp = (ConsensusMessage.RequestVoteResponse) response;
                     responseObserver.onNext(ProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }
@@ -76,7 +76,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void preVote(RaftProto.PreVoteRequest request,
                         StreamObserver<RaftProto.PreVoteResponse> responseObserver) {
         String from = getSenderId();
-        RaftMessage.PreVote msg = ProtoConverters.fromProto(request);
+        ConsensusMessage.PreVote msg = ProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -88,7 +88,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                         .log("RPC failed");
                     responseObserver.onError(ex);
                 } else {
-                    var resp = (RaftMessage.PreVoteResponse) response;
+                    var resp = (ConsensusMessage.PreVoteResponse) response;
                     responseObserver.onNext(ProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }
@@ -99,7 +99,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void appendEntries(RaftProto.AppendEntriesRequest request,
                               StreamObserver<RaftProto.AppendEntriesResponse> responseObserver) {
         String from = getSenderId();
-        RaftMessage.AppendEntries msg = ProtoConverters.fromProto(request);
+        ConsensusMessage.AppendEntries msg = ProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -111,7 +111,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                         .log("RPC failed");
                     responseObserver.onError(ex);
                 } else {
-                    var resp = (RaftMessage.AppendEntriesResponse) response;
+                    var resp = (ConsensusMessage.AppendEntriesResponse) response;
                     responseObserver.onNext(ProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }
@@ -157,7 +157,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                     return;
                 }
 
-                RaftMessage.InstallSnapshot snapshot = ProtoConverters.fromSnapshotHeader(
+                ConsensusMessage.InstallSnapshot snapshot = ProtoConverters.fromSnapshotHeader(
                     header,
                     dataBuffer.toByteArray()
                 );
@@ -172,7 +172,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                                 .log("RPC failed");
                             responseObserver.onError(ex);
                         } else {
-                            var resp = (RaftMessage.InstallSnapshotResponse) response;
+                            var resp = (ConsensusMessage.InstallSnapshotResponse) response;
                             responseObserver.onNext(ProtoConverters.toProto(resp));
                             responseObserver.onCompleted();
                         }
@@ -185,7 +185,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void readIndex(RaftProto.ReadIndexRequest request,
                           StreamObserver<RaftProto.ReadIndexResponse> responseObserver) {
         String from = getSenderId();
-        RaftMessage.ReadIndex msg = ProtoConverters.fromProto(request);
+        ConsensusMessage.ReadIndex msg = ProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -197,7 +197,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                         .log("RPC failed");
                     responseObserver.onError(ex);
                 } else {
-                    var resp = (RaftMessage.ReadIndexResponse) response;
+                    var resp = (ConsensusMessage.ReadIndexResponse) response;
                     responseObserver.onNext(ProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }

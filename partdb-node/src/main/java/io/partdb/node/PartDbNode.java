@@ -3,9 +3,9 @@ package io.partdb.node;
 import io.partdb.node.command.CommandProposer;
 import io.partdb.node.kv.KvStore;
 import io.partdb.node.lease.LeaseManager;
+import io.partdb.node.transport.ConsensusTransport;
 import io.partdb.node.raft.DurableRaftStorage;
 import io.partdb.node.raft.RaftNode;
-import io.partdb.raft.RaftTransport;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,7 +21,7 @@ public final class PartDbNode implements AutoCloseable {
     private final CommandProposer proposer;
     private final LeaseManager leaseManager;
 
-    public PartDbNode(PartDbNodeConfig config, RaftTransport transport) {
+    public PartDbNode(PartDbNodeConfig config, ConsensusTransport transport) {
         Objects.requireNonNull(config, "config must not be null");
         Objects.requireNonNull(transport, "transport must not be null");
 
@@ -37,7 +37,7 @@ public final class PartDbNode implements AutoCloseable {
             .nodeId(config.nodeId())
             .membership(membership)
             .config(config.raftConfig())
-            .transport(transport)
+            .transport(new ConsensusTransportAdapter(transport))
             .storage(raftStorage)
             .stateMachine(kvStore)
             .tickInterval(config.tickInterval())

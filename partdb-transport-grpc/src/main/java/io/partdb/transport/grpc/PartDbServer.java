@@ -1,7 +1,7 @@
 package io.partdb.transport.grpc;
 
-import io.partdb.raft.RaftTransport;
 import io.partdb.node.PartDbNode;
+import io.partdb.node.transport.ConsensusTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,9 +18,9 @@ public final class PartDbServer implements AutoCloseable {
         this(config, null);
     }
 
-    PartDbServer(PartDbServerConfig config, RaftTransport transport) {
+    PartDbServer(PartDbServerConfig config, ConsensusTransport transport) {
         this.config = config;
-        RaftTransport raftTransport = transport != null ? transport : createDefaultTransport();
+        ConsensusTransport raftTransport = transport != null ? transport : createDefaultTransport();
         this.node = new PartDbNode(config.nodeConfig(), raftTransport);
 
         String selfRaftAddress = config.raftPeerAddresses().getOrDefault(
@@ -35,7 +35,7 @@ public final class PartDbServer implements AutoCloseable {
         );
     }
 
-    private RaftTransport createDefaultTransport() {
+    private ConsensusTransport createDefaultTransport() {
         var transportConfig = GrpcRaftTransportConfig.create(
             config.nodeId(),
             config.raftPort(),
