@@ -60,7 +60,7 @@ public final class PartDbApp {
         out.println("  version               Show version information");
         out.println();
         out.println("Options:");
-        out.println("  -e, --endpoint <host:port>  Server endpoint (default: localhost:8101)");
+        out.println("  -e, --endpoint <endpoint>   Server endpoint (default: localhost:8101)");
         out.println("  -o, --output <format>       Output format: text, json (default: text)");
         out.println();
         out.println("Examples:");

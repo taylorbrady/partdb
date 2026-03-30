@@ -21,8 +21,12 @@ public record ClusterClientConfig(
     }
 
     public static ClusterClientConfig defaultConfig(String endpoint) {
+        return defaultConfig(ServerEndpoint.parse(endpoint));
+    }
+
+    public static ClusterClientConfig defaultConfig(ServerEndpoint endpoint) {
         return new ClusterClientConfig(
-            ServerEndpoint.parse(endpoint),
+            endpoint,
             Duration.ofSeconds(30),
             Duration.ofSeconds(5)
         );

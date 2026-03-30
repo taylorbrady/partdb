@@ -35,10 +35,16 @@ public record KvClientConfig(
     }
 
     public static KvClientConfig defaultConfig(String... endpoints) {
-        return new KvClientConfig(
+        return defaultConfig(
             List.of(endpoints).stream()
                 .map(ServerEndpoint::parse)
-                .toList(),
+                .toArray(ServerEndpoint[]::new)
+        );
+    }
+
+    public static KvClientConfig defaultConfig(ServerEndpoint... endpoints) {
+        return new KvClientConfig(
+            List.of(endpoints),
             Duration.ofSeconds(30),
             Duration.ofSeconds(5),
             3,

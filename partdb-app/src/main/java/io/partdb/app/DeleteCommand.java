@@ -1,7 +1,6 @@
 package io.partdb.app;
 
 import io.partdb.client.KvClient;
-import io.partdb.client.KvClientConfig;
 
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -11,21 +10,14 @@ import java.util.concurrent.TimeoutException;
 
 final class DeleteCommand {
 
-    private static final String DEFAULT_ENDPOINT = "localhost:8101";
-    private static final long TIMEOUT_SECONDS = 30;
-
     static int run(String[] args, PrintStream out, PrintStream err) {
         String key = null;
-        String endpoint = DEFAULT_ENDPOINT;
+        String endpoint = CliSupport.DEFAULT_ENDPOINT_TEXT;
 
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
             if (arg.equals("--endpoint") || arg.equals("-e")) {
-                if (i + 1 >= args.length) {
-                    err.println("Error: --endpoint requires a value");
-                    return 1;
-                }
-                endpoint = args[++i];
+                endpoint = CliSupport.requireValue(args, ++i, "--endpoint");
             } else if (arg.equals("--help") || arg.equals("-h")) {
                 printUsage(out);
                 return 0;
@@ -49,17 +41,16 @@ final class DeleteCommand {
             return 1;
         }
 
-        var config = KvClientConfig.defaultConfig(endpoint);
-        try (var client = new KvClient(config)) {
+        try (var client = new KvClient(CliSupport.defaultKvClientConfig(endpoint))) {
             byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
-            client.delete(keyBytes).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            client.delete(keyBytes).get(CliSupport.REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             out.println("OK");
             return 0;
         } catch (TimeoutException e) {
-            err.println("Error: request timed out after " + TIMEOUT_SECONDS + " seconds");
+            err.println("Error: request timed out after " + CliSupport.REQUEST_TIMEOUT_SECONDS + " seconds");
             return 1;
         } catch (ExecutionException e) {
-            err.println("Error: " + getRootCauseMessage(e));
+            err.println("Error: " + CliSupport.rootCauseMessage(e));
             return 1;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -71,22 +62,13 @@ final class DeleteCommand {
         }
     }
 
-    private static String getRootCauseMessage(Throwable t) {
-        Throwable cause = t;
-        while (cause.getCause() != null) {
-            cause = cause.getCause();
-        }
-        String message = cause.getMessage();
-        return message != null ? message : cause.getClass().getSimpleName();
-    }
-
     private static void printUsage(PrintStream out) {
         out.println("Usage: partdb delete <key> [options]");
         out.println();
         out.println("Delete a key.");
         out.println();
         out.println("Options:");
-        out.println("  -e, --endpoint <host:port>  Server endpoint (default: localhost:8101)");
+        out.println("  -e, --endpoint <endpoint>   Server endpoint (default: localhost:8101)");
         out.println("  -h, --help                  Show this help message");
     }
 }

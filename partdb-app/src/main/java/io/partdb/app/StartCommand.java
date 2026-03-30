@@ -93,14 +93,14 @@ final class StartCommand {
 
             switch (arg) {
                 case "--help", "-h" -> options.help = true;
-                case "--node-id", "-n" -> options.nodeId = requireValue(args, ++i, "--node-id");
+                case "--node-id", "-n" -> options.nodeId = CliSupport.requireValue(args, ++i, "--node-id");
                 case "--raft-peer", "-r" -> {
-                    String peerSpec = requireValue(args, ++i, "--raft-peer");
+                    String peerSpec = CliSupport.requireValue(args, ++i, "--raft-peer");
                     parseRaftPeer(peerSpec, options.raftPeerAddresses);
                 }
-                case "--data-dir", "-d" -> options.dataDir = Path.of(requireValue(args, ++i, "--data-dir"));
-                case "--raft-port" -> options.raftPort = requireIntValue(args, ++i, "--raft-port");
-                case "--grpc-port" -> options.grpcPort = requireIntValue(args, ++i, "--grpc-port");
+                case "--data-dir", "-d" -> options.dataDir = Path.of(CliSupport.requireValue(args, ++i, "--data-dir"));
+                case "--raft-port" -> options.raftPort = CliSupport.requireIntValue(args, ++i, "--raft-port");
+                case "--grpc-port" -> options.grpcPort = CliSupport.requireIntValue(args, ++i, "--grpc-port");
                 default -> throw new IllegalArgumentException("Unknown option: " + arg);
             }
         }
@@ -109,41 +109,8 @@ final class StartCommand {
     }
 
     private static void parseRaftPeer(String peerSpec, Map<String, String> raftPeerAddresses) {
-        String[] parts = peerSpec.split("=", 2);
-        if (parts.length != 2) {
-            throw new IllegalArgumentException(
-                "Invalid raft peer format: '" + peerSpec + "'. Expected: nodeId=host:port"
-            );
-        }
-        String nodeId = parts[0].trim();
-        String raftAddress = parts[1].trim();
-        if (nodeId.isEmpty() || raftAddress.isEmpty()) {
-            throw new IllegalArgumentException(
-                "Invalid raft peer format: '" + peerSpec + "'. Expected: nodeId=host:port"
-            );
-        }
-        if (!raftAddress.contains(":")) {
-            throw new IllegalArgumentException(
-                "Invalid raft peer address: '" + raftAddress + "'. Expected: host:port"
-            );
-        }
-        raftPeerAddresses.put(nodeId, raftAddress);
-    }
-
-    private static String requireValue(String[] args, int index, String optionName) {
-        if (index >= args.length) {
-            throw new IllegalArgumentException(optionName + " requires a value");
-        }
-        return args[index];
-    }
-
-    private static int requireIntValue(String[] args, int index, String optionName) {
-        String value = requireValue(args, index, optionName);
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(optionName + " must be a valid integer, got: " + value);
-        }
+        CliSupport.NodeEndpoint peer = CliSupport.parseNodeEndpointSpec(peerSpec, "--raft-peer");
+        raftPeerAddresses.put(peer.nodeId(), peer.endpoint());
     }
 
     private static void printUsage(PrintStream out) {
@@ -153,7 +120,7 @@ final class StartCommand {
         out.println();
         out.println("Options:");
         out.println("  -n, --node-id <id>              Node identifier (required)");
-        out.println("  -r, --raft-peer <id=host:port>  Raft peer endpoint (repeatable, omit for single-node)");
+        out.println("  -r, --raft-peer <id=endpoint>   Raft peer endpoint (repeatable, omit for single-node)");
         out.println("  -d, --data-dir <path>           Directory for data storage (required)");
         out.println("      --raft-port <port>          Port for Raft communication (default: " + DEFAULT_RAFT_PORT + ")");
         out.println("      --grpc-port <port>          Port for gRPC API traffic (default: " + DEFAULT_GRPC_PORT + ")");

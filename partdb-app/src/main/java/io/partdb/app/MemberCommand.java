@@ -1,20 +1,17 @@
 package io.partdb.app;
 
 import io.partdb.client.ClusterClient;
-import io.partdb.client.ClusterClientConfig;
 import io.partdb.client.ClusterMember;
 import io.partdb.client.ClusterMembership;
 
 import java.io.PrintStream;
+import java.util.Locale;
 import java.util.Arrays;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 final class MemberCommand {
-
-    private static final String DEFAULT_ENDPOINT = "localhost:8101";
-    private static final long TIMEOUT_SECONDS = 30;
 
     static int run(String[] args, PrintStream out, PrintStream err) {
         if (args.length == 0) {
@@ -43,27 +40,18 @@ final class MemberCommand {
     }
 
     private static int runList(String[] args, PrintStream out, PrintStream err) {
-        String endpoint = DEFAULT_ENDPOINT;
+        String endpoint = CliSupport.DEFAULT_ENDPOINT_TEXT;
         OutputFormat format = OutputFormat.TEXT;
 
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
             if (arg.equals("--endpoint") || arg.equals("-e")) {
-                if (i + 1 >= args.length) {
-                    err.println("Error: --endpoint requires a value");
-                    return 1;
-                }
-                endpoint = args[++i];
+                endpoint = CliSupport.requireValue(args, ++i, "--endpoint");
             } else if (arg.equals("-o") || arg.equals("--output")) {
-                if (i + 1 >= args.length) {
-                    err.println("Error: -o requires a value");
-                    return 1;
-                }
-                String formatStr = args[++i];
-                if (formatStr.equals("json")) {
-                    format = OutputFormat.JSON;
-                } else if (!formatStr.equals("text")) {
-                    err.println("Error: unknown output format: " + formatStr);
+                try {
+                    format = CliSupport.parseOutputFormat(CliSupport.requireValue(args, ++i, "--output"));
+                } catch (IllegalArgumentException e) {
+                    err.println("Error: " + e.getMessage());
                     return 1;
                 }
             } else if (arg.equals("--help") || arg.equals("-h")) {
@@ -75,8 +63,8 @@ final class MemberCommand {
             }
         }
 
-        try (var client = new ClusterClient(ClusterClientConfig.defaultConfig(endpoint))) {
-            ClusterMembership response = client.membership().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        try (var client = new ClusterClient(CliSupport.defaultClusterClientConfig(endpoint))) {
+            ClusterMembership response = client.membership().get(CliSupport.REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             if (format == OutputFormat.JSON) {
                 printJson(response, out);
@@ -85,10 +73,10 @@ final class MemberCommand {
             }
             return 0;
         } catch (TimeoutException e) {
-            err.println("Error: request timed out after " + TIMEOUT_SECONDS + " seconds");
+            err.println("Error: request timed out after " + CliSupport.REQUEST_TIMEOUT_SECONDS + " seconds");
             return 1;
         } catch (ExecutionException e) {
-            err.println("Error: " + getRootCauseMessage(e));
+            err.println("Error: " + CliSupport.rootCauseMessage(e));
             return 1;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -107,38 +95,37 @@ final class MemberCommand {
             out.printf("%-12s %-24s %-8s %-8s%n",
                 member.nodeId(),
                 member.raftEndpoint().map(Object::toString).orElse("(unknown)"),
-                member.role().name().toLowerCase(),
+                member.role().name().toLowerCase(Locale.ROOT),
                 status);
         }
     }
 
     private static void printJson(ClusterMembership response, PrintStream out) {
-        out.print("{\"leaderId\":");
-        out.print(response.leaderId().map(id -> "\"" + id + "\"").orElse("null"));
-        out.print(",\"members\":[");
+        out.println(toJson(response));
+    }
+
+    static String toJson(ClusterMembership response) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("{\"leaderId\":");
+        builder.append(response.leaderId().map(JsonOutput::quote).orElse("null"));
+        builder.append(",\"members\":[");
+
         var members = response.members();
         for (int i = 0; i < members.size(); i++) {
             ClusterMember member = members.get(i);
             if (i > 0) {
-                out.print(",");
+                builder.append(',');
             }
-            out.print("{\"nodeId\":\"" + member.nodeId() + "\"");
-            out.print(",\"raftAddress\":"
-                + member.raftEndpoint().map(raftEndpoint -> "\"" + raftEndpoint + "\"").orElse("null"));
-            out.print(",\"role\":\"" + member.role().name().toLowerCase() + "\"");
-            out.print(",\"isLeader\":" + member.leader());
-            out.print(",\"isSelf\":" + member.self() + "}");
+            builder.append("{\"nodeId\":").append(JsonOutput.quote(member.nodeId()));
+            builder.append(",\"raftAddress\":")
+                .append(member.raftEndpoint().map(endpoint -> JsonOutput.quote(endpoint.toString())).orElse("null"));
+            builder.append(",\"role\":")
+                .append(JsonOutput.quote(member.role().name().toLowerCase(Locale.ROOT)));
+            builder.append(",\"isLeader\":").append(member.leader());
+            builder.append(",\"isSelf\":").append(member.self()).append('}');
         }
-        out.println("]}");
-    }
-
-    private static String getRootCauseMessage(Throwable t) {
-        Throwable cause = t;
-        while (cause.getCause() != null) {
-            cause = cause.getCause();
-        }
-        String message = cause.getMessage();
-        return message != null ? message : cause.getClass().getSimpleName();
+        builder.append("]}");
+        return builder.toString();
     }
 
     private static void printUsage(PrintStream out) {
@@ -157,7 +144,7 @@ final class MemberCommand {
         out.println("List cluster members.");
         out.println();
         out.println("Options:");
-        out.println("  -e, --endpoint <host:port>  Server endpoint (default: localhost:8101)");
+        out.println("  -e, --endpoint <endpoint>   Server endpoint (default: localhost:8101)");
         out.println("  -o, --output <format>       Output format: text, json (default: text)");
         out.println("  -h, --help                  Show this help message");
     }
