@@ -1,6 +1,5 @@
 package io.partdb.node;
 
-import io.partdb.raft.Membership;
 import io.partdb.raft.RaftConfig;
 import io.partdb.storage.StorageConfig;
 import org.junit.jupiter.api.Test;
@@ -21,6 +20,7 @@ class PartDbNodeConfigTest {
 
         assertEquals("node1", config.nodeId());
         assertEquals(Path.of("data/node1"), config.dataDirectory());
+        assertEquals(NodeMembership.ofVoters("node1"), config.membership());
         assertEquals(Set.of("node1"), config.memberIds());
         assertEquals(StorageConfig.defaults(), config.storageConfig());
         assertEquals(RaftConfig.defaults(), config.raftConfig());
@@ -32,7 +32,7 @@ class PartDbNodeConfigTest {
         var storageConfig = StorageConfig.defaults();
         var raftConfig = new RaftConfig(20, 40, 5, 250);
         var config = PartDbNodeConfig.builder("node2", Path.of("data/node2"))
-            .members("node1", "node2")
+            .voters("node1", "node2")
             .tickInterval(Duration.ofMillis(25))
             .storageConfig(storageConfig)
             .raftConfig(raftConfig)
@@ -49,7 +49,7 @@ class PartDbNodeConfigTest {
         assertThrows(
             IllegalArgumentException.class,
             () -> PartDbNodeConfig.builder("node3", Path.of("data/node3"))
-                .members("node1", "node2")
+                .voters("node1", "node2")
                 .build()
         );
     }
@@ -57,7 +57,7 @@ class PartDbNodeConfigTest {
     @Test
     void builderSupportsAdvancedMembershipOverrides() {
         var config = PartDbNodeConfig.builder("node3", Path.of("data/node3"))
-            .membership(Membership.ofVoters("node1", "node2").addLearner("node3"))
+            .membership(NodeMembership.ofVoters("node1", "node2").addLearner("node3"))
             .build();
 
         assertEquals(Set.of("node1", "node2", "node3"), config.memberIds());

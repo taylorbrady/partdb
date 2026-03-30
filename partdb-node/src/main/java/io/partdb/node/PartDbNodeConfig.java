@@ -1,6 +1,5 @@
 package io.partdb.node;
 
-import io.partdb.raft.Membership;
 import io.partdb.raft.RaftConfig;
 import io.partdb.storage.StorageConfig;
 
@@ -14,7 +13,7 @@ public final class PartDbNodeConfig {
     private static final Duration DEFAULT_TICK_INTERVAL = Duration.ofMillis(10);
 
     private final String nodeId;
-    private final Membership membership;
+    private final NodeMembership membership;
     private final Path dataDirectory;
     private final StorageConfig storageConfig;
     private final RaftConfig raftConfig;
@@ -31,8 +30,7 @@ public final class PartDbNodeConfig {
         }
         this.membership = builder.membership != null
             ? Objects.requireNonNull(builder.membership, "membership must not be null")
-            : Membership.ofVoters(nodeId);
-        validateMembership(this.membership);
+            : NodeMembership.ofVoters(nodeId);
         if (!membership.isMember(nodeId)) {
             throw new IllegalArgumentException("membership must include nodeId");
         }
@@ -42,15 +40,12 @@ public final class PartDbNodeConfig {
         return nodeId;
     }
 
-    Membership membership() {
+    public NodeMembership membership() {
         return membership;
     }
 
     public Set<String> memberIds() {
-        var memberIds = new LinkedHashSet<String>();
-        memberIds.addAll(membership.voters());
-        memberIds.addAll(membership.learners());
-        return Set.copyOf(memberIds);
+        return membership.memberIds();
     }
 
     Path dataDirectory() {
@@ -63,6 +58,10 @@ public final class PartDbNodeConfig {
 
     RaftConfig raftConfig() {
         return raftConfig;
+    }
+
+    io.partdb.raft.Membership raftMembership() {
+        return membership.toRaftMembership();
     }
 
     Duration tickInterval() {
@@ -109,7 +108,7 @@ public final class PartDbNodeConfig {
     public static final class Builder {
         private final String nodeId;
         private final Path dataDirectory;
-        private Membership membership;
+        private NodeMembership membership;
         private StorageConfig storageConfig = StorageConfig.defaults();
         private RaftConfig raftConfig = RaftConfig.defaults();
         private Duration tickInterval = DEFAULT_TICK_INTERVAL;
@@ -119,23 +118,29 @@ public final class PartDbNodeConfig {
             this.dataDirectory = dataDirectory;
         }
 
-        public Builder members(String... memberIds) {
-            Objects.requireNonNull(memberIds, "memberIds must not be null");
-            this.membership = Membership.ofVoters(memberIds);
+        public Builder voters(String... voterIds) {
+            var learners = membership != null ? membership.learners() : Set.<String>of();
+            this.membership = new NodeMembership(toIdSet(voterIds, "voterIds"), learners);
             return this;
         }
 
-        public Builder membership(Membership membership) {
+        public Builder learners(String... learnerIds) {
+            var voters = membership != null ? membership.voters() : Set.of(nodeId);
+            this.membership = new NodeMembership(voters, toIdSet(learnerIds, "learnerIds"));
+            return this;
+        }
+
+        public Builder membership(NodeMembership membership) {
             this.membership = Objects.requireNonNull(membership, "membership must not be null");
             return this;
         }
 
-        public Builder storageConfig(StorageConfig storageConfig) {
+        Builder storageConfig(StorageConfig storageConfig) {
             this.storageConfig = Objects.requireNonNull(storageConfig, "storageConfig must not be null");
             return this;
         }
 
-        public Builder raftConfig(RaftConfig raftConfig) {
+        Builder raftConfig(RaftConfig raftConfig) {
             this.raftConfig = Objects.requireNonNull(raftConfig, "raftConfig must not be null");
             return this;
         }
@@ -158,8 +163,12 @@ public final class PartDbNodeConfig {
         return value;
     }
 
-    private static void validateMembership(Membership membership) {
-        membership.voters().forEach(voterId -> requireNonBlank(voterId, "voterId"));
-        membership.learners().forEach(learnerId -> requireNonBlank(learnerId, "learnerId"));
+    private static Set<String> toIdSet(String[] ids, String name) {
+        Objects.requireNonNull(ids, name + " must not be null");
+        var normalized = new LinkedHashSet<String>();
+        for (String id : ids) {
+            normalized.add(requireNonBlank(id, "memberId"));
+        }
+        return Set.copyOf(normalized);
     }
 }

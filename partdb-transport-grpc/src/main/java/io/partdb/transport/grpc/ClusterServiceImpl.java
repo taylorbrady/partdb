@@ -8,13 +8,12 @@ import io.partdb.grpc.cluster.proto.ClusterProto.MemberListRequest;
 import io.partdb.grpc.cluster.proto.ClusterProto.MemberListResponse;
 import io.partdb.grpc.cluster.proto.ClusterProto.MemberRole;
 import io.partdb.grpc.cluster.proto.ClusterProto.NodeRole;
+import io.partdb.node.NodeMembership;
 import io.partdb.grpc.cluster.proto.ClusterProto.StatusRequest;
 import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
 import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
-import io.partdb.node.PartDbNode;
 import io.partdb.node.NodeStatus;
-import io.partdb.raft.Membership;
-import io.partdb.raft.Role;
+import io.partdb.node.PartDbNode;
 
 import java.util.Map;
 
@@ -49,7 +48,7 @@ final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase
 
     @Override
     public void memberList(MemberListRequest request, StreamObserver<MemberListResponse> responseObserver) {
-        Membership membership = node.membership();
+        NodeMembership membership = node.membership();
         String leaderId = node.leaderId().orElse("");
         String selfId = node.nodeId();
 
@@ -81,7 +80,7 @@ final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase
             .build();
     }
 
-    private static NodeRole toProtoRole(Role role) {
+    private static NodeRole toProtoRole(io.partdb.node.NodeRole role) {
         return switch (role) {
             case FOLLOWER -> NodeRole.FOLLOWER;
             case PRE_CANDIDATE -> NodeRole.PRE_CANDIDATE;

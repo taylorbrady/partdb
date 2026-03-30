@@ -5,14 +5,12 @@ import io.partdb.node.kv.KvStore;
 import io.partdb.node.lease.LeaseManager;
 import io.partdb.node.raft.DurableRaftStorage;
 import io.partdb.node.raft.RaftNode;
-import io.partdb.raft.Membership;
-import io.partdb.raft.RaftStorage;
 import io.partdb.raft.RaftTransport;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Optional;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
@@ -24,10 +22,6 @@ public final class PartDbNode implements AutoCloseable {
     private final LeaseManager leaseManager;
 
     public PartDbNode(PartDbNodeConfig config, RaftTransport transport) {
-        this(config, transport, null);
-    }
-
-    public PartDbNode(PartDbNodeConfig config, RaftTransport transport, RaftStorage storage) {
         Objects.requireNonNull(config, "config must not be null");
         Objects.requireNonNull(transport, "transport must not be null");
 
@@ -36,8 +30,8 @@ public final class PartDbNode implements AutoCloseable {
             config.storageConfig()
         );
 
-        var membership = config.membership();
-        RaftStorage raftStorage = storage != null ? storage : createDefaultStorage(config.dataDirectory(), membership);
+        var membership = config.raftMembership();
+        var raftStorage = createDefaultStorage(config.dataDirectory(), membership);
 
         this.raftNode = RaftNode.builder()
             .nodeId(config.nodeId())
@@ -54,11 +48,15 @@ public final class PartDbNode implements AutoCloseable {
     }
 
     public Optional<byte[]> get(byte[] key) {
-        return kvStore.get(key);
+        Objects.requireNonNull(key, "key must not be null");
+        return kvStore.get(key.clone())
+            .map(byte[]::clone);
     }
 
     public Stream<KeyValueEntry> scan(byte[] startKey, byte[] endKey) {
-        return kvStore.scan(startKey, endKey)
+        byte[] scanStart = startKey != null ? startKey.clone() : null;
+        byte[] scanEnd = endKey != null ? endKey.clone() : null;
+        return kvStore.scan(scanStart, scanEnd)
             .map(entry -> new KeyValueEntry(
                 entry.key(),
                 entry.value(),
@@ -68,33 +66,45 @@ public final class PartDbNode implements AutoCloseable {
     }
 
     public CompletableFuture<Long> put(byte[] key, byte[] value, long leaseId) {
-        return proposer.put(key, value, leaseId);
+        Objects.requireNonNull(key, "key must not be null");
+        Objects.requireNonNull(value, "value must not be null");
+        return proposer.put(key.clone(), value.clone(), leaseId);
     }
 
     public CompletableFuture<Long> delete(byte[] key) {
-        return proposer.delete(key);
+        Objects.requireNonNull(key, "key must not be null");
+        return proposer.delete(key.clone());
     }
 
     public CompletableFuture<Long> grantLease(long ttlNanos) {
+        if (ttlNanos <= 0) {
+            throw new IllegalArgumentException("ttlNanos must be positive");
+        }
         return leaseManager.grant(ttlNanos);
     }
 
     public CompletableFuture<Long> revokeLease(long leaseId) {
+        if (leaseId <= 0) {
+            throw new IllegalArgumentException("leaseId must be positive");
+        }
         return leaseManager.revoke(leaseId);
     }
 
     public CompletableFuture<Long> keepAliveLease(long leaseId) {
+        if (leaseId <= 0) {
+            throw new IllegalArgumentException("leaseId must be positive");
+        }
         return leaseManager.keepAlive(leaseId);
     }
 
-    public Membership membership() {
-        return raftNode.membership();
+    public NodeMembership membership() {
+        return NodeMembership.fromRaftMembership(raftNode.membership());
     }
 
     public NodeStatus status() {
         return new NodeStatus(
             raftNode.nodeId(),
-            raftNode.role(),
+            NodeRole.fromRaftRole(raftNode.role()),
             raftNode.currentTerm(),
             raftNode.leaderId(),
             raftNode.commitIndex(),
@@ -118,7 +128,7 @@ public final class PartDbNode implements AutoCloseable {
         kvStore.close();
     }
 
-    private static RaftStorage createDefaultStorage(Path dataDirectory, Membership membership) {
+    private static io.partdb.raft.RaftStorage createDefaultStorage(Path dataDirectory, io.partdb.raft.Membership membership) {
         Path raftDir = dataDirectory.resolve("raft");
         if (Files.exists(raftDir.resolve("wal"))) {
             return DurableRaftStorage.open(raftDir);

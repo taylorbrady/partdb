@@ -1,6 +1,5 @@
 package io.partdb.transport.grpc;
 
-import io.partdb.raft.RaftStorage;
 import io.partdb.raft.RaftTransport;
 import io.partdb.node.PartDbNode;
 import org.slf4j.Logger;
@@ -16,13 +15,13 @@ public final class PartDbServer implements AutoCloseable {
     private final GrpcServer grpcServer;
 
     public PartDbServer(PartDbServerConfig config) {
-        this(config, null, null);
+        this(config, null);
     }
 
-    PartDbServer(PartDbServerConfig config, RaftTransport transport, RaftStorage storage) {
+    PartDbServer(PartDbServerConfig config, RaftTransport transport) {
         this.config = config;
         RaftTransport raftTransport = transport != null ? transport : createDefaultTransport();
-        this.node = new PartDbNode(config.nodeConfig(), raftTransport, storage);
+        this.node = new PartDbNode(config.nodeConfig(), raftTransport);
 
         String selfRaftAddress = config.raftPeerAddresses().getOrDefault(
             config.nodeId(),

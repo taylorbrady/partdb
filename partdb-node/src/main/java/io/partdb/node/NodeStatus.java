@@ -1,13 +1,11 @@
 package io.partdb.node;
 
-import io.partdb.raft.Role;
-
 import java.util.Objects;
 import java.util.Optional;
 
 public record NodeStatus(
     String nodeId,
-    Role role,
+    NodeRole role,
     long term,
     Optional<String> leaderId,
     long commitIndex,

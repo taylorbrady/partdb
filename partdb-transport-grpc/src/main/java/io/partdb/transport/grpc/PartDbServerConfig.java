@@ -65,7 +65,7 @@ public final class PartDbServerConfig {
         var normalizedRaftPeerAddresses = normalizeRaftPeerAddresses(nodeId, raftPeerAddresses);
         var nodeConfigBuilder = PartDbNodeConfig.builder(nodeId, dataDirectory);
         if (!normalizedRaftPeerAddresses.isEmpty()) {
-            nodeConfigBuilder.members(normalizedRaftPeerAddresses.keySet().toArray(String[]::new));
+            nodeConfigBuilder.voters(normalizedRaftPeerAddresses.keySet().toArray(String[]::new));
         }
         return new PartDbServerConfig(
             nodeConfigBuilder.build(),
