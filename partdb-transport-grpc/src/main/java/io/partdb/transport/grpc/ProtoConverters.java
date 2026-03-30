@@ -1,4 +1,4 @@
-package io.partdb.transport.grpc.raft;
+package io.partdb.transport.grpc;
 
 import com.google.protobuf.ByteString;
 import io.partdb.raft.LogEntry;

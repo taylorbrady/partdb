@@ -1,4 +1,4 @@
-package io.partdb.transport.grpc.raft;
+package io.partdb.transport.grpc;
 
 import io.grpc.Context;
 import io.grpc.Contexts;

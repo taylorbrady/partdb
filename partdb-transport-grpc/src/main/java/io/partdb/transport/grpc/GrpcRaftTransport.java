@@ -1,4 +1,4 @@
-package io.partdb.transport.grpc.raft;
+package io.partdb.transport.grpc;
 
 import com.google.protobuf.ByteString;
 import io.grpc.CallOptions;
@@ -28,7 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-public final class GrpcRaftTransport implements RaftTransport {
+final class GrpcRaftTransport implements RaftTransport {
 
     private static final Logger log = LoggerFactory.getLogger(GrpcRaftTransport.class);
 
@@ -38,7 +38,7 @@ public final class GrpcRaftTransport implements RaftTransport {
 
     private Server server;
 
-    public GrpcRaftTransport(GrpcRaftTransportConfig config) {
+    GrpcRaftTransport(GrpcRaftTransportConfig config) {
         this.config = config;
     }
 

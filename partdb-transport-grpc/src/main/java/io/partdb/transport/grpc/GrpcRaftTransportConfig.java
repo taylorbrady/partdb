@@ -1,8 +1,8 @@
-package io.partdb.transport.grpc.raft;
+package io.partdb.transport.grpc;
 
 import java.util.Map;
 
-public record GrpcRaftTransportConfig(
+record GrpcRaftTransportConfig(
     String localNodeId,
     int port,
     Map<String, String> raftPeerAddresses,

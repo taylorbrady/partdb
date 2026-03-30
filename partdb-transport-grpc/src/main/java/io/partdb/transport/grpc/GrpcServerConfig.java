@@ -3,7 +3,7 @@ package io.partdb.transport.grpc;
 import java.time.Duration;
 import java.util.Objects;
 
-public record GrpcServerConfig(
+record GrpcServerConfig(
     int port,
     Duration defaultTimeout,
     Duration shutdownGracePeriod

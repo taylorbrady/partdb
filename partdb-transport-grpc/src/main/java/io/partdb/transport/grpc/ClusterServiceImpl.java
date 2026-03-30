@@ -1,4 +1,4 @@
-package io.partdb.transport.grpc.cluster;
+package io.partdb.transport.grpc;
 
 import io.grpc.stub.StreamObserver;
 import io.partdb.grpc.cluster.proto.ClusterProto.Error;
@@ -18,13 +18,13 @@ import io.partdb.raft.Role;
 
 import java.util.Map;
 
-public final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase {
+final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase {
 
     private final PartDbNode node;
     private final Map<String, String> raftPeerAddresses;
     private final String selfRaftAddress;
 
-    public ClusterServiceImpl(PartDbNode node, Map<String, String> raftPeerAddresses, String selfRaftAddress) {
+    ClusterServiceImpl(PartDbNode node, Map<String, String> raftPeerAddresses, String selfRaftAddress) {
         this.node = node;
         this.raftPeerAddresses = Map.copyOf(raftPeerAddresses);
         this.selfRaftAddress = selfRaftAddress;

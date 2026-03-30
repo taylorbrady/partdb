@@ -3,19 +3,17 @@ package io.partdb.transport.grpc;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.partdb.node.PartDbNode;
-import io.partdb.transport.grpc.cluster.ClusterServiceImpl;
-import io.partdb.transport.grpc.kv.KvServiceImpl;
 
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-public final class GrpcServer implements AutoCloseable {
+final class GrpcServer implements AutoCloseable {
     private final Server server;
     private final GrpcServerConfig config;
 
-    public GrpcServer(
+    GrpcServer(
         PartDbNode node,
         Map<String, String> raftPeerAddresses,
         String selfRaftAddress,
@@ -29,7 +27,7 @@ public final class GrpcServer implements AutoCloseable {
             .build();
     }
 
-    public void start() throws IOException {
+    void start() throws IOException {
         server.start();
     }
 

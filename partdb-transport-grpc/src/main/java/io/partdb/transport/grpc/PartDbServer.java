@@ -3,8 +3,6 @@ package io.partdb.transport.grpc;
 import io.partdb.raft.RaftStorage;
 import io.partdb.raft.RaftTransport;
 import io.partdb.node.PartDbNode;
-import io.partdb.transport.grpc.raft.GrpcRaftTransport;
-import io.partdb.transport.grpc.raft.GrpcRaftTransportConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

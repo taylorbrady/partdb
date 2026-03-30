@@ -1,4 +1,4 @@
-package io.partdb.transport.grpc.kv;
+package io.partdb.transport.grpc;
 
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
@@ -30,7 +30,6 @@ import io.partdb.grpc.kv.proto.KvServiceGrpc;
 import io.partdb.node.KeyValueEntry;
 import io.partdb.node.PartDbNode;
 import io.partdb.raft.RaftException;
-import io.partdb.transport.grpc.GrpcServerConfig;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -43,12 +42,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
 
-public final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
+final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
 
     private final PartDbNode node;
     private final GrpcServerConfig config;
 
-    public KvServiceImpl(PartDbNode node, GrpcServerConfig config) {
+    KvServiceImpl(PartDbNode node, GrpcServerConfig config) {
         this.node = node;
         this.config = config;
     }
