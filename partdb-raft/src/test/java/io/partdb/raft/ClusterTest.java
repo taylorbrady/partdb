@@ -876,7 +876,9 @@ class ClusterTest {
             }
 
             var storage = new InMemoryStorage(leader.membership());
-            var newLearner = new Raft("node-3", leader.membership(), RaftConfig.defaults(), storage, _ -> 5);
+            var newLearner = Raft.builder("node-3", leader.membership(), RaftConfig.defaults(), storage)
+                .random(_ -> 5)
+                .build();
             network.addNode("node-3", newLearner);
 
             for (int i = 0; i < 50; i++) {

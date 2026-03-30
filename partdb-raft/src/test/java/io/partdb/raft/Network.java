@@ -57,13 +57,17 @@ final class Network {
         for (String nodeId : voters) {
             int jitter = nodeIndex++;
             var storage = new InMemoryStorage(membership);
-            var raft = new Raft(nodeId, membership, config, storage, _ -> jitter);
+            var raft = Raft.builder(nodeId, membership, config, storage)
+                .random(_ -> jitter)
+                .build();
             network.nodes.put(nodeId, raft);
         }
         for (String nodeId : learners) {
             int jitter = nodeIndex++;
             var storage = new InMemoryStorage(membership);
-            var raft = new Raft(nodeId, membership, config, storage, _ -> jitter);
+            var raft = Raft.builder(nodeId, membership, config, storage)
+                .random(_ -> jitter)
+                .build();
             network.nodes.put(nodeId, raft);
         }
 

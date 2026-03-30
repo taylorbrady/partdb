@@ -18,19 +18,25 @@ class RaftTest {
     private Raft createRaft(String id, String... allVoters) {
         var membership = Membership.ofVoters(allVoters);
         var storage = new InMemoryStorage(membership);
-        return new Raft(id, membership, CONFIG, storage, _ -> DETERMINISTIC_JITTER);
+        return Raft.builder(id, membership, CONFIG, storage)
+            .random(_ -> DETERMINISTIC_JITTER)
+            .build();
     }
 
     private Raft createRaft(String id, Membership membership, RaftConfig config) {
         var storage = new InMemoryStorage(membership);
-        return new Raft(id, membership, config, storage, _ -> DETERMINISTIC_JITTER);
+        return Raft.builder(id, membership, config, storage)
+            .random(_ -> DETERMINISTIC_JITTER)
+            .build();
     }
 
     private Raft createRaftWithLog(String id, List<LogEntry> entries, HardState hardState, String... allVoters) {
         var membership = Membership.ofVoters(allVoters);
         var storage = new InMemoryStorage(membership);
         storage.append(null, entries);
-        var raft = new Raft(id, membership, CONFIG, storage, _ -> DETERMINISTIC_JITTER);
+        var raft = Raft.builder(id, membership, CONFIG, storage)
+            .random(_ -> DETERMINISTIC_JITTER)
+            .build();
         raft.restore(hardState, 0);
         return raft;
     }
@@ -38,7 +44,9 @@ class RaftTest {
     private Raft createRaftWithSnapshot(String id, HardState hardState, long snapIndex, String... allVoters) {
         var membership = Membership.ofVoters(allVoters);
         var storage = new InMemoryStorage(membership);
-        var raft = new Raft(id, membership, CONFIG, storage, _ -> DETERMINISTIC_JITTER);
+        var raft = Raft.builder(id, membership, CONFIG, storage)
+            .random(_ -> DETERMINISTIC_JITTER)
+            .build();
         raft.restore(hardState, snapIndex);
         return raft;
     }
@@ -50,7 +58,9 @@ class RaftTest {
             storage.append(null, List.of(new LogEntry.Data(i, snapTerm, new byte[0])));
         }
         storage.saveSnapshot(new Snapshot(snapIndex, snapTerm, membership, new byte[0]));
-        var raft = new Raft(id, membership, CONFIG, storage, _ -> DETERMINISTIC_JITTER);
+        var raft = Raft.builder(id, membership, CONFIG, storage)
+            .random(_ -> DETERMINISTIC_JITTER)
+            .build();
         raft.restore(HardState.INITIAL, snapIndex);
         return raft;
     }
@@ -225,7 +235,9 @@ class RaftTest {
             var counter = new AtomicInteger(0);
             var membership = Membership.ofVoters("n1", "n2");
             var storage = new InMemoryStorage(membership);
-            var raft = new Raft("n1", membership, RaftConfig.defaults(), storage, _ -> counter.incrementAndGet());
+            var raft = Raft.builder("n1", membership, RaftConfig.defaults(), storage)
+                .random(_ -> counter.incrementAndGet())
+                .build();
 
             for (int i = 0; i < 50; i++) {
                 raft.step(new RaftEvent.Tick());
@@ -1440,7 +1452,9 @@ class RaftTest {
         private Raft createLearner(String id, Set<String> voters, Set<String> learners) {
             var membership = new Membership(voters, learners);
             var storage = new InMemoryStorage(membership);
-            return new Raft(id, membership, CONFIG, storage, _ -> DETERMINISTIC_JITTER);
+            return Raft.builder(id, membership, CONFIG, storage)
+                .random(_ -> DETERMINISTIC_JITTER)
+                .build();
         }
 
         @Test

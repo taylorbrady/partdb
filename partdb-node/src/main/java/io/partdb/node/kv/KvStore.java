@@ -3,7 +3,7 @@ package io.partdb.node.kv;
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.partdb.node.command.proto.CommandProto.Command;
 import io.partdb.node.lease.LeaseRegistry;
-import io.partdb.raft.StateMachine;
+import io.partdb.node.raft.StateMachine;
 import io.partdb.storage.StateStore;
 import io.partdb.storage.StorageConfig;
 import io.partdb.storage.StorageCursor;

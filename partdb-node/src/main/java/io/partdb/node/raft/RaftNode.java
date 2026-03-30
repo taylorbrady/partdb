@@ -14,7 +14,6 @@ import io.partdb.raft.ReadResult;
 import io.partdb.raft.Ready;
 import io.partdb.raft.Role;
 import io.partdb.raft.Snapshot;
-import io.partdb.raft.StateMachine;
 import io.partdb.storage.StorageException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,10 +32,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.IntUnaryOperator;
 
 public final class RaftNode implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(RaftNode.class);
@@ -478,7 +475,6 @@ public final class RaftNode implements AutoCloseable {
         private RaftStorage storage;
         private StateMachine stateMachine;
         private Duration tickInterval = Duration.ofMillis(10);
-        private IntUnaryOperator random;
 
         private Builder() {}
 
@@ -517,18 +513,12 @@ public final class RaftNode implements AutoCloseable {
             return this;
         }
 
-        public Builder random(IntUnaryOperator random) {
-            this.random = random;
-            return this;
-        }
-
         public RaftNode build() {
             if (nodeId == null) throw new IllegalStateException("nodeId is required");
             if (transport == null) throw new IllegalStateException("transport is required");
             if (storage == null) throw new IllegalStateException("storage is required");
             if (stateMachine == null) throw new IllegalStateException("stateMachine is required");
             if (config == null) config = RaftConfig.defaults();
-            if (random == null) random = bound -> ThreadLocalRandom.current().nextInt(bound);
 
             var initialState = storage.initialState();
             var effectiveMembership = initialState.membership() != null
@@ -539,7 +529,7 @@ public final class RaftNode implements AutoCloseable {
                 throw new IllegalStateException("membership is required (either from storage or builder)");
             }
 
-            var raft = new Raft(nodeId, effectiveMembership, config, storage, random);
+            var raft = Raft.builder(nodeId, effectiveMembership, config, storage).build();
 
             var hardState = initialState.hardState() != null ? initialState.hardState() : HardState.INITIAL;
             long snapIndex = storage.firstIndex() > 1 ? storage.firstIndex() - 1 : 0;

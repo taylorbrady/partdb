@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.IntUnaryOperator;
 
 public final class Raft {
@@ -51,8 +52,8 @@ public final class Raft {
     private long leaderContactTicks;
     private Map<String, Long> lastHeardFrom;
 
-    public Raft(String id, Membership membership, RaftConfig config,
-                RaftStorage storage, IntUnaryOperator random) {
+    private Raft(String id, Membership membership, RaftConfig config,
+                 RaftStorage storage, IntUnaryOperator random) {
         if (!membership.isVoter(id) && !membership.isLearner(id)) {
             throw new IllegalArgumentException("Node must be member of cluster");
         }
@@ -82,6 +83,10 @@ public final class Raft {
         this.commitIndex = 0;
         this.lastApplied = 0;
         resetElectionTimeout();
+    }
+
+    public static Builder builder(String id, Membership membership, RaftConfig config, RaftStorage storage) {
+        return new Builder(id, membership, config, storage);
     }
 
     public Ready step(RaftEvent event) {
@@ -775,5 +780,29 @@ public final class Raft {
 
     private void persistHardState(ReadyBuilder builder) {
         builder.setHardState(new HardState(term, votedFor, commitIndex));
+    }
+
+    public static final class Builder {
+        private final String id;
+        private final Membership membership;
+        private final RaftConfig config;
+        private final RaftStorage storage;
+        private IntUnaryOperator random = bound -> ThreadLocalRandom.current().nextInt(bound);
+
+        private Builder(String id, Membership membership, RaftConfig config, RaftStorage storage) {
+            this.id = id;
+            this.membership = membership;
+            this.config = config;
+            this.storage = storage;
+        }
+
+        Builder random(IntUnaryOperator random) {
+            this.random = random;
+            return this;
+        }
+
+        public Raft build() {
+            return new Raft(id, membership, config, storage, random);
+        }
     }
 }

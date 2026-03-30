@@ -4,17 +4,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-public final class InMemoryStorage implements RaftStorage {
+final class InMemoryStorage implements RaftStorage {
     private volatile HardState hardState = HardState.INITIAL;
     private final List<LogEntry> entries = new ArrayList<>();
     private volatile Snapshot snapshot;
     private volatile Membership membership;
 
-    public InMemoryStorage() {
+    InMemoryStorage() {
         this(null);
     }
 
-    public InMemoryStorage(Membership initialMembership) {
+    InMemoryStorage(Membership initialMembership) {
         this.membership = initialMembership;
     }
 

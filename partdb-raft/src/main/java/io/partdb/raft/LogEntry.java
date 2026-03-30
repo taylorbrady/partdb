@@ -1,5 +1,7 @@
 package io.partdb.raft;
 
+import java.util.Objects;
+
 public sealed interface LogEntry {
     long index();
     long term();
@@ -12,6 +14,13 @@ public sealed interface LogEntry {
             if (term < 0) {
                 throw new IllegalArgumentException("term must be non-negative");
             }
+            Objects.requireNonNull(data, "data must not be null");
+            data = data.clone();
+        }
+
+        @Override
+        public byte[] data() {
+            return data.clone();
         }
     }
 

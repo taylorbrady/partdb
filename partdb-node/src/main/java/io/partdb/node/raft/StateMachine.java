@@ -1,4 +1,4 @@
-package io.partdb.raft;
+package io.partdb.node.raft;
 
 public interface StateMachine {
     void apply(long index, byte[] data);

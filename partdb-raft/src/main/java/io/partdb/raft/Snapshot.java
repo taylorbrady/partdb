@@ -1,5 +1,7 @@
 package io.partdb.raft;
 
+import java.util.Objects;
+
 public record Snapshot(long index, long term, Membership membership, byte[] data) {
 
     public Snapshot {
@@ -12,5 +14,12 @@ public record Snapshot(long index, long term, Membership membership, byte[] data
         if (membership == null) {
             throw new IllegalArgumentException("membership must not be null");
         }
+        Objects.requireNonNull(data, "data must not be null");
+        data = data.clone();
+    }
+
+    @Override
+    public byte[] data() {
+        return data.clone();
     }
 }
