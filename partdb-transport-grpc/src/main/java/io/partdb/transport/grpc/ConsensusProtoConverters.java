@@ -1,15 +1,10 @@
 package io.partdb.transport.grpc;
 
 import com.google.protobuf.ByteString;
-import io.partdb.node.NodeMembership;
-import io.partdb.node.transport.ConsensusLogEntry;
 import io.partdb.node.transport.ConsensusMessage;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 
-import java.util.List;
-import java.util.Set;
-
-final class ProtoConverters {
+final class ConsensusProtoConverters {
 
     static ConsensusMessage.RequestVote fromProto(RaftProto.RequestVoteRequest proto) {
         return new ConsensusMessage.RequestVote(
@@ -76,8 +71,8 @@ final class ProtoConverters {
     }
 
     static ConsensusMessage.AppendEntries fromProto(RaftProto.AppendEntriesRequest proto) {
-        List<ConsensusLogEntry> entries = proto.getEntriesList().stream()
-            .map(ProtoConverters::fromProto)
+        var entries = proto.getEntriesList().stream()
+            .map(ConsensusModelProtoConverters::fromProto)
             .toList();
 
         return new ConsensusMessage.AppendEntries(
@@ -98,8 +93,8 @@ final class ProtoConverters {
             .setPrevLogTerm(msg.prevLogTerm())
             .setLeaderCommit(msg.leaderCommit());
 
-        for (ConsensusLogEntry entry : msg.entries()) {
-            builder.addEntries(toProto(entry));
+        for (var entry : msg.entries()) {
+            builder.addEntries(ConsensusModelProtoConverters.toProto(entry));
         }
 
         return builder.build();
@@ -161,61 +156,13 @@ final class ProtoConverters {
             .build();
     }
 
-    static ConsensusLogEntry fromProto(RaftProto.LogEntry proto) {
-        return switch (proto.getEntryCase()) {
-            case DATA -> new ConsensusLogEntry.Data(
-                proto.getIndex(),
-                proto.getTerm(),
-                proto.getData().toByteArray()
-            );
-            case NO_OP -> new ConsensusLogEntry.NoOp(
-                proto.getIndex(),
-                proto.getTerm()
-            );
-            case CONFIG -> new ConsensusLogEntry.Config(
-                proto.getIndex(),
-                proto.getTerm(),
-                fromProto(proto.getConfig())
-            );
-            case ENTRY_NOT_SET -> throw new IllegalArgumentException("LogEntry type not set");
-        };
-    }
-
-    static RaftProto.LogEntry toProto(ConsensusLogEntry entry) {
-        var builder = RaftProto.LogEntry.newBuilder()
-            .setIndex(entry.index())
-            .setTerm(entry.term());
-
-        switch (entry) {
-            case ConsensusLogEntry.Data data -> builder.setData(ByteString.copyFrom(data.data()));
-            case ConsensusLogEntry.NoOp _ -> builder.setNoOp(true);
-            case ConsensusLogEntry.Config config -> builder.setConfig(toProto(config.membership()));
-        }
-
-        return builder.build();
-    }
-
-    static NodeMembership fromProto(RaftProto.Membership proto) {
-        return new NodeMembership(
-            Set.copyOf(proto.getVotersList()),
-            Set.copyOf(proto.getLearnersList())
-        );
-    }
-
-    static RaftProto.Membership toProto(NodeMembership membership) {
-        return RaftProto.Membership.newBuilder()
-            .addAllVoters(membership.voters())
-            .addAllLearners(membership.learners())
-            .build();
-    }
-
     static RaftProto.SnapshotHeader toSnapshotHeader(ConsensusMessage.InstallSnapshot msg) {
         return RaftProto.SnapshotHeader.newBuilder()
             .setTerm(msg.term())
             .setLeaderId(msg.leaderId())
             .setLastIncludedIndex(msg.lastIncludedIndex())
             .setLastIncludedTerm(msg.lastIncludedTerm())
-            .setMembership(toProto(msg.membership()))
+            .setMembership(ConsensusModelProtoConverters.toProto(msg.membership()))
             .setTotalSize(msg.data().length)
             .build();
     }
@@ -226,7 +173,7 @@ final class ProtoConverters {
             header.getLeaderId(),
             header.getLastIncludedIndex(),
             header.getLastIncludedTerm(),
-            fromProto(header.getMembership()),
+            ConsensusModelProtoConverters.fromProto(header.getMembership()),
             data
         );
     }

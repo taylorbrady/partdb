@@ -1,7 +1,7 @@
 package io.partdb.transport.grpc;
 
 import io.grpc.Server;
-import io.grpc.ServerBuilder;
+import io.grpc.netty.NettyServerBuilder;
 import io.partdb.node.PartDbNode;
 
 import java.io.IOException;
@@ -20,7 +20,7 @@ final class GrpcServer implements AutoCloseable {
         GrpcServerConfig config
     ) {
         this.config = config;
-        this.server = ServerBuilder.forPort(config.port())
+        this.server = NettyServerBuilder.forPort(config.port())
             .addService(new KvServiceImpl(node, config))
             .addService(new ClusterServiceImpl(node, raftPeerAddresses, selfRaftAddress))
             .executor(Executors.newVirtualThreadPerTaskExecutor())

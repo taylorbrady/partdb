@@ -36,12 +36,12 @@ public final class PartDbServer implements AutoCloseable {
     }
 
     private ConsensusTransport createDefaultTransport() {
-        var transportConfig = GrpcRaftTransportConfig.create(
+        var transportConfig = GrpcConsensusTransportConfig.create(
             config.nodeId(),
             config.raftPort(),
             config.raftPeerAddresses()
         );
-        return new GrpcRaftTransport(transportConfig);
+        return new GrpcConsensusTransport(transportConfig);
     }
 
     public void start() throws IOException {

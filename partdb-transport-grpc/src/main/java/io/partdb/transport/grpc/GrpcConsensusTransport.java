@@ -7,11 +7,11 @@ import io.grpc.ClientCall;
 import io.grpc.ClientInterceptor;
 import io.grpc.ForwardingClientCall;
 import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 import io.grpc.Server;
-import io.grpc.ServerBuilder;
+import io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
 import io.partdb.node.transport.ConsensusMessage;
 import io.partdb.node.transport.ConsensusTransport;
@@ -28,26 +28,26 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-final class GrpcRaftTransport implements ConsensusTransport {
+final class GrpcConsensusTransport implements ConsensusTransport {
 
-    private static final Logger log = LoggerFactory.getLogger(GrpcRaftTransport.class);
+    private static final Logger log = LoggerFactory.getLogger(GrpcConsensusTransport.class);
 
-    private final GrpcRaftTransportConfig config;
+    private final GrpcConsensusTransportConfig config;
     private final Map<String, ManagedChannel> channels = new ConcurrentHashMap<>();
     private final Map<String, RaftServiceGrpc.RaftServiceStub> stubs = new ConcurrentHashMap<>();
 
     private Server server;
 
-    GrpcRaftTransport(GrpcRaftTransportConfig config) {
+    GrpcConsensusTransport(GrpcConsensusTransportConfig config) {
         this.config = config;
     }
 
     @Override
     public void start(RpcHandler handler) {
         try {
-            server = ServerBuilder.forPort(config.port())
-                .addService(new RaftServiceImpl(handler))
-                .intercept(RaftServiceImpl.senderIdInterceptor())
+            server = NettyServerBuilder.forPort(config.port())
+                .addService(new ConsensusServiceImpl(handler))
+                .intercept(ConsensusServiceImpl.senderIdInterceptor())
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .build()
                 .start();
@@ -134,7 +134,7 @@ final class GrpcRaftTransport implements ConsensusTransport {
                         next.newCall(method, callOptions)) {
                     @Override
                     public void start(Listener<RespT> responseListener, Metadata headers) {
-                        headers.put(RaftServiceImpl.SENDER_ID_KEY, config.localNodeId());
+                        headers.put(ConsensusServiceImpl.SENDER_ID_KEY, config.localNodeId());
                         super.start(responseListener, headers);
                     }
                 };
@@ -147,7 +147,7 @@ final class GrpcRaftTransport implements ConsensusTransport {
             String[] parts = raftAddress.split(":");
             String host = parts[0];
             int port = Integer.parseInt(parts[1]);
-            return ManagedChannelBuilder.forAddress(host, port)
+            return NettyChannelBuilder.forAddress(host, port)
                 .usePlaintext()
                 .build();
         });
@@ -157,10 +157,10 @@ final class GrpcRaftTransport implements ConsensusTransport {
             RaftServiceGrpc.RaftServiceStub stub,
             ConsensusMessage.RequestVote msg) {
         var future = new CompletableFuture<ConsensusMessage.Response>();
-        stub.requestVote(ProtoConverters.toProto(msg), new StreamObserver<>() {
+        stub.requestVote(ConsensusProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.RequestVoteResponse response) {
-                future.complete(ProtoConverters.fromProto(response));
+                future.complete(ConsensusProtoConverters.fromProto(response));
             }
 
             @Override
@@ -178,10 +178,10 @@ final class GrpcRaftTransport implements ConsensusTransport {
             RaftServiceGrpc.RaftServiceStub stub,
             ConsensusMessage.PreVote msg) {
         var future = new CompletableFuture<ConsensusMessage.Response>();
-        stub.preVote(ProtoConverters.toProto(msg), new StreamObserver<>() {
+        stub.preVote(ConsensusProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.PreVoteResponse response) {
-                future.complete(ProtoConverters.fromProto(response));
+                future.complete(ConsensusProtoConverters.fromProto(response));
             }
 
             @Override
@@ -199,10 +199,10 @@ final class GrpcRaftTransport implements ConsensusTransport {
             RaftServiceGrpc.RaftServiceStub stub,
             ConsensusMessage.AppendEntries msg) {
         var future = new CompletableFuture<ConsensusMessage.Response>();
-        stub.appendEntries(ProtoConverters.toProto(msg), new StreamObserver<>() {
+        stub.appendEntries(ConsensusProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.AppendEntriesResponse response) {
-                future.complete(ProtoConverters.fromProto(response));
+                future.complete(ConsensusProtoConverters.fromProto(response));
             }
 
             @Override
@@ -224,7 +224,7 @@ final class GrpcRaftTransport implements ConsensusTransport {
         var responseObserver = new StreamObserver<RaftProto.InstallSnapshotResponse>() {
             @Override
             public void onNext(RaftProto.InstallSnapshotResponse response) {
-                future.complete(ProtoConverters.fromProto(response));
+                future.complete(ConsensusProtoConverters.fromProto(response));
             }
 
             @Override
@@ -239,7 +239,7 @@ final class GrpcRaftTransport implements ConsensusTransport {
         var requestObserver = stub.installSnapshot(responseObserver);
 
         requestObserver.onNext(RaftProto.InstallSnapshotRequest.newBuilder()
-            .setHeader(ProtoConverters.toSnapshotHeader(msg))
+            .setHeader(ConsensusProtoConverters.toSnapshotHeader(msg))
             .build());
 
         byte[] data = msg.data();
@@ -267,10 +267,10 @@ final class GrpcRaftTransport implements ConsensusTransport {
             RaftServiceGrpc.RaftServiceStub stub,
             ConsensusMessage.ReadIndex msg) {
         var future = new CompletableFuture<ConsensusMessage.Response>();
-        stub.readIndex(ProtoConverters.toProto(msg), new StreamObserver<>() {
+        stub.readIndex(ConsensusProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.ReadIndexResponse response) {
-                future.complete(ProtoConverters.fromProto(response));
+                future.complete(ConsensusProtoConverters.fromProto(response));
             }
 
             @Override

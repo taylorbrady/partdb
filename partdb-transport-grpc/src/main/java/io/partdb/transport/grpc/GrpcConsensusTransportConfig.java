@@ -2,7 +2,7 @@ package io.partdb.transport.grpc;
 
 import java.util.Map;
 
-record GrpcRaftTransportConfig(
+record GrpcConsensusTransportConfig(
     String localNodeId,
     int port,
     Map<String, String> raftPeerAddresses,
@@ -10,7 +10,7 @@ record GrpcRaftTransportConfig(
 ) {
     private static final int DEFAULT_CHUNK_SIZE = 1024 * 1024;
 
-    public GrpcRaftTransportConfig {
+    public GrpcConsensusTransportConfig {
         if (localNodeId == null || localNodeId.isEmpty()) {
             throw new IllegalArgumentException("localNodeId is required");
         }
@@ -23,10 +23,10 @@ record GrpcRaftTransportConfig(
         }
     }
 
-    public static GrpcRaftTransportConfig create(
+    public static GrpcConsensusTransportConfig create(
             String localNodeId,
             int port,
             Map<String, String> raftPeerAddresses) {
-        return new GrpcRaftTransportConfig(localNodeId, port, raftPeerAddresses, DEFAULT_CHUNK_SIZE);
+        return new GrpcConsensusTransportConfig(localNodeId, port, raftPeerAddresses, DEFAULT_CHUNK_SIZE);
     }
 }

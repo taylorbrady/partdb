@@ -17,16 +17,16 @@ import org.slf4j.LoggerFactory;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
-final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
+final class ConsensusServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
 
-    private static final Logger log = LoggerFactory.getLogger(RaftServiceImpl.class);
+    private static final Logger log = LoggerFactory.getLogger(ConsensusServiceImpl.class);
     static final Metadata.Key<String> SENDER_ID_KEY =
         Metadata.Key.of("x-raft-sender-id", Metadata.ASCII_STRING_MARSHALLER);
     static final Context.Key<String> SENDER_ID_CONTEXT_KEY = Context.key("sender-id");
 
     private final ConsensusTransport.RpcHandler handler;
 
-    RaftServiceImpl(ConsensusTransport.RpcHandler handler) {
+    ConsensusServiceImpl(ConsensusTransport.RpcHandler handler) {
         this.handler = handler;
     }
 
@@ -53,7 +53,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void requestVote(RaftProto.RequestVoteRequest request,
                             StreamObserver<RaftProto.RequestVoteResponse> responseObserver) {
         String from = getSenderId();
-        ConsensusMessage.RequestVote msg = ProtoConverters.fromProto(request);
+        ConsensusMessage.RequestVote msg = ConsensusProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -66,7 +66,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                     responseObserver.onError(ex);
                 } else {
                     var resp = (ConsensusMessage.RequestVoteResponse) response;
-                    responseObserver.onNext(ProtoConverters.toProto(resp));
+                    responseObserver.onNext(ConsensusProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }
             });
@@ -76,7 +76,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void preVote(RaftProto.PreVoteRequest request,
                         StreamObserver<RaftProto.PreVoteResponse> responseObserver) {
         String from = getSenderId();
-        ConsensusMessage.PreVote msg = ProtoConverters.fromProto(request);
+        ConsensusMessage.PreVote msg = ConsensusProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -89,7 +89,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                     responseObserver.onError(ex);
                 } else {
                     var resp = (ConsensusMessage.PreVoteResponse) response;
-                    responseObserver.onNext(ProtoConverters.toProto(resp));
+                    responseObserver.onNext(ConsensusProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }
             });
@@ -99,7 +99,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void appendEntries(RaftProto.AppendEntriesRequest request,
                               StreamObserver<RaftProto.AppendEntriesResponse> responseObserver) {
         String from = getSenderId();
-        ConsensusMessage.AppendEntries msg = ProtoConverters.fromProto(request);
+        ConsensusMessage.AppendEntries msg = ConsensusProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -112,7 +112,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                     responseObserver.onError(ex);
                 } else {
                     var resp = (ConsensusMessage.AppendEntriesResponse) response;
-                    responseObserver.onNext(ProtoConverters.toProto(resp));
+                    responseObserver.onNext(ConsensusProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }
             });
@@ -157,7 +157,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                     return;
                 }
 
-                ConsensusMessage.InstallSnapshot snapshot = ProtoConverters.fromSnapshotHeader(
+                ConsensusMessage.InstallSnapshot snapshot = ConsensusProtoConverters.fromSnapshotHeader(
                     header,
                     dataBuffer.toByteArray()
                 );
@@ -173,7 +173,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                             responseObserver.onError(ex);
                         } else {
                             var resp = (ConsensusMessage.InstallSnapshotResponse) response;
-                            responseObserver.onNext(ProtoConverters.toProto(resp));
+                            responseObserver.onNext(ConsensusProtoConverters.toProto(resp));
                             responseObserver.onCompleted();
                         }
                     });
@@ -185,7 +185,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void readIndex(RaftProto.ReadIndexRequest request,
                           StreamObserver<RaftProto.ReadIndexResponse> responseObserver) {
         String from = getSenderId();
-        ConsensusMessage.ReadIndex msg = ProtoConverters.fromProto(request);
+        ConsensusMessage.ReadIndex msg = ConsensusProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -198,7 +198,7 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                     responseObserver.onError(ex);
                 } else {
                     var resp = (ConsensusMessage.ReadIndexResponse) response;
-                    responseObserver.onNext(ProtoConverters.toProto(resp));
+                    responseObserver.onNext(ConsensusProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }
             });
