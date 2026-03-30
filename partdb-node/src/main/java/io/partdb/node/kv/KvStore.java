@@ -1,36 +1,43 @@
 package io.partdb.node.kv;
 
 import com.google.protobuf.InvalidProtocolBufferException;
-import io.partdb.raft.StateMachine;
 import io.partdb.node.command.proto.CommandProto.Command;
 import io.partdb.node.lease.LeaseRegistry;
-import io.partdb.storage.StorageEntry;
-import io.partdb.storage.LSMConfig;
-import io.partdb.storage.LSMTree;
+import io.partdb.raft.StateMachine;
+import io.partdb.storage.StateStore;
+import io.partdb.storage.StorageConfig;
+import io.partdb.storage.StorageCursor;
+import io.partdb.storage.StorageSnapshot;
+import io.partdb.storage.VersionedEntry;
 import io.partdb.storage.Slice;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
+import java.util.Iterator;
+import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.Set;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 public final class KvStore implements StateMachine, AutoCloseable {
 
-    private final LSMTree store;
+    private final StateStore store;
     private final LeaseRegistry leaseRegistry;
     private volatile long lastApplied;
 
-    private KvStore(LSMTree store, LeaseRegistry leaseRegistry) {
+    private KvStore(StateStore store, LeaseRegistry leaseRegistry) {
         this.store = store;
         this.leaseRegistry = leaseRegistry;
         this.lastApplied = 0;
     }
 
-    public static KvStore open(Path dataDirectory, LSMConfig config) {
-        LSMTree store = LSMTree.open(dataDirectory, config);
+    public static KvStore open(Path dataDirectory, StorageConfig config) {
+        StateStore store = StateStore.open(dataDirectory, config);
         LeaseRegistry leaseRegistry = new LeaseRegistry();
         return new KvStore(store, leaseRegistry);
     }
@@ -49,20 +56,20 @@ public final class KvStore implements StateMachine, AutoCloseable {
         switch (command.getOpCase()) {
             case PUT -> {
                 var put = command.getPut();
-                Slice key = Slice.of(put.getKey().toByteArray());
+                byte[] key = put.getKey().toByteArray();
                 byte[] value = put.getValue().toByteArray();
                 long leaseId = put.getLeaseId();
                 StoredValue stored = new StoredValue(value, index, leaseId);
-                store.put(key, Slice.of(stored.encode()), index);
+                store.put(key, stored.encode(), index);
                 if (leaseId != 0) {
-                    leaseRegistry.attachKey(leaseId, key);
+                    leaseRegistry.attachKey(leaseId, Slice.of(key));
                 }
             }
             case DELETE -> {
                 var delete = command.getDelete();
                 Slice key = Slice.of(delete.getKey().toByteArray());
                 detachKeyFromLease(key);
-                store.delete(key, index);
+                store.delete(key.toByteArray(), index);
             }
             case GRANT_LEASE -> {
                 var grant = command.getGrantLease();
@@ -72,7 +79,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
                 var revoke = command.getRevokeLease();
                 Set<Slice> keys = leaseRegistry.getKeys(revoke.getLeaseId());
                 for (Slice key : keys) {
-                    store.delete(key, index);
+                    store.delete(key.toByteArray(), index);
                 }
                 leaseRegistry.revoke(revoke.getLeaseId());
             }
@@ -85,9 +92,9 @@ public final class KvStore implements StateMachine, AutoCloseable {
     }
 
     private void detachKeyFromLease(Slice key) {
-        Optional<StorageEntry> existing = store.get(key);
+        Optional<VersionedEntry> existing = store.get(key.toByteArray());
         if (existing.isPresent()) {
-            StoredValue stored = StoredValue.decode(existing.get().value().toByteArray());
+            StoredValue stored = StoredValue.decode(existing.get().value());
             if (stored.leaseId() != 0) {
                 leaseRegistry.detachKey(stored.leaseId(), key);
             }
@@ -95,11 +102,11 @@ public final class KvStore implements StateMachine, AutoCloseable {
     }
 
     public Optional<byte[]> get(byte[] keyBytes) {
-        Optional<StorageEntry> raw = store.get(Slice.of(keyBytes));
+        Optional<VersionedEntry> raw = store.get(keyBytes);
         if (raw.isEmpty()) {
             return Optional.empty();
         }
-        StoredValue stored = StoredValue.decode(raw.get().value().toByteArray());
+        StoredValue stored = StoredValue.decode(raw.get().value());
         if (stored.leaseId() != 0 && !leaseRegistry.isLeaseActive(stored.leaseId())) {
             return Optional.empty();
         }
@@ -107,22 +114,42 @@ public final class KvStore implements StateMachine, AutoCloseable {
     }
 
     public Stream<KvEntry> scan(byte[] startKeyBytes, byte[] endKeyBytes) {
-        Slice startKey = startKeyBytes != null ? Slice.of(startKeyBytes) : null;
-        Slice endKey = endKeyBytes != null ? Slice.of(endKeyBytes) : null;
-        Stream<StorageEntry> raw = store.scan(startKey, endKey);
+        StorageCursor cursor = store.scan(startKeyBytes, endKeyBytes);
 
-        return raw
-            .<KvEntry>mapMulti((entry, consumer) -> {
-                StoredValue stored = StoredValue.decode(entry.value().toByteArray());
-                if (stored.leaseId() == 0 || leaseRegistry.isLeaseActive(stored.leaseId())) {
-                    consumer.accept(new KvEntry(
-                        entry.key().toByteArray(),
-                        stored.value(),
-                        stored.version(),
-                        stored.leaseId()
-                    ));
+        Iterator<KvEntry> iterator = new Iterator<>() {
+            private KvEntry next = advance();
+
+            private KvEntry advance() {
+                while (cursor.hasNext()) {
+                    VersionedEntry entry = cursor.next();
+                    StoredValue stored = StoredValue.decode(entry.value());
+                    if (stored.leaseId() == 0 || leaseRegistry.isLeaseActive(stored.leaseId())) {
+                        return new KvEntry(entry.key(), stored.value(), stored.version(), stored.leaseId());
+                    }
                 }
-            });
+                return null;
+            }
+
+            @Override
+            public boolean hasNext() {
+                return next != null;
+            }
+
+            @Override
+            public KvEntry next() {
+                if (next == null) {
+                    throw new NoSuchElementException();
+                }
+                KvEntry current = next;
+                next = advance();
+                return current;
+            }
+        };
+
+        return StreamSupport.stream(
+            Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL),
+            false
+        ).onClose(cursor::close);
     }
 
     public record KvEntry(byte[] key, byte[] value, long version, long leaseId) {}
@@ -130,7 +157,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
     @Override
     public byte[] snapshot() {
         try {
-            byte[] storageData = store.checkpoint();
+            byte[] storageData = store.snapshot().bytes();
             byte[] leaseData = leaseRegistry.toSnapshot();
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -161,7 +188,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         byte[] leaseData = new byte[leaseLen];
         buffer.get(leaseData);
 
-        store.restoreFromCheckpoint(storageData);
+        store.restore(new StorageSnapshot(storageData));
         leaseRegistry.restoreSnapshot(leaseData);
 
         lastApplied = index;

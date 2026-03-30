@@ -2,7 +2,7 @@ package io.partdb.storage;
 
 import java.util.Objects;
 
-public record LSMConfig(
+record LSMConfig(
     long memtableMaxSizeBytes,
     int blockSize,
     double bloomFilterFalsePositiveRate,

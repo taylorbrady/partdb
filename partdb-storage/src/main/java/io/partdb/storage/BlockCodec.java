@@ -5,7 +5,7 @@ import java.util.zip.DataFormatException;
 import java.util.zip.Deflater;
 import java.util.zip.Inflater;
 
-public enum BlockCodec {
+enum BlockCodec {
     NONE((byte) 0) {
         @Override
         public byte[] compress(byte[] input) {

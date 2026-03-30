@@ -33,7 +33,7 @@ public final class PartDbNode implements AutoCloseable {
 
         this.kvStore = KvStore.open(
             config.dataDirectory().resolve("db"),
-            config.storeConfig()
+            config.storageConfig()
         );
 
         var membership = config.membership();

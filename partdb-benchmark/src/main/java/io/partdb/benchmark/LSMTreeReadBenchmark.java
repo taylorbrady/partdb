@@ -1,9 +1,8 @@
 package io.partdb.benchmark;
 
-import io.partdb.storage.StorageEntry;
-import io.partdb.storage.LSMConfig;
-import io.partdb.storage.LSMTree;
-import io.partdb.storage.Slice;
+import io.partdb.storage.StateStore;
+import io.partdb.storage.StorageConfig;
+import io.partdb.storage.VersionedEntry;
 import org.openjdk.jmh.annotations.*;
 
 import java.io.IOException;
@@ -29,52 +28,52 @@ public class LSMTreeReadBenchmark {
     private int keyCount;
 
     private Path tempDir;
-    private LSMTree tree;
-    private Slice[] existingKeys;
+    private StateStore store;
+    private byte[][] existingKeys;
+    private byte[] valueBytes;
 
     @Setup(Level.Trial)
     public void setup() throws IOException {
         tempDir = Files.createTempDirectory("lsm-read-bench");
-        tree = LSMTree.open(tempDir, LSMConfig.defaults());
-        existingKeys = new Slice[keyCount];
+        store = StateStore.open(tempDir, StorageConfig.defaults());
+        existingKeys = new byte[keyCount][];
 
-        byte[] valueBytes = new byte[VALUE_SIZE];
+        valueBytes = new byte[VALUE_SIZE];
         ThreadLocalRandom.current().nextBytes(valueBytes);
-        Slice value = Slice.of(valueBytes);
 
         for (int i = 0; i < keyCount; i++) {
-            Slice key = formatKey(i);
+            byte[] key = formatKey(i);
             existingKeys[i] = key;
-            tree.put(key, value, i);
+            store.put(key, valueBytes, i);
         }
 
-        tree.checkpoint();
+        store.snapshot();
     }
 
     @TearDown(Level.Trial)
     public void tearDown() throws IOException {
-        tree.close();
+        store.close();
         deleteDirectory(tempDir);
     }
 
     @Benchmark
-    public Optional<StorageEntry> pointGet() {
+    public Optional<VersionedEntry> pointGet() {
         int index = ThreadLocalRandom.current().nextInt(existingKeys.length);
-        return tree.get(existingKeys[index]);
+        return store.get(existingKeys[index]);
     }
 
     @Benchmark
-    public Optional<StorageEntry> pointGetMissing() {
-        Slice key = formatMissingKey(ThreadLocalRandom.current().nextInt());
-        return tree.get(key);
+    public Optional<VersionedEntry> pointGetMissing() {
+        byte[] key = formatMissingKey(ThreadLocalRandom.current().nextInt());
+        return store.get(key);
     }
 
-    private static Slice formatKey(long keyNum) {
-        return Slice.of(("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8));
+    private static byte[] formatKey(long keyNum) {
+        return ("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8);
     }
 
-    private static Slice formatMissingKey(int keyNum) {
-        return Slice.of(("missing" + String.format("%012d", keyNum)).getBytes(StandardCharsets.UTF_8));
+    private static byte[] formatMissingKey(int keyNum) {
+        return ("missing" + String.format("%012d", keyNum)).getBytes(StandardCharsets.UTF_8);
     }
 
     private static void deleteDirectory(Path dir) throws IOException {

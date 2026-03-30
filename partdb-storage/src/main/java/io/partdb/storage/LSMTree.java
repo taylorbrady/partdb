@@ -23,7 +23,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
-public final class LSMTree implements AutoCloseable {
+final class LSMTree implements AutoCloseable {
 
     private static final int MAX_IMMUTABLE_MEMTABLES = 4;
 
@@ -49,7 +49,7 @@ public final class LSMTree implements AutoCloseable {
         this.closed = new AtomicBoolean(false);
     }
 
-    public static LSMTree open(Path dataDirectory, LSMConfig config) {
+    static LSMTree open(Path dataDirectory, LSMConfig config) {
         try {
             Files.createDirectories(dataDirectory);
             SSTableStore sstableStore = SSTableStore.open(dataDirectory, config);
@@ -59,34 +59,28 @@ public final class LSMTree implements AutoCloseable {
         }
     }
 
-    public void put(Slice key, Slice value, long revision) {
+    void put(Slice key, Slice value, long revision) {
         Mutation mutation = new Mutation.Put(key, value, revision);
         applyMutation(mutation);
     }
 
-    public void delete(Slice key, long revision) {
+    void delete(Slice key, long revision) {
         Mutation mutation = new Mutation.Tombstone(key, revision);
         applyMutation(mutation);
     }
 
-    public Optional<StorageEntry> get(Slice key) {
+    Optional<StorageEntry> get(Slice key) {
         Optional<Mutation> result = lookupMutation(key, activeMemtable.get(), immutableMemtables);
         if (result.isPresent()) {
             return resolveEntry(result.get());
         }
 
         try (SSTableView readers = sstableStore.acquire()) {
-            for (SSTable sstable : readers.all()) {
-                result = sstable.get(key);
-                if (result.isPresent()) {
-                    return resolveEntry(result.get());
-                }
-            }
-            return Optional.empty();
+            return readers.get(key).flatMap(this::resolveEntry);
         }
     }
 
-    public Stream<StorageEntry> scan(Slice startKey, Slice endKey) {
+    Stream<StorageEntry> scan(Slice startKey, Slice endKey) {
         List<Iterator<Mutation>> iterators = new ArrayList<>();
 
         iterators.add(activeMemtable.get().scan(startKey, endKey));
@@ -94,7 +88,7 @@ public final class LSMTree implements AutoCloseable {
         addImmutableMemtableIterators(iterators, startKey, endKey, immutableMemtables);
 
         SSTableView readers = sstableStore.acquire();
-        for (SSTable sstable : readers.all()) {
+        for (SSTable sstable : readers.scanTables(startKey, endKey)) {
             SSTable.Scan scan = sstable.scan();
             if (startKey != null) {
                 scan = scan.from(startKey);
@@ -141,12 +135,12 @@ public final class LSMTree implements AutoCloseable {
             .onClose(readers::close);
     }
 
-    public byte[] checkpoint() {
+    byte[] checkpoint() {
         flush();
         return sstableStore.checkpoint();
     }
 
-    public void restoreFromCheckpoint(byte[] data) {
+    void restoreFromCheckpoint(byte[] data) {
         rotationLock.lock();
         try {
             awaitPendingFlushes();

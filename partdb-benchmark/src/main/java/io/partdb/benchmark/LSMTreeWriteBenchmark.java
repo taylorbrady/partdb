@@ -1,8 +1,7 @@
 package io.partdb.benchmark;
 
-import io.partdb.storage.LSMConfig;
-import io.partdb.storage.LSMTree;
-import io.partdb.storage.Slice;
+import io.partdb.storage.StateStore;
+import io.partdb.storage.StorageConfig;
 import org.openjdk.jmh.annotations.*;
 
 import java.io.IOException;
@@ -26,43 +25,42 @@ public class LSMTreeWriteBenchmark {
     private int valueSize;
 
     private Path tempDir;
-    private LSMTree tree;
+    private StateStore store;
     private AtomicLong keyCounter;
     private AtomicLong revisionCounter;
-    private Slice valueTemplate;
+    private byte[] valueTemplate;
 
     @Setup(Level.Trial)
     public void setup() throws IOException {
         tempDir = Files.createTempDirectory("lsm-write-bench");
-        tree = LSMTree.open(tempDir, LSMConfig.defaults());
+        store = StateStore.open(tempDir, StorageConfig.defaults());
         keyCounter = new AtomicLong(0);
         revisionCounter = new AtomicLong(0);
         byte[] valueBytes = new byte[valueSize];
         ThreadLocalRandom.current().nextBytes(valueBytes);
-        valueTemplate = Slice.of(valueBytes);
+        valueTemplate = valueBytes;
     }
 
     @TearDown(Level.Trial)
     public void tearDown() throws IOException {
-        tree.close();
+        store.close();
         deleteDirectory(tempDir);
     }
 
     @Benchmark
     public void putSequential() {
         long seq = keyCounter.incrementAndGet();
-        Slice key = formatKey(seq);
+        byte[] key = formatKey(seq);
         long revision = revisionCounter.incrementAndGet();
-        tree.put(key, valueTemplate, revision);
+        store.put(key, valueTemplate, revision);
     }
 
     @Benchmark
     public void putRandom() {
         byte[] keyBytes = new byte[16];
         ThreadLocalRandom.current().nextBytes(keyBytes);
-        Slice key = Slice.of(keyBytes);
         long revision = revisionCounter.incrementAndGet();
-        tree.put(key, valueTemplate, revision);
+        store.put(keyBytes, valueTemplate, revision);
     }
 
     @Benchmark
@@ -71,8 +69,8 @@ public class LSMTreeWriteBenchmark {
         long base = keyCounter.addAndGet(10);
         long revision = revisionCounter.incrementAndGet();
         for (int i = 0; i < 10; i++) {
-            Slice key = formatKey(base + i);
-            tree.put(key, valueTemplate, revision + i);
+            byte[] key = formatKey(base + i);
+            store.put(key, valueTemplate, revision + i);
         }
     }
 
@@ -82,13 +80,13 @@ public class LSMTreeWriteBenchmark {
         long base = keyCounter.addAndGet(100);
         long revision = revisionCounter.incrementAndGet();
         for (int i = 0; i < 100; i++) {
-            Slice key = formatKey(base + i);
-            tree.put(key, valueTemplate, revision + i);
+            byte[] key = formatKey(base + i);
+            store.put(key, valueTemplate, revision + i);
         }
     }
 
-    private static Slice formatKey(long keyNum) {
-        return Slice.of(("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8));
+    private static byte[] formatKey(long keyNum) {
+        return ("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8);
     }
 
     private static void deleteDirectory(Path dir) throws IOException {

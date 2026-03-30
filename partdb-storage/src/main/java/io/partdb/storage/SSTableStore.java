@@ -13,11 +13,11 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
@@ -86,17 +86,12 @@ final class SSTableStore implements AutoCloseable {
                 : NoOpBlockCache.INSTANCE;
 
             Manifest manifest = Manifest.readFrom(directory);
+            List<Long> discoveredIds = discoverSSTableIds(directory);
+            validateManifestState(manifest, discoveredIds);
 
-            List<SSTable> sstables;
-            if (manifest.sstables().isEmpty()) {
-                sstables = discoverSSTables(directory, blockCache);
-                if (!sstables.isEmpty()) {
-                    manifest = buildManifestFromSSTables(sstables);
-                    manifest.writeTo(directory);
-                }
-            } else {
-                sstables = loadSSTablesFromManifest(directory, blockCache, manifest);
-            }
+            List<SSTable> sstables = manifest.sstables().isEmpty()
+                ? List.of()
+                : loadSSTablesFromManifest(directory, blockCache, manifest);
 
             return new SSTableStore(
                 directory,
@@ -345,38 +340,19 @@ final class SSTableStore implements AutoCloseable {
         }
     }
 
-    private static List<SSTable> discoverSSTables(Path directory, BlockCache cache) throws IOException {
+    private static List<Long> discoverSSTableIds(Path directory) throws IOException {
         if (!Files.exists(directory)) {
             return List.of();
         }
 
         try (Stream<Path> paths = Files.list(directory)) {
-            List<Long> ids = paths
+            return paths
                 .map(p -> p.getFileName().toString())
                 .map(SSTABLE_PATTERN::matcher)
                 .filter(Matcher::matches)
                 .map(m -> Long.parseLong(m.group(1)))
-                .sorted(Comparator.reverseOrder())
                 .toList();
-
-            List<SSTable> sstables = new ArrayList<>();
-            for (long id : ids) {
-                sstables.add(SSTable.open(id, 0, directory.resolve("%06d.sst".formatted(id)), cache));
-            }
-            return sstables;
         }
-    }
-
-    private static Manifest buildManifestFromSSTables(List<SSTable> sstables) {
-        List<SSTableDescriptor> descriptors = new ArrayList<>();
-        long maxId = 0;
-
-        for (SSTable reader : sstables) {
-            maxId = Math.max(maxId, reader.id());
-            descriptors.add(reader.descriptor());
-        }
-
-        return new Manifest(maxId, descriptors);
     }
 
     private static List<SSTable> loadSSTablesFromManifest(
@@ -384,17 +360,42 @@ final class SSTableStore implements AutoCloseable {
         BlockCache cache,
         Manifest manifest
     ) {
-        List<SSTableDescriptor> sorted = manifest.sstables().stream()
-            .sorted(Comparator.comparingLong(SSTableDescriptor::id).reversed())
-            .toList();
-
-        List<SSTable> readers = new ArrayList<>();
-        for (SSTableDescriptor desc : sorted) {
+        List<SSTable> readers = new ArrayList<>(manifest.sstables().size());
+        for (SSTableDescriptor desc : manifest.sstables()) {
             Path path = directory.resolve("%06d.sst".formatted(desc.id()));
             readers.add(SSTable.open(desc.id(), desc.level(), path, cache));
         }
 
         return readers;
+    }
+
+    private static void validateManifestState(Manifest manifest, List<Long> discoveredIds) {
+        if (manifest.sstables().isEmpty()) {
+            if (!discoveredIds.isEmpty()) {
+                throw new StorageException.Corruption(
+                    "Found SSTables on disk without manifest entries"
+                );
+            }
+            return;
+        }
+
+        Set<Long> manifestIds = manifest.sstables().stream()
+            .map(SSTableDescriptor::id)
+            .collect(Collectors.toCollection(TreeSet::new));
+        Set<Long> discoveredIdSet = new TreeSet<>(discoveredIds);
+
+        if (!manifestIds.equals(discoveredIdSet)) {
+            Set<Long> missingFromDisk = new TreeSet<>(manifestIds);
+            missingFromDisk.removeAll(discoveredIdSet);
+
+            Set<Long> untrackedOnDisk = new TreeSet<>(discoveredIdSet);
+            untrackedOnDisk.removeAll(manifestIds);
+
+            throw new StorageException.Corruption(
+                "Manifest does not match on-disk SSTables. missingFromDisk=%s, untrackedOnDisk=%s"
+                    .formatted(missingFromDisk, untrackedOnDisk)
+            );
+        }
     }
 
     private void deleteAllSSTables() throws IOException {

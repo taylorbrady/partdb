@@ -1,9 +1,8 @@
 package io.partdb.benchmark;
 
-import io.partdb.storage.StorageEntry;
-import io.partdb.storage.LSMConfig;
-import io.partdb.storage.LSMTree;
-import io.partdb.storage.Slice;
+import io.partdb.storage.StateStore;
+import io.partdb.storage.StorageConfig;
+import io.partdb.storage.VersionedEntry;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
@@ -35,33 +34,33 @@ public class MixedWorkloadBenchmark {
     private int valueSize;
 
     private Path tempDir;
-    private LSMTree tree;
+    private StateStore store;
     private AtomicLong keyCounter;
     private AtomicLong revisionCounter;
-    private Slice valueTemplate;
+    private byte[] valueTemplate;
 
     @Setup(Level.Trial)
     public void setup() throws IOException {
         tempDir = Files.createTempDirectory("mixed-workload-bench");
-        tree = LSMTree.open(tempDir, LSMConfig.defaults());
+        store = StateStore.open(tempDir, StorageConfig.defaults());
         keyCounter = new AtomicLong(0);
         revisionCounter = new AtomicLong(0);
         byte[] valueBytes = new byte[valueSize];
         ThreadLocalRandom.current().nextBytes(valueBytes);
-        valueTemplate = Slice.of(valueBytes);
+        valueTemplate = valueBytes;
 
         for (int i = 0; i < initialKeyCount; i++) {
-            Slice key = formatKey(i);
+            byte[] key = formatKey(i);
             long revision = revisionCounter.incrementAndGet();
-            tree.put(key, valueTemplate, revision);
+            store.put(key, valueTemplate, revision);
         }
         keyCounter.set(initialKeyCount);
-        tree.checkpoint();
+        store.snapshot();
     }
 
     @TearDown(Level.Trial)
     public void tearDown() throws IOException {
-        tree.close();
+        store.close();
         deleteDirectory(tempDir);
     }
 
@@ -85,11 +84,11 @@ public class MixedWorkloadBenchmark {
         }
     }
 
-    private Optional<StorageEntry> doRead() {
+    private Optional<VersionedEntry> doRead() {
         long maxKey = keyCounter.get();
         long keyNum = ThreadLocalRandom.current().nextLong(maxKey);
-        Slice key = formatKey(keyNum);
-        return tree.get(key);
+        byte[] key = formatKey(keyNum);
+        return store.get(key);
     }
 
     private void doWrite() {
@@ -100,13 +99,13 @@ public class MixedWorkloadBenchmark {
         } else {
             keyNum = ThreadLocalRandom.current().nextLong(maxKey);
         }
-        Slice key = formatKey(keyNum);
+        byte[] key = formatKey(keyNum);
         long revision = revisionCounter.incrementAndGet();
-        tree.put(key, valueTemplate, revision);
+        store.put(key, valueTemplate, revision);
     }
 
-    private static Slice formatKey(long keyNum) {
-        return Slice.of(("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8));
+    private static byte[] formatKey(long keyNum) {
+        return ("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8);
     }
 
     private static void deleteDirectory(Path dir) throws IOException {

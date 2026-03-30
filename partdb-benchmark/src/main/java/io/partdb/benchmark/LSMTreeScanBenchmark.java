@@ -1,9 +1,8 @@
 package io.partdb.benchmark;
 
-import io.partdb.storage.StorageEntry;
-import io.partdb.storage.LSMConfig;
-import io.partdb.storage.LSMTree;
-import io.partdb.storage.Slice;
+import io.partdb.storage.StateStore;
+import io.partdb.storage.StorageConfig;
+import io.partdb.storage.StorageCursor;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
@@ -14,7 +13,6 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
 
 @State(Scope.Benchmark)
 @Fork(1)
@@ -26,31 +24,31 @@ public class LSMTreeScanBenchmark {
     private static final int VALUE_SIZE = 100;
 
     private Path tempDir;
-    private LSMTree tree;
-    private Slice[] existingKeys;
+    private StateStore store;
+    private byte[][] existingKeys;
+    private byte[] valueBytes;
 
     @Setup(Level.Trial)
     public void setup() throws IOException {
         tempDir = Files.createTempDirectory("lsm-scan-bench");
-        tree = LSMTree.open(tempDir, LSMConfig.defaults());
-        existingKeys = new Slice[KEY_COUNT];
+        store = StateStore.open(tempDir, StorageConfig.defaults());
+        existingKeys = new byte[KEY_COUNT][];
 
-        byte[] valueBytes = new byte[VALUE_SIZE];
+        valueBytes = new byte[VALUE_SIZE];
         ThreadLocalRandom.current().nextBytes(valueBytes);
-        Slice value = Slice.of(valueBytes);
 
         for (int i = 0; i < KEY_COUNT; i++) {
-            Slice key = formatKey(i);
+            byte[] key = formatKey(i);
             existingKeys[i] = key;
-            tree.put(key, value, i);
+            store.put(key, valueBytes, i);
         }
 
-        tree.checkpoint();
+        store.snapshot();
     }
 
     @TearDown(Level.Trial)
     public void tearDown() throws IOException {
-        tree.close();
+        store.close();
         deleteDirectory(tempDir);
     }
 
@@ -58,9 +56,14 @@ public class LSMTreeScanBenchmark {
     @BenchmarkMode(Mode.AverageTime)
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
     public long scanFull() {
-        try (Stream<StorageEntry> stream = tree.scan(null, null)) {
-            return stream.count();
+        long count = 0;
+        try (StorageCursor cursor = store.scan(null, null)) {
+            while (cursor.hasNext()) {
+                cursor.next();
+                count++;
+            }
         }
+        return count;
     }
 
     @Benchmark
@@ -69,10 +72,12 @@ public class LSMTreeScanBenchmark {
     @OperationsPerInvocation(100)
     public void scanRange100(Blackhole bh) {
         int start = ThreadLocalRandom.current().nextInt(KEY_COUNT - 100);
-        Slice startKey = existingKeys[start];
-        Slice endKey = existingKeys[start + 100];
-        try (Stream<StorageEntry> stream = tree.scan(startKey, endKey)) {
-            stream.forEach(bh::consume);
+        byte[] startKey = existingKeys[start];
+        byte[] endKey = existingKeys[start + 100];
+        try (StorageCursor cursor = store.scan(startKey, endKey)) {
+            while (cursor.hasNext()) {
+                bh.consume(cursor.next());
+            }
         }
     }
 
@@ -82,15 +87,17 @@ public class LSMTreeScanBenchmark {
     @OperationsPerInvocation(1000)
     public void scanRange1000(Blackhole bh) {
         int start = ThreadLocalRandom.current().nextInt(KEY_COUNT - 1000);
-        Slice startKey = existingKeys[start];
-        Slice endKey = existingKeys[start + 1000];
-        try (Stream<StorageEntry> stream = tree.scan(startKey, endKey)) {
-            stream.forEach(bh::consume);
+        byte[] startKey = existingKeys[start];
+        byte[] endKey = existingKeys[start + 1000];
+        try (StorageCursor cursor = store.scan(startKey, endKey)) {
+            while (cursor.hasNext()) {
+                bh.consume(cursor.next());
+            }
         }
     }
 
-    private static Slice formatKey(long keyNum) {
-        return Slice.of(("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8));
+    private static byte[] formatKey(long keyNum) {
+        return ("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8);
     }
 
     private static void deleteDirectory(Path dir) throws IOException {
