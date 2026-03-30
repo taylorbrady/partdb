@@ -2,7 +2,6 @@ package io.partdb.client;
 
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
 import io.partdb.grpc.kv.proto.KvProto;
 import io.partdb.grpc.kv.proto.KvServiceGrpc;
@@ -18,14 +17,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Stream;
 
 public final class KvClient implements AutoCloseable {
 
     private final KvClientConfig config;
-    private final ConcurrentHashMap<String, ManagedChannel> channels;
-    private final AtomicReference<String> currentLeader;
+    private final ConcurrentHashMap<ServerEndpoint, ManagedChannel> channels;
+    private final AtomicReference<ServerEndpoint> currentLeader;
     private final AtomicInteger roundRobinIndex;
     private final ScheduledExecutorService scheduler;
 
@@ -147,11 +146,11 @@ public final class KvClient implements AutoCloseable {
         });
     }
 
-    public CompletableFuture<Stream<KeyValue>> scan(byte[] startKey, byte[] endKey) {
+    public CompletableFuture<ScanCursor> scan(byte[] startKey, byte[] endKey) {
         return scan(startKey, endKey, 0, ReadConsistency.LINEARIZABLE);
     }
 
-    public CompletableFuture<Stream<KeyValue>> scan(
+    public CompletableFuture<ScanCursor> scan(
         byte[] startKey,
         byte[] endKey,
         int limit,
@@ -165,35 +164,7 @@ public final class KvClient implements AutoCloseable {
             .setConsistency(toProtoConsistency(consistency))
             .build();
 
-        ScanIterator iterator = new ScanIterator();
-
-        getStub().scan(request, new StreamObserver<>() {
-            @Override
-            public void onNext(KvProto.ScanResponse response) {
-                if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
-                    iterator.completeWithError(new KvClientException.ClusterUnavailable(
-                        response.getError().getMessage()));
-                } else {
-                    iterator.addResult(new KeyValue(
-                        response.getKey().toByteArray(),
-                        response.getValue().toByteArray(),
-                        response.getRevision()
-                    ));
-                }
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                iterator.completeWithError(t);
-            }
-
-            @Override
-            public void onCompleted() {
-                iterator.complete();
-            }
-        });
-
-        return CompletableFuture.completedFuture(iterator.toStream());
+        return startScan(request, 0);
     }
 
     public CompletableFuture<List<KeyValue>> batchGet(List<byte[]> keys) {
@@ -434,7 +405,7 @@ public final class KvClient implements AutoCloseable {
                 }
 
                 if (ex instanceof NotLeaderException nle) {
-                    if (nle.leaderHint != null && !nle.leaderHint.isEmpty()) {
+                    if (nle.leaderHint != null) {
                         currentLeader.set(nle.leaderHint);
                     } else {
                         currentLeader.set(null);
@@ -470,12 +441,7 @@ public final class KvClient implements AutoCloseable {
     private <T> void handleError(KvProto.Error error, CompletableFuture<T> future) {
         switch (error.getCode()) {
             case NOT_FOUND -> future.complete(null);
-            case NOT_LEADER -> future.completeExceptionally(
-                new NotLeaderException(error.getLeaderHint()));
-            case CONFLICT -> future.completeExceptionally(
-                new KvClientException.Conflict(error.getMessage()));
-            default -> future.completeExceptionally(
-                new KvClientException.ClusterUnavailable(error.getMessage()));
+            default -> future.completeExceptionally(toException(error));
         }
     }
 
@@ -498,38 +464,162 @@ public final class KvClient implements AutoCloseable {
     }
 
     private KvServiceGrpc.KvServiceStub getStub() {
-        String endpoint = selectEndpoint();
+        ServerEndpoint endpoint = selectEndpoint();
+        return stubFor(endpoint);
+    }
+
+    private KvServiceGrpc.KvServiceStub stubFor(ServerEndpoint endpoint) {
         ManagedChannel channel = channels.computeIfAbsent(endpoint, this::createChannel);
         return KvServiceGrpc.newStub(channel)
             .withDeadlineAfter(config.requestTimeout().toMillis(), TimeUnit.MILLISECONDS);
     }
 
-    private String selectEndpoint() {
-        String leader = currentLeader.get();
+    private ServerEndpoint selectEndpoint() {
+        ServerEndpoint leader = currentLeader.get();
         if (leader != null) {
             return leader;
         }
-        List<String> endpoints = config.endpoints();
+        List<ServerEndpoint> endpoints = config.endpoints();
         int idx = roundRobinIndex.getAndIncrement() % endpoints.size();
         return endpoints.get(idx);
     }
 
-    private ManagedChannel createChannel(String endpoint) {
-        String[] parts = endpoint.split(":");
-        String host = parts[0];
-        int port = Integer.parseInt(parts[1]);
+    private ManagedChannel createChannel(ServerEndpoint endpoint) {
+        return GrpcClientChannels.createChannel(endpoint, config.connectTimeout());
+    }
 
-        return ManagedChannelBuilder.forAddress(host, port)
-            .usePlaintext()
-            .keepAliveTime(30, TimeUnit.SECONDS)
-            .keepAliveTimeout(10, TimeUnit.SECONDS)
-            .build();
+    private CompletableFuture<ScanCursor> startScan(KvProto.ScanRequest request, int attempt) {
+        ServerEndpoint endpoint = selectEndpoint();
+        var future = new CompletableFuture<ScanCursor>();
+        var cursor = new GrpcScanCursor();
+        var active = new AtomicBoolean(true);
+        var published = new AtomicBoolean(false);
+
+        stubFor(endpoint).scan(request, new StreamObserver<>() {
+            @Override
+            public void onNext(KvProto.ScanResponse response) {
+                if (!active.get()) {
+                    return;
+                }
+
+                if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
+                    RuntimeException exception = toException(response.getError());
+                    if (!published.get() && shouldRetryScan(exception, attempt)) {
+                        active.set(false);
+                        cursor.close();
+                        retryScan(request, attempt, exception, future);
+                        return;
+                    }
+
+                    failScan(cursor, future, active, exception);
+                    return;
+                }
+
+                cursor.addResult(new KeyValue(
+                    response.getKey().toByteArray(),
+                    response.getValue().toByteArray(),
+                    response.getRevision()
+                ));
+                published.set(true);
+                future.complete(cursor);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                if (!active.get()) {
+                    return;
+                }
+
+                if (!published.get() && isRetryable(t) && attempt < config.maxRetries()) {
+                    active.set(false);
+                    currentLeader.set(null);
+                    cursor.close();
+                    retryScan(request, attempt, t, future);
+                    return;
+                }
+
+                failScan(cursor, future, active, t);
+            }
+
+            @Override
+            public void onCompleted() {
+                if (!active.getAndSet(false)) {
+                    return;
+                }
+                cursor.complete();
+                future.complete(cursor);
+            }
+        });
+
+        return future;
+    }
+
+    private void retryScan(
+        KvProto.ScanRequest request,
+        int attempt,
+        Throwable cause,
+        CompletableFuture<ScanCursor> future
+    ) {
+        if (attempt >= config.maxRetries()) {
+            future.completeExceptionally(new KvClientException.ClusterUnavailable("All retries exhausted", cause));
+            return;
+        }
+
+        CompletableFuture<ScanCursor> retry = cause instanceof NotLeaderException
+            ? startScan(request, attempt + 1)
+            : CompletableFuture
+                .runAsync(
+                    () -> { },
+                    CompletableFuture.delayedExecutor(config.retryDelay().toMillis(), TimeUnit.MILLISECONDS)
+                )
+                .thenCompose(ignored -> startScan(request, attempt + 1));
+
+        retry.whenComplete((cursor, ex) -> {
+            if (ex != null) {
+                future.completeExceptionally(ex);
+            } else {
+                future.complete(cursor);
+            }
+        });
+    }
+
+    private boolean shouldRetryScan(RuntimeException exception, int attempt) {
+        if (attempt >= config.maxRetries()) {
+            return false;
+        }
+        if (exception instanceof NotLeaderException notLeader) {
+            currentLeader.set(notLeader.leaderHint);
+            return true;
+        }
+        return false;
+    }
+
+    private RuntimeException toException(KvProto.Error error) {
+        return switch (error.getCode()) {
+            case NOT_LEADER -> new NotLeaderException(ServerEndpoint.tryParse(error.getLeaderHint()).orElse(null));
+            case CONFLICT -> new KvClientException.Conflict(error.getMessage());
+            default -> new KvClientException.ClusterUnavailable(error.getMessage());
+        };
+    }
+
+    private static void failScan(
+        GrpcScanCursor cursor,
+        CompletableFuture<ScanCursor> future,
+        AtomicBoolean active,
+        Throwable failure
+    ) {
+        if (!active.getAndSet(false)) {
+            return;
+        }
+        if (!future.completeExceptionally(failure)) {
+            cursor.completeWithError(failure);
+        }
     }
 
     private static final class NotLeaderException extends RuntimeException {
-        final String leaderHint;
+        final ServerEndpoint leaderHint;
 
-        NotLeaderException(String leaderHint) {
+        NotLeaderException(ServerEndpoint leaderHint) {
             this.leaderHint = leaderHint;
         }
     }

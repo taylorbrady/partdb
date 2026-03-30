@@ -1,29 +1,21 @@
 package io.partdb.client;
 
-import java.util.Iterator;
 import java.util.NoSuchElementException;
-import java.util.Spliterator;
-import java.util.Spliterators;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
-final class ScanIterator implements Iterator<KeyValue>, AutoCloseable {
+final class GrpcScanCursor implements ScanCursor {
+    private static final Object SENTINEL = new Object();
 
-    private static final KeyValue SENTINEL = new KeyValue(null, null, -1);
-
-    private final BlockingQueue<KeyValue> queue;
+    private final BlockingQueue<Object> queue;
     private final AtomicBoolean closed;
     private KeyValue next;
     private volatile Throwable error;
 
-    ScanIterator() {
+    GrpcScanCursor() {
         this.queue = new LinkedBlockingQueue<>();
         this.closed = new AtomicBoolean(false);
-        this.next = null;
-        this.error = null;
     }
 
     void addResult(KeyValue kv) {
@@ -50,14 +42,14 @@ final class ScanIterator implements Iterator<KeyValue>, AutoCloseable {
             return true;
         }
         try {
-            next = queue.take();
-            if (next == SENTINEL) {
-                next = null;
+            Object item = queue.take();
+            if (item == SENTINEL) {
                 if (error != null) {
                     throw new KvClientException.ClusterUnavailable("Scan failed", error);
                 }
                 return false;
             }
+            next = (KeyValue) item;
             return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -79,12 +71,6 @@ final class ScanIterator implements Iterator<KeyValue>, AutoCloseable {
     public void close() {
         closed.set(true);
         queue.clear();
-    }
-
-    Stream<KeyValue> toStream() {
-        return StreamSupport.stream(
-                Spliterators.spliteratorUnknownSize(this, Spliterator.ORDERED | Spliterator.NONNULL),
-                false)
-            .onClose(this::close);
+        next = null;
     }
 }

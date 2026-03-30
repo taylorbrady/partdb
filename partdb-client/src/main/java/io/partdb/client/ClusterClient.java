@@ -1,7 +1,6 @@
 package io.partdb.client;
 
 import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
 import io.partdb.grpc.cluster.proto.ClusterProto.ErrorCode;
 import io.partdb.grpc.cluster.proto.ClusterProto.MemberListRequest;
@@ -11,7 +10,6 @@ import io.partdb.grpc.cluster.proto.ClusterProto.StatusRequest;
 import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
 import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -21,18 +19,12 @@ public final class ClusterClient implements AutoCloseable {
 
     private final ManagedChannel channel;
     private final ClusterServiceGrpc.ClusterServiceStub stub;
-    private final long timeoutMs;
+    private final ClusterClientConfig config;
 
-    public ClusterClient(String endpoint, long timeoutMs) {
-        String[] parts = endpoint.split(":");
-        String host = parts[0];
-        int port = Integer.parseInt(parts[1]);
-
-        this.channel = ManagedChannelBuilder.forAddress(host, port)
-            .usePlaintext()
-            .build();
+    public ClusterClient(ClusterClientConfig config) {
+        this.config = config;
+        this.channel = GrpcClientChannels.createChannel(config.endpoint(), config.connectTimeout());
         this.stub = ClusterServiceGrpc.newStub(channel);
-        this.timeoutMs = timeoutMs;
     }
 
     public CompletableFuture<ClusterStatus> status() {
@@ -41,7 +33,7 @@ public final class ClusterClient implements AutoCloseable {
             .build();
 
         var future = new CompletableFuture<ClusterStatus>();
-        stub.withDeadlineAfter(timeoutMs, TimeUnit.MILLISECONDS)
+        stub.withDeadlineAfter(config.requestTimeout().toMillis(), TimeUnit.MILLISECONDS)
             .status(request, new StreamObserver<>() {
                 @Override
                 public void onNext(StatusResponse response) {
@@ -64,13 +56,13 @@ public final class ClusterClient implements AutoCloseable {
         return future;
     }
 
-    public CompletableFuture<ClusterMembership> memberList() {
+    public CompletableFuture<ClusterMembership> membership() {
         var request = MemberListRequest.newBuilder()
             .setHeader(buildHeader())
             .build();
 
         var future = new CompletableFuture<ClusterMembership>();
-        stub.withDeadlineAfter(timeoutMs, TimeUnit.MILLISECONDS)
+        stub.withDeadlineAfter(config.requestTimeout().toMillis(), TimeUnit.MILLISECONDS)
             .memberList(request, new StreamObserver<>() {
                 @Override
                 public void onNext(MemberListResponse response) {
@@ -106,10 +98,10 @@ public final class ClusterClient implements AutoCloseable {
     }
 
     private static ClusterMembership toClusterMembership(MemberListResponse response) {
-        List<ClusterMember> members = response.getMembersList().stream()
+        var members = response.getMembersList().stream()
             .map(member -> new ClusterMember(
                 member.getNodeId(),
-                emptyToOptional(member.getRaftAddress()),
+                ServerEndpoint.tryParse(member.getRaftAddress()),
                 toClusterMemberRole(member.getRole()),
                 member.getIsLeader(),
                 member.getIsSelf()
@@ -147,7 +139,7 @@ public final class ClusterClient implements AutoCloseable {
     private RequestHeader buildHeader() {
         return RequestHeader.newBuilder()
             .setRequestId(UUID.randomUUID().toString())
-            .setTimeoutMs(timeoutMs)
+            .setTimeoutMs(config.requestTimeout().toMillis())
             .build();
     }
 

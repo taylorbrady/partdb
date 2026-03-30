@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Objects;
 
 public record KvClientConfig(
-    List<String> endpoints,
+    List<ServerEndpoint> endpoints,
     Duration requestTimeout,
     Duration connectTimeout,
     int maxRetries,
@@ -18,16 +18,27 @@ public record KvClientConfig(
         }
         Objects.requireNonNull(requestTimeout, "requestTimeout must not be null");
         Objects.requireNonNull(connectTimeout, "connectTimeout must not be null");
+        if (requestTimeout.isNegative() || requestTimeout.isZero()) {
+            throw new IllegalArgumentException("requestTimeout must be positive");
+        }
+        if (connectTimeout.isNegative() || connectTimeout.isZero()) {
+            throw new IllegalArgumentException("connectTimeout must be positive");
+        }
         if (maxRetries < 0) {
             throw new IllegalArgumentException("maxRetries must be non-negative");
         }
         Objects.requireNonNull(retryDelay, "retryDelay must not be null");
+        if (retryDelay.isNegative()) {
+            throw new IllegalArgumentException("retryDelay must not be negative");
+        }
         endpoints = List.copyOf(endpoints);
     }
 
     public static KvClientConfig defaultConfig(String... endpoints) {
         return new KvClientConfig(
-            List.of(endpoints),
+            List.of(endpoints).stream()
+                .map(ServerEndpoint::parse)
+                .toList(),
             Duration.ofSeconds(30),
             Duration.ofSeconds(5),
             3,

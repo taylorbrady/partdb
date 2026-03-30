@@ -84,7 +84,7 @@ public final class PartDbServerConfig {
         var normalized = new LinkedHashMap<String, String>();
         raftPeerAddresses.forEach((peerId, raftAddress) -> normalized.put(
             requireNonBlank(peerId, "peerId"),
-            requireNonBlank(raftAddress, "raftPeerAddress")
+            PeerEndpoint.parse(requireNonBlank(raftAddress, "raftPeerAddress")).toString()
         ));
 
         if (!normalized.isEmpty() && !normalized.containsKey(nodeId)) {

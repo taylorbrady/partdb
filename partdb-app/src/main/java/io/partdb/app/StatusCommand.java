@@ -2,6 +2,7 @@ package io.partdb.app;
 
 import io.partdb.client.ClusterStatus;
 import io.partdb.client.ClusterClient;
+import io.partdb.client.ClusterClientConfig;
 
 import java.io.PrintStream;
 import java.util.concurrent.ExecutionException;
@@ -46,7 +47,7 @@ final class StatusCommand {
             }
         }
 
-        try (var client = new ClusterClient(endpoint, TIMEOUT_SECONDS * 1000)) {
+        try (var client = new ClusterClient(ClusterClientConfig.defaultConfig(endpoint))) {
             ClusterStatus response = client.status().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             if (format == OutputFormat.JSON) {

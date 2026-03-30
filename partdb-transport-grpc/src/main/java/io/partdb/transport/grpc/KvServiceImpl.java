@@ -55,13 +55,10 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void get(GetRequest request, StreamObserver<GetResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
-
-        CompletableFuture<Optional<byte[]>> future;
-        if (request.getConsistency() == ReadConsistency.STALE) {
-            future = CompletableFuture.completedFuture(node.get(toBytes(request.getKey())));
-        } else {
-            future = CompletableFuture.completedFuture(node.get(toBytes(request.getKey())));
-        }
+        CompletableFuture<Optional<byte[]>> future = readWithConsistency(
+            request.getConsistency(),
+            () -> node.get(toBytes(request.getKey()))
+        );
 
         future
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
@@ -139,12 +136,10 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         byte[] endKey = request.getEndKey().isEmpty() ? null : toBytes(request.getEndKey());
         int limit = request.getLimit() > 0 ? request.getLimit() : Integer.MAX_VALUE;
 
-        CompletableFuture<Stream<KeyValueEntry>> future;
-        if (request.getConsistency() == ReadConsistency.STALE) {
-            future = CompletableFuture.completedFuture(node.scan(startKey, endKey));
-        } else {
-            future = CompletableFuture.completedFuture(node.scan(startKey, endKey));
-        }
+        CompletableFuture<Stream<KeyValueEntry>> future = readWithConsistency(
+            request.getConsistency(),
+            () -> node.scan(startKey, endKey)
+        );
 
         future
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
@@ -178,18 +173,21 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void batchGet(BatchGetRequest request, StreamObserver<BatchGetResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
+        CompletableFuture<List<KeyValue>> future = readWithConsistency(
+            request.getConsistency(),
+            () -> {
+                List<KeyValue> results = new ArrayList<>();
+                for (ByteString keyBytes : request.getKeysList()) {
+                    Optional<byte[]> value = node.get(keyBytes.toByteArray());
+                    results.add(buildKeyValue(keyBytes, value));
+                }
+                return results;
+            }
+        );
 
-        List<CompletableFuture<KeyValue>> futures = new ArrayList<>();
-
-        for (ByteString keyBytes : request.getKeysList()) {
-            Optional<byte[]> value = node.get(keyBytes.toByteArray());
-            CompletableFuture<KeyValue> kvFuture = CompletableFuture.completedFuture(buildKeyValue(keyBytes, value));
-            futures.add(kvFuture);
-        }
-
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+        future
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((_, ex) -> {
+            .whenComplete((results, ex) -> {
                 if (ex != null) {
                     responseObserver.onNext(BatchGetResponse.newBuilder()
                         .setError(toProtoError(ex))
@@ -197,9 +195,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                 } else {
                     BatchGetResponse.Builder builder = BatchGetResponse.newBuilder()
                         .setError(okError());
-                    for (CompletableFuture<KeyValue> f : futures) {
-                        builder.addValues(f.join());
-                    }
+                    builder.addAllValues(results);
                     responseObserver.onNext(builder.build());
                 }
                 responseObserver.onCompleted();
@@ -349,7 +345,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
             case RaftException.NotLeader e -> Error.newBuilder()
                 .setCode(ErrorCode.NOT_LEADER)
                 .setMessage("Not the leader")
-                .setLeaderHint(e.leaderId().orElse(""))
+                .setLeaderHint("")
                 .build();
             case RaftException.Shutdown _ -> Error.newBuilder()
                 .setCode(ErrorCode.INTERNAL_ERROR)
@@ -375,5 +371,26 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
             return ex.getCause() != null ? ex.getCause() : ex;
         }
         return ex;
+    }
+
+    private <T> CompletableFuture<T> readWithConsistency(
+        ReadConsistency consistency,
+        java.util.function.Supplier<T> readOperation
+    ) {
+        return switch (consistency) {
+            case STALE -> supply(readOperation);
+            case LINEARIZABLE -> node.linearizableBarrier().thenCompose(_ -> supply(readOperation));
+            case UNRECOGNIZED -> CompletableFuture.failedFuture(
+                new IllegalArgumentException("Unknown read consistency: " + consistency)
+            );
+        };
+    }
+
+    private static <T> CompletableFuture<T> supply(java.util.function.Supplier<T> supplier) {
+        try {
+            return CompletableFuture.completedFuture(supplier.get());
+        } catch (Throwable t) {
+            return CompletableFuture.failedFuture(t);
+        }
     }
 }

@@ -5,7 +5,7 @@ import java.util.Map;
 record GrpcConsensusTransportConfig(
     String localNodeId,
     int port,
-    Map<String, String> raftPeerAddresses,
+    Map<String, PeerEndpoint> raftPeerEndpoints,
     int snapshotChunkSize
 ) {
     private static final int DEFAULT_CHUNK_SIZE = 1024 * 1024;
@@ -17,7 +17,7 @@ record GrpcConsensusTransportConfig(
         if (port <= 0) {
             throw new IllegalArgumentException("port must be positive");
         }
-        raftPeerAddresses = Map.copyOf(raftPeerAddresses);
+        raftPeerEndpoints = Map.copyOf(raftPeerEndpoints);
         if (snapshotChunkSize <= 0) {
             snapshotChunkSize = DEFAULT_CHUNK_SIZE;
         }
@@ -27,6 +27,15 @@ record GrpcConsensusTransportConfig(
             String localNodeId,
             int port,
             Map<String, String> raftPeerAddresses) {
-        return new GrpcConsensusTransportConfig(localNodeId, port, raftPeerAddresses, DEFAULT_CHUNK_SIZE);
+        return new GrpcConsensusTransportConfig(
+            localNodeId,
+            port,
+            raftPeerAddresses.entrySet().stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                    Map.Entry::getKey,
+                    entry -> PeerEndpoint.parse(entry.getValue())
+                )),
+            DEFAULT_CHUNK_SIZE
+        );
     }
 }

@@ -1,6 +1,7 @@
 package io.partdb.app;
 
 import io.partdb.client.ClusterClient;
+import io.partdb.client.ClusterClientConfig;
 import io.partdb.client.ClusterMember;
 import io.partdb.client.ClusterMembership;
 
@@ -74,8 +75,8 @@ final class MemberCommand {
             }
         }
 
-        try (var client = new ClusterClient(endpoint, TIMEOUT_SECONDS * 1000)) {
-            ClusterMembership response = client.memberList().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        try (var client = new ClusterClient(ClusterClientConfig.defaultConfig(endpoint))) {
+            ClusterMembership response = client.membership().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             if (format == OutputFormat.JSON) {
                 printJson(response, out);
@@ -105,7 +106,7 @@ final class MemberCommand {
             String status = member.leader() ? "leader" : (member.self() ? "self" : "");
             out.printf("%-12s %-24s %-8s %-8s%n",
                 member.nodeId(),
-                member.raftAddress().orElse("(unknown)"),
+                member.raftEndpoint().map(Object::toString).orElse("(unknown)"),
                 member.role().name().toLowerCase(),
                 status);
         }
@@ -123,7 +124,7 @@ final class MemberCommand {
             }
             out.print("{\"nodeId\":\"" + member.nodeId() + "\"");
             out.print(",\"raftAddress\":"
-                + member.raftAddress().map(raftAddress -> "\"" + raftAddress + "\"").orElse("null"));
+                + member.raftEndpoint().map(raftEndpoint -> "\"" + raftEndpoint + "\"").orElse("null"));
             out.print(",\"role\":\"" + member.role().name().toLowerCase() + "\"");
             out.print(",\"isLeader\":" + member.leader());
             out.print(",\"isSelf\":" + member.self() + "}");

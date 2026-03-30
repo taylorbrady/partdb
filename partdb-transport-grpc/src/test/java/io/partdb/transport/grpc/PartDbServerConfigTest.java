@@ -50,4 +50,31 @@ class PartDbServerConfigTest {
             )
         );
     }
+
+    @Test
+    void createCanonicalizesIpv6RaftPeerAddresses() {
+        var config = PartDbServerConfig.create(
+            "node1",
+            Map.of("node1", "[::1]:8100"),
+            Path.of("data/node1"),
+            8100,
+            8101
+        );
+
+        assertEquals("[::1]:8100", config.raftPeerAddresses().get("node1"));
+    }
+
+    @Test
+    void createRejectsInvalidRaftPeerAddresses() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> PartDbServerConfig.create(
+                "node1",
+                Map.of("node1", "127.0.0.1"),
+                Path.of("data/node1"),
+                8100,
+                8101
+            )
+        );
+    }
 }

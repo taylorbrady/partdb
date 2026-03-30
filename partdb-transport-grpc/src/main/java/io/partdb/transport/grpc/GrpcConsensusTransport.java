@@ -113,11 +113,11 @@ final class GrpcConsensusTransport implements ConsensusTransport {
 
     private RaftServiceGrpc.RaftServiceStub getOrCreateStub(String peerId) {
         return stubs.computeIfAbsent(peerId, id -> {
-            String raftAddress = config.raftPeerAddresses().get(id);
-            if (raftAddress == null) {
+            PeerEndpoint endpoint = config.raftPeerEndpoints().get(id);
+            if (endpoint == null) {
                 return null;
             }
-            ManagedChannel channel = getOrCreateChannel(id, raftAddress);
+            ManagedChannel channel = getOrCreateChannel(id, endpoint);
             return RaftServiceGrpc.newStub(channel)
                 .withInterceptors(senderIdInterceptor());
         });
@@ -142,12 +142,9 @@ final class GrpcConsensusTransport implements ConsensusTransport {
         };
     }
 
-    private ManagedChannel getOrCreateChannel(String peerId, String raftAddress) {
+    private ManagedChannel getOrCreateChannel(String peerId, PeerEndpoint endpoint) {
         return channels.computeIfAbsent(peerId, _ -> {
-            String[] parts = raftAddress.split(":");
-            String host = parts[0];
-            int port = Integer.parseInt(parts[1]);
-            return NettyChannelBuilder.forAddress(host, port)
+            return NettyChannelBuilder.forAddress(endpoint.host(), endpoint.port())
                 .usePlaintext()
                 .build();
         });

@@ -97,6 +97,10 @@ public final class PartDbNode implements AutoCloseable {
         return leaseManager.keepAlive(leaseId);
     }
 
+    public CompletableFuture<Long> linearizableBarrier() {
+        return raftNode.linearizableBarrier();
+    }
+
     public NodeMembership membership() {
         return NodeMembership.fromRaftMembership(raftNode.membership());
     }
