@@ -44,6 +44,8 @@ public interface StateStore extends AutoCloseable {
 
     void restore(StorageSnapshot snapshot);
 
+    StorageEngineStats stats();
+
     @Override
     void close();
 }

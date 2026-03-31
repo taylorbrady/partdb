@@ -34,6 +34,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.Objects;
 
 public final class RaftNode implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(RaftNode.class);
@@ -55,6 +56,8 @@ public final class RaftNode implements AutoCloseable {
     private final RaftStorage storage;
     private final StateMachine stateMachine;
     private volatile Role lastKnownRole;
+    private volatile String lastKnownLeaderId;
+    private final AtomicLong lastLeaderChangeEpochMillis = new AtomicLong();
 
     private final BlockingQueue<NodeEvent> events = new LinkedBlockingQueue<>();
     private final Map<RpcKey, Deque<PendingRpc>> pendingRpcs = new ConcurrentHashMap<>();
@@ -89,6 +92,7 @@ public final class RaftNode implements AutoCloseable {
         this.storage = storage;
         this.stateMachine = stateMachine;
         this.lastKnownRole = raft.role();
+        this.lastKnownLeaderId = raft.leaderId().orElse(null);
 
         this.ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -181,6 +185,10 @@ public final class RaftNode implements AutoCloseable {
 
     public Role role() {
         return lastKnownRole;
+    }
+
+    public long lastLeaderChangeEpochMillis() {
+        return lastLeaderChangeEpochMillis.get();
     }
 
     public Membership membership() {
@@ -324,14 +332,27 @@ public final class RaftNode implements AutoCloseable {
         }
 
         Role currentRole = raft.role();
-        if (currentRole != lastKnownRole) {
+        String currentLeaderId = raft.leaderId().orElse(null);
+        if (currentRole != lastKnownRole || !Objects.equals(currentLeaderId, lastKnownLeaderId)) {
             log.atInfo()
                 .addKeyValue("nodeId", nodeId)
                 .addKeyValue("term", raft.term())
                 .addKeyValue("previousRole", lastKnownRole)
                 .addKeyValue("newRole", currentRole)
                 .log("State transition");
+
+            NodeLeaderChangeEvent event = new NodeLeaderChangeEvent();
+            event.nodeId = nodeId;
+            event.term = raft.term();
+            event.previousRole = lastKnownRole.name();
+            event.newRole = currentRole.name();
+            event.previousLeaderId = lastKnownLeaderId;
+            event.newLeaderId = currentLeaderId;
+            event.commit();
+
             lastKnownRole = currentRole;
+            lastKnownLeaderId = currentLeaderId;
+            lastLeaderChangeEpochMillis.set(System.currentTimeMillis());
         }
 
         var persist = ready.persist();

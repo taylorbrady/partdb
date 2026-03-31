@@ -32,10 +32,12 @@ final class LsmEngine implements AutoCloseable {
     private final ExecutorService flushExecutor;
     private final AtomicBoolean closed;
     private final SSTableStore sstableStore;
+    private final StorageRuntimeStats stats;
 
-    private LsmEngine(LsmConfig config, SSTableStore sstableStore) {
+    private LsmEngine(LsmConfig config, SSTableStore sstableStore, StorageRuntimeStats stats) {
         this.config = config;
         this.sstableStore = sstableStore;
+        this.stats = stats;
         this.activeMemtable = new AtomicReference<>(new Memtable());
         this.immutableMemtablesLock = new ReentrantLock();
         this.immutableMemtables = List.of();
@@ -43,13 +45,15 @@ final class LsmEngine implements AutoCloseable {
         this.flushPermits = new Semaphore(MAX_IMMUTABLE_MEMTABLES);
         this.flushExecutor = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
         this.closed = new AtomicBoolean(false);
+        refreshMemtableStats();
     }
 
     static LsmEngine open(Path dataDirectory, LsmConfig config) {
         try {
             Files.createDirectories(dataDirectory);
-            SSTableStore sstableStore = SSTableStore.open(dataDirectory, config);
-            return new LsmEngine(config, sstableStore);
+            StorageRuntimeStats stats = new StorageRuntimeStats();
+            SSTableStore sstableStore = SSTableStore.open(dataDirectory, config, stats);
+            return new LsmEngine(config, sstableStore, stats);
         } catch (IOException e) {
             throw new StorageException.IO("Failed to open store", e);
         }
@@ -103,23 +107,58 @@ final class LsmEngine implements AutoCloseable {
     }
 
     byte[] checkpoint() {
-        flush();
-        return sstableStore.checkpoint();
+        StorageSnapshotEvent event = new StorageSnapshotEvent();
+        event.phase = "checkpoint";
+        event.begin();
+
+        long startNanos = System.nanoTime();
+        try {
+            flush();
+            byte[] snapshot = sstableStore.checkpoint();
+            stats.checkpointFinished((System.nanoTime() - startNanos) / 1_000_000);
+            event.bytes = snapshot.length;
+            event.success = true;
+            return snapshot;
+        } catch (RuntimeException e) {
+            event.success = false;
+            event.error = e.getClass().getSimpleName();
+            throw e;
+        } finally {
+            event.commit();
+        }
     }
 
     void restoreFromCheckpoint(byte[] data) {
+        StorageSnapshotEvent event = new StorageSnapshotEvent();
+        event.phase = "restore";
+        event.bytes = data.length;
+        event.begin();
+
+        long startNanos = System.nanoTime();
         rotationLock.lock();
         try {
             awaitPendingFlushes();
             sstableStore.restore(data);
             resetMemtables();
+            stats.restoreFinished((System.nanoTime() - startNanos) / 1_000_000);
+            event.success = true;
+        } catch (RuntimeException e) {
+            event.success = false;
+            event.error = e.getClass().getSimpleName();
+            throw e;
         } finally {
             rotationLock.unlock();
+            event.commit();
         }
     }
 
     SSTableManifest manifest() {
         return sstableStore.manifest();
+    }
+
+    StorageEngineStats statsSnapshot() {
+        refreshMemtableStats();
+        return stats.snapshot();
     }
 
     void flush() {
@@ -148,6 +187,7 @@ final class LsmEngine implements AutoCloseable {
                 immutableMemtablesLock.unlock();
             }
             activeMemtable.set(newMemtable);
+            refreshMemtableStats();
 
             flushExecutor.submit(this::flushPendingMemtables);
         } finally {
@@ -189,6 +229,7 @@ final class LsmEngine implements AutoCloseable {
         if (writeResult == Memtable.WriteResult.DUPLICATE) {
             return;
         }
+        refreshMemtableStats();
 
         if (memtable.sizeInBytes() >= config.memtableMaxSizeBytes()) {
             tryRotateMemtable(memtable);
@@ -225,6 +266,7 @@ final class LsmEngine implements AutoCloseable {
                 immutableMemtablesLock.unlock();
             }
             activeMemtable.set(newMemtable);
+            refreshMemtableStats();
 
             flushExecutor.submit(this::flushPendingMemtables);
         } finally {
@@ -278,6 +320,7 @@ final class LsmEngine implements AutoCloseable {
                     immutableMemtablesLock.unlock();
                 }
                 flushPermits.release();
+                refreshMemtableStats();
             }
         }
     }
@@ -294,6 +337,7 @@ final class LsmEngine implements AutoCloseable {
             immutableMemtablesLock.unlock();
         }
         activeMemtable.set(new Memtable());
+        refreshMemtableStats();
     }
 
     static Optional<Mutation> lookupMutation(Slice key, Memtable activeMemtable, List<Memtable> immutableMemtables) {
@@ -411,5 +455,9 @@ final class LsmEngine implements AutoCloseable {
     private enum ValidationResult {
         APPLY,
         DUPLICATE
+    }
+
+    private void refreshMemtableStats() {
+        stats.updateMemtables(activeMemtable.get().sizeInBytes(), immutableMemtables.size());
     }
 }

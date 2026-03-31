@@ -46,6 +46,11 @@ final class LsmStateStore implements StateStore {
     }
 
     @Override
+    public StorageEngineStats stats() {
+        return engine.statsSnapshot();
+    }
+
+    @Override
     public void close() {
         engine.close();
     }

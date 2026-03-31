@@ -13,6 +13,7 @@ public final class PartDbServer implements AutoCloseable {
     private final PartDbServerConfig config;
     private final PartDbNode node;
     private final GrpcServer grpcServer;
+    private final JmxRegistrations jmxRegistrations;
 
     public PartDbServer(PartDbServerConfig config) {
         this(config, null);
@@ -28,6 +29,7 @@ public final class PartDbServer implements AutoCloseable {
             config.selfRaftEndpoint().toString(),
             config.grpcServerConfig()
         );
+        this.jmxRegistrations = new JmxRegistrations(node);
     }
 
     private ConsensusTransport createDefaultTransport() {
@@ -44,6 +46,7 @@ public final class PartDbServer implements AutoCloseable {
             .addKeyValue("nodeId", config.nodeId())
             .log("Starting PartDB server");
         grpcServer.start();
+        jmxRegistrations.register();
         log.atInfo()
             .addKeyValue("nodeId", config.nodeId())
             .addKeyValue("grpcPort", config.grpcPort())
@@ -56,10 +59,17 @@ public final class PartDbServer implements AutoCloseable {
         log.atInfo()
             .addKeyValue("nodeId", config.nodeId())
             .log("Shutting down PartDB server");
-        grpcServer.close();
-        node.close();
-        log.atInfo()
-            .addKeyValue("nodeId", config.nodeId())
-            .log("PartDB server shut down");
+        try {
+            grpcServer.close();
+        } finally {
+            try {
+                jmxRegistrations.close();
+            } finally {
+                node.close();
+                log.atInfo()
+                    .addKeyValue("nodeId", config.nodeId())
+                    .log("PartDB server shut down");
+            }
+        }
     }
 }

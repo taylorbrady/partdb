@@ -6,12 +6,14 @@ import io.partdb.node.lease.LeaseManager;
 import io.partdb.node.transport.ConsensusTransport;
 import io.partdb.node.raft.DurableRaftStorage;
 import io.partdb.node.raft.RaftNode;
+import io.partdb.storage.StorageEngineStats;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
 public final class PartDbNode implements AutoCloseable {
@@ -20,6 +22,8 @@ public final class PartDbNode implements AutoCloseable {
     private final RaftNode raftNode;
     private final CommandProposer proposer;
     private final LeaseManager leaseManager;
+    private final AtomicLong proposalCount = new AtomicLong();
+    private final AtomicLong proposalFailureCount = new AtomicLong();
 
     public PartDbNode(PartDbNodeConfig config, ConsensusTransport transport) {
         Objects.requireNonNull(config, "config must not be null");
@@ -68,33 +72,33 @@ public final class PartDbNode implements AutoCloseable {
     public CompletableFuture<Long> put(byte[] key, byte[] value, long leaseId) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(value, "value must not be null");
-        return proposer.put(key.clone(), value.clone(), leaseId);
+        return trackProposal(proposer.put(key.clone(), value.clone(), leaseId));
     }
 
     public CompletableFuture<Long> delete(byte[] key) {
         Objects.requireNonNull(key, "key must not be null");
-        return proposer.delete(key.clone());
+        return trackProposal(proposer.delete(key.clone()));
     }
 
     public CompletableFuture<Long> grantLease(long ttlNanos) {
         if (ttlNanos <= 0) {
             throw new IllegalArgumentException("ttlNanos must be positive");
         }
-        return leaseManager.grant(ttlNanos);
+        return trackProposal(leaseManager.grant(ttlNanos));
     }
 
     public CompletableFuture<Long> revokeLease(long leaseId) {
         if (leaseId <= 0) {
             throw new IllegalArgumentException("leaseId must be positive");
         }
-        return leaseManager.revoke(leaseId);
+        return trackProposal(leaseManager.revoke(leaseId));
     }
 
     public CompletableFuture<Long> keepAliveLease(long leaseId) {
         if (leaseId <= 0) {
             throw new IllegalArgumentException("leaseId must be positive");
         }
-        return leaseManager.keepAlive(leaseId);
+        return trackProposal(leaseManager.keepAlive(leaseId));
     }
 
     public CompletableFuture<Long> linearizableBarrier() {
@@ -125,6 +129,70 @@ public final class PartDbNode implements AutoCloseable {
         return raftNode.leaderId();
     }
 
+    public long lastLeaderChangeEpochMillis() {
+        return raftNode.lastLeaderChangeEpochMillis();
+    }
+
+    public long proposalCount() {
+        return proposalCount.get();
+    }
+
+    public long proposalFailureCount() {
+        return proposalFailureCount.get();
+    }
+
+    public StorageEngineStats storageStats() {
+        return kvStore.storageStats();
+    }
+
+    public long storageActiveMemtableBytes() {
+        return storageStats().activeMemtableBytes();
+    }
+
+    public int storageImmutableMemtableCount() {
+        return storageStats().immutableMemtableCount();
+    }
+
+    public int storageSstableCount() {
+        return storageStats().sstableCount();
+    }
+
+    public long storageTotalSstableBytes() {
+        return storageStats().totalSstableBytes();
+    }
+
+    public int storageActiveCompactions() {
+        return storageStats().activeCompactions();
+    }
+
+    public long storageCompletedCompactions() {
+        return storageStats().completedCompactions();
+    }
+
+    public long storageFailedCompactions() {
+        return storageStats().failedCompactions();
+    }
+
+    public long storageLastCompactionDurationMillis() {
+        return storageStats().lastCompactionDurationMillis();
+    }
+
+    public long storageCheckpointCount() {
+        return storageStats().checkpointCount();
+    }
+
+    public long storageRestoreCount() {
+        return storageStats().restoreCount();
+    }
+
+    public long storageLastCheckpointDurationMillis() {
+        return storageStats().lastCheckpointDurationMillis();
+    }
+
+    public long storageLastRestoreDurationMillis() {
+        return storageStats().lastRestoreDurationMillis();
+    }
+
     @Override
     public void close() {
         leaseManager.close();
@@ -138,5 +206,14 @@ public final class PartDbNode implements AutoCloseable {
             return DurableRaftStorage.open(raftDir);
         }
         return DurableRaftStorage.create(raftDir, membership);
+    }
+
+    private CompletableFuture<Long> trackProposal(CompletableFuture<Long> future) {
+        proposalCount.incrementAndGet();
+        return future.whenComplete((ignored, error) -> {
+            if (error != null) {
+                proposalFailureCount.incrementAndGet();
+            }
+        });
     }
 }

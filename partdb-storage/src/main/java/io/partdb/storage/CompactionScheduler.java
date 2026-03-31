@@ -19,6 +19,7 @@ final class CompactionScheduler implements AutoCloseable {
     private final LeveledCompactionPlanner planner;
     private final CompactionExecutor compactionExecutor;
     private final Supplier<SSTableManifest> manifestSupplier;
+    private final StorageRuntimeStats stats;
     private final Consumer<CompactionResult> resultHandler;
 
     private final CompactionReservations reservations;
@@ -32,11 +33,13 @@ final class CompactionScheduler implements AutoCloseable {
         CompactionExecutor compactionExecutor,
         int maxConcurrent,
         Supplier<SSTableManifest> manifestSupplier,
+        StorageRuntimeStats stats,
         Consumer<CompactionResult> resultHandler
     ) {
         this.planner = planner;
         this.compactionExecutor = compactionExecutor;
         this.manifestSupplier = manifestSupplier;
+        this.stats = stats;
         this.resultHandler = resultHandler;
 
         this.reservations = new CompactionReservations();
@@ -125,10 +128,38 @@ final class CompactionScheduler implements AutoCloseable {
     }
 
     private void runCompaction(CompactionTask task, ReservationToken token) {
+        StorageCompactionEvent event = new StorageCompactionEvent();
+        event.inputLevel = task.inputs().stream().mapToInt(SSTableMetadata::level).min().orElse(task.targetLevel());
+        event.outputLevel = task.targetLevel();
+        event.inputTableCount = task.inputs().size();
+        event.inputBytes = task.inputs().stream().mapToLong(SSTableMetadata::fileSizeBytes).sum();
+        event.begin();
+
+        stats.compactionStarted();
+        long startNanos = System.nanoTime();
         try {
             CompactionResult result = compactionExecutor.compact(task);
             resultHandler.accept(result);
+            switch (result) {
+                case CompactionResult.Success(_, var outputs) -> {
+                    event.outputTableCount = outputs.size();
+                    event.outputBytes = outputs.stream().mapToLong(SSTableMetadata::fileSizeBytes).sum();
+                    event.success = true;
+                    stats.compactionFinished(true, (System.nanoTime() - startNanos) / 1_000_000);
+                }
+                case CompactionResult.Failure(_, var cause) -> {
+                    event.success = false;
+                    event.error = cause.getClass().getSimpleName();
+                    stats.compactionFinished(false, (System.nanoTime() - startNanos) / 1_000_000);
+                }
+            }
+        } catch (RuntimeException e) {
+            event.success = false;
+            event.error = e.getClass().getSimpleName();
+            stats.compactionFinished(false, (System.nanoTime() - startNanos) / 1_000_000);
+            throw e;
         } finally {
+            event.commit();
             reservations.release(token);
             concurrencyLimit.release();
             reschedule();

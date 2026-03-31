@@ -50,6 +50,7 @@ final class SSTableStore implements AutoCloseable {
     private final ReentrantLock stateLock;
     private final CompactionScheduler compactionScheduler;
     private final AtomicBoolean closed;
+    private final StorageRuntimeStats stats;
 
     private volatile SSTableManifest manifest;
     private volatile SSTableSetRef currentSet;
@@ -59,7 +60,8 @@ final class SSTableStore implements AutoCloseable {
         LsmConfig config,
         BlockCache cache,
         SSTableManifest manifest,
-        SSTableSetRef initialSet
+        SSTableSetRef initialSet,
+        StorageRuntimeStats stats
     ) {
         this.directory = Objects.requireNonNull(directory, "directory");
         this.config = Objects.requireNonNull(config, "config");
@@ -69,6 +71,8 @@ final class SSTableStore implements AutoCloseable {
         this.manifest = manifest;
         this.currentSet = initialSet;
         this.closed = new AtomicBoolean(false);
+        this.stats = Objects.requireNonNull(stats, "stats");
+        this.stats.updateSstables(manifest);
 
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
         CompactionExecutor compactionExecutor = new CompactionExecutor(this, config);
@@ -77,11 +81,12 @@ final class SSTableStore implements AutoCloseable {
             compactionExecutor,
             config.maxConcurrentCompactions(),
             this::manifest,
+            this.stats,
             this::handleCompactionResult
         );
     }
 
-    static SSTableStore open(Path directory, LsmConfig config) {
+    static SSTableStore open(Path directory, LsmConfig config, StorageRuntimeStats stats) {
         try {
             Files.createDirectories(directory);
 
@@ -102,7 +107,8 @@ final class SSTableStore implements AutoCloseable {
                 config,
                 blockCache,
                 manifest,
-                SSTableSetRef.of(sstables)
+                SSTableSetRef.of(sstables),
+                stats
             );
         } catch (IOException e) {
             throw new StorageException.IO("Failed to open SSTableStore", e);
@@ -207,6 +213,7 @@ final class SSTableStore implements AutoCloseable {
                     }
 
                     if (restored) {
+                        stats.updateSstables(manifest);
                         try {
                             cleanupRestoreBackups(previousManifest);
                         } catch (IOException e) {
@@ -270,6 +277,7 @@ final class SSTableStore implements AutoCloseable {
             updatedMetadata.addFirst(metadata);
             manifest = new SSTableManifest(nextId.get(), updatedMetadata);
             manifest.writeTo(directory);
+            stats.updateSstables(manifest);
 
             List<SSTable> newReaders = new ArrayList<>();
             newReaders.add(reader);
@@ -291,6 +299,7 @@ final class SSTableStore implements AutoCloseable {
             updated.addAll(added);
             manifest = new SSTableManifest(nextId.get(), updated);
             manifest.writeTo(directory);
+            stats.updateSstables(manifest);
 
             Set<Long> removedIds = removed.stream()
                 .map(SSTableMetadata::id)
@@ -354,6 +363,10 @@ final class SSTableStore implements AutoCloseable {
 
     private Path resolvePath(long id) {
         return directory.resolve("%06d.sst".formatted(id));
+    }
+
+    StorageEngineStats statsSnapshot() {
+        return stats.snapshot();
     }
 
     private void awaitDrain(SSTableSetRef set, Duration timeout) {

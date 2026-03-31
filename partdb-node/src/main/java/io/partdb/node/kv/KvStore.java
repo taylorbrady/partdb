@@ -7,6 +7,7 @@ import io.partdb.node.raft.StateMachine;
 import io.partdb.storage.StateStore;
 import io.partdb.storage.StorageConfig;
 import io.partdb.storage.StorageCursor;
+import io.partdb.storage.StorageEngineStats;
 import io.partdb.storage.StorageSnapshot;
 import io.partdb.storage.VersionedEntry;
 
@@ -198,6 +199,10 @@ public final class KvStore implements StateMachine, AutoCloseable {
 
     public LeaseRegistry leaseRegistry() {
         return leaseRegistry;
+    }
+
+    public StorageEngineStats storageStats() {
+        return store.stats();
     }
 
     @Override
