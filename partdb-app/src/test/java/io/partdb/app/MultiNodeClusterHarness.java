@@ -2,6 +2,7 @@ package io.partdb.app;
 
 import io.partdb.client.ClusterClient;
 import io.partdb.client.ClusterClientConfig;
+import io.partdb.client.ClusterMember;
 import io.partdb.client.ClusterMembership;
 import io.partdb.client.ClusterNodeRole;
 import io.partdb.client.ClusterStatus;
@@ -12,7 +13,9 @@ import io.partdb.client.ServerEndpoint;
 import io.partdb.transport.grpc.PartDbServer;
 import io.partdb.transport.grpc.PartDbServerConfig;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -116,6 +119,65 @@ final class MultiNodeClusterHarness implements AutoCloseable {
         throw new AssertionError("Timed out waiting for membership size " + expectedMembers, lastFailure);
     }
 
+    ClusterStatus awaitStatusLeader(String nodeId, String expectedLeaderId, Duration timeout) throws Exception {
+        long deadlineNanos = System.nanoTime() + timeout.toNanos();
+        Throwable lastFailure = null;
+
+        while (System.nanoTime() < deadlineNanos) {
+            try {
+                ClusterStatus status = status(nodeId);
+                if (status.running() && effectiveLeaderId(status).map(expectedLeaderId::equals).orElse(false)) {
+                    return status;
+                }
+            } catch (Exception e) {
+                lastFailure = e;
+            }
+            Thread.sleep(POLL_INTERVAL);
+        }
+
+        throw new AssertionError(
+            "Timed out waiting for status on " + nodeId + " to report leader " + expectedLeaderId,
+            lastFailure
+        );
+    }
+
+    ClusterMembership awaitMembershipLeader(String nodeId, String expectedLeaderId, Duration timeout) throws Exception {
+        long deadlineNanos = System.nanoTime() + timeout.toNanos();
+        Throwable lastFailure = null;
+
+        while (System.nanoTime() < deadlineNanos) {
+            try {
+                ClusterMembership membership = membership(nodeId);
+                long leaderCount = membership.members().stream().filter(ClusterMember::leader).count();
+                if (leaderCount == 1
+                    && membership.leaderId().map(expectedLeaderId::equals).orElse(false)
+                    && membership.members().stream().anyMatch(member -> member.nodeId().equals(expectedLeaderId) && member.leader())) {
+                    return membership;
+                }
+            } catch (Exception e) {
+                lastFailure = e;
+            }
+            Thread.sleep(POLL_INTERVAL);
+        }
+
+        throw new AssertionError(
+            "Timed out waiting for membership on " + nodeId + " to report leader " + expectedLeaderId,
+            lastFailure
+        );
+    }
+
+    ClusterStatus status(String nodeId) throws Exception {
+        try (var client = newClusterClient(nodeId)) {
+            return client.status().get();
+        }
+    }
+
+    ClusterMembership membership(String nodeId) throws Exception {
+        try (var client = newClusterClient(nodeId)) {
+            return client.membership().get();
+        }
+    }
+
     void awaitNodeValue(String nodeId, String key, String expectedValue, Duration timeout) throws Exception {
         byte[] expectedBytes = bytes(expectedValue);
         long deadlineNanos = System.nanoTime() + timeout.toNanos();
@@ -154,6 +216,30 @@ final class MultiNodeClusterHarness implements AutoCloseable {
         return runningNodes().stream()
             .map(NodeHandle::nodeId)
             .toList();
+    }
+
+    String raftAddress(String nodeId) {
+        return "localhost:" + node(nodeId).raftPort();
+    }
+
+    String grpcAddress(String nodeId) {
+        return node(nodeId).grpcEndpoint().toString();
+    }
+
+    CommandResult runCommand(String... args) {
+        ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
+        ByteArrayOutputStream errBytes = new ByteArrayOutputStream();
+        try (
+            PrintStream out = new PrintStream(outBytes, true, StandardCharsets.UTF_8);
+            PrintStream err = new PrintStream(errBytes, true, StandardCharsets.UTF_8)
+        ) {
+            int exitCode = PartDbApp.run(args, out, err);
+            return new CommandResult(
+                exitCode,
+                outBytes.toString(StandardCharsets.UTF_8),
+                errBytes.toString(StandardCharsets.UTF_8)
+            );
+        }
     }
 
     @Override
@@ -298,4 +384,6 @@ final class MultiNodeClusterHarness implements AutoCloseable {
             server = null;
         }
     }
+
+    record CommandResult(int exitCode, String stdout, String stderr) {}
 }
