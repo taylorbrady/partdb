@@ -5,8 +5,11 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BlockCodecTest {
 
@@ -17,8 +20,8 @@ class BlockCodecTest {
         byte[] compressed = BlockCodec.NONE.compress(input);
         byte[] decompressed = BlockCodec.NONE.decompress(compressed, input.length);
 
-        assertThat(compressed).isSameAs(input);
-        assertThat(decompressed).isSameAs(input);
+        assertSame(input, compressed);
+        assertSame(input, decompressed);
     }
 
     @Test
@@ -28,8 +31,8 @@ class BlockCodecTest {
         byte[] compressed = BlockCodec.DEFLATE.compress(input);
         byte[] decompressed = BlockCodec.DEFLATE.decompress(compressed, input.length);
 
-        assertThat(compressed).isNotEmpty();
-        assertThat(decompressed).isEqualTo(input);
+        assertFalse(compressed.length == 0);
+        assertArrayEquals(input, decompressed);
     }
 
     @Test
@@ -37,16 +40,20 @@ class BlockCodecTest {
         byte[] input = repeatedPayload();
         byte[] compressed = BlockCodec.DEFLATE.compress(input);
 
-        assertThatThrownBy(() -> BlockCodec.DEFLATE.decompress(compressed, input.length - 1))
-            .isInstanceOf(StorageException.Corruption.class)
-            .hasMessageContaining("size mismatch");
+        StorageException.Corruption error = assertThrows(
+            StorageException.Corruption.class,
+            () -> BlockCodec.DEFLATE.decompress(compressed, input.length - 1)
+        );
+        assertTrue(error.getMessage().contains("size mismatch"));
     }
 
     @Test
     void fromIdRejectsUnknownCodec() {
-        assertThatThrownBy(() -> BlockCodec.fromId((byte) 99))
-            .isInstanceOf(StorageException.Corruption.class)
-            .hasMessageContaining("Unknown codec id");
+        StorageException.Corruption error = assertThrows(
+            StorageException.Corruption.class,
+            () -> BlockCodec.fromId((byte) 99)
+        );
+        assertTrue(error.getMessage().contains("Unknown codec id"));
     }
 
     private static byte[] repeatedPayload() {

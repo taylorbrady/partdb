@@ -2,7 +2,8 @@ package io.partdb.storage;
 
 import org.junit.jupiter.api.Test;
 
-import static org.assertj.core.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 class EngineEntryTest {
 
@@ -14,9 +15,9 @@ class EngineEntryTest {
 
         EngineEntry entry = new EngineEntry(key, value, revision);
 
-        assertThat(entry.key()).isEqualTo(key);
-        assertThat(entry.value()).isEqualTo(value);
-        assertThat(entry.revision()).isEqualTo(revision);
+        assertEquals(key, entry.key());
+        assertEquals(value, entry.value());
+        assertEquals(revision, entry.revision());
     }
 
     @Test
@@ -27,8 +28,8 @@ class EngineEntryTest {
         EngineEntry entry1 = new EngineEntry(key, value, 1000L);
         EngineEntry entry2 = new EngineEntry(key, value, 1000L);
 
-        assertThat(entry1).isEqualTo(entry2);
-        assertThat(entry1.hashCode()).isEqualTo(entry2.hashCode());
+        assertEquals(entry1, entry2);
+        assertEquals(entry1.hashCode(), entry2.hashCode());
     }
 
     @Test
@@ -39,7 +40,7 @@ class EngineEntryTest {
         EngineEntry entry1 = new EngineEntry(key, value, 1000L);
         EngineEntry entry2 = new EngineEntry(key, value, 2000L);
 
-        assertThat(entry1).isNotEqualTo(entry2);
+        assertNotEquals(entry1, entry2);
     }
 
     @Test
@@ -49,7 +50,7 @@ class EngineEntryTest {
         EngineEntry entry1 = new EngineEntry(Slice.of("key1"), value, 1000L);
         EngineEntry entry2 = new EngineEntry(Slice.of("key2"), value, 1000L);
 
-        assertThat(entry1).isNotEqualTo(entry2);
+        assertNotEquals(entry1, entry2);
     }
 
     @Test
@@ -59,6 +60,6 @@ class EngineEntryTest {
         EngineEntry entry1 = new EngineEntry(key, Slice.of("value1"), 1000L);
         EngineEntry entry2 = new EngineEntry(key, Slice.of("value2"), 1000L);
 
-        assertThat(entry1).isNotEqualTo(entry2);
+        assertNotEquals(entry1, entry2);
     }
 }
