@@ -1,5 +1,6 @@
 package io.partdb.raft;
 
+import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -14,6 +15,10 @@ class RaftTest {
 
     private static final RaftConfig CONFIG = RaftConfig.defaults();
     private static final int DETERMINISTIC_JITTER = 0;
+
+    private static Bytes bytes(String value) {
+        return Bytes.utf8(value);
+    }
 
     private Raft createRaft(String id, String... allVoters) {
         var membership = RaftMembership.ofVoters(allVoters);
@@ -55,9 +60,9 @@ class RaftTest {
         var membership = RaftMembership.ofVoters(allVoters);
         var storage = new InMemoryStorage(membership);
         for (int i = 1; i <= snapIndex; i++) {
-            storage.append(null, List.of(new LogEntry.Data(i, snapTerm, new byte[0])));
+            storage.append(null, List.of(new LogEntry.Data(i, snapTerm, Bytes.EMPTY)));
         }
-        storage.saveSnapshot(new RaftSnapshot(snapIndex, snapTerm, membership, new byte[0]));
+        storage.saveSnapshot(new RaftSnapshot(snapIndex, snapTerm, membership, Bytes.EMPTY));
         var raft = Raft.builder(id, membership, CONFIG, storage)
             .random(_ -> DETERMINISTIC_JITTER)
             .build();
@@ -280,7 +285,7 @@ class RaftTest {
 
             var appendEntries = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
-                List.of(new LogEntry.Data(1, 1, "data".getBytes())),
+                List.of(new LogEntry.Data(1, 1, bytes("data"))),
                 0
             );
             raft.step(new RaftEvent.Receive("n2", appendEntries));
@@ -436,7 +441,7 @@ class RaftTest {
 
             var request = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
-                List.of(new LogEntry.Data(1, 1, "data".getBytes())),
+                List.of(new LogEntry.Data(1, 1, bytes("data"))),
                 0
             );
             var ready = raft.step(new RaftEvent.Receive("n2", request));
@@ -465,7 +470,7 @@ class RaftTest {
 
             var request = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
-                List.of(new LogEntry.Data(1, 1, "data".getBytes())),
+                List.of(new LogEntry.Data(1, 1, bytes("data"))),
                 1
             );
             raft.step(new RaftEvent.Receive("n2", request));
@@ -497,7 +502,7 @@ class RaftTest {
 
             var request = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
-                List.of(new LogEntry.Data(1, 1, "data".getBytes())),
+                List.of(new LogEntry.Data(1, 1, bytes("data"))),
                 0
             );
             var ready = raft.step(new RaftEvent.Receive("n2", request));
@@ -513,7 +518,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2"));
 
-            var ready = raft.step(new RaftEvent.Propose("hello".getBytes()));
+            var ready = raft.step(new RaftEvent.Propose(bytes("hello")));
 
             long appendCount = ready.messages().stream()
                 .filter(m -> m.message() instanceof RaftMessage.AppendEntries)
@@ -526,7 +531,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2"));
 
-            raft.step(new RaftEvent.Propose("hello".getBytes()));
+            raft.step(new RaftEvent.Propose(bytes("hello")));
 
             var response = new RaftMessage.AppendEntriesResponse(1, true, 2);
             raft.step(new RaftEvent.Receive("n2", response));
@@ -556,7 +561,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1");
             tickUntilTimeout(raft);
 
-            raft.step(new RaftEvent.Propose("hello".getBytes()));
+            raft.step(new RaftEvent.Propose(bytes("hello")));
 
             assertEquals(2, raft.commitIndex());
         }
@@ -565,7 +570,7 @@ class RaftTest {
         void nonLeaderIgnoresPropose() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var ready = raft.step(new RaftEvent.Propose("hello".getBytes()));
+            var ready = raft.step(new RaftEvent.Propose(bytes("hello")));
 
             assertTrue(ready.persistence().entries().isEmpty());
             assertTrue(ready.messages().isEmpty());
@@ -597,7 +602,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1");
             tickUntilTimeout(raft);
 
-            raft.step(new RaftEvent.Propose("data".getBytes()));
+            raft.step(new RaftEvent.Propose(bytes("data")));
 
             long commitIndex = raft.commitIndex();
             assertTrue(commitIndex > 0);
@@ -611,7 +616,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 10, 1, RaftMembership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
+                1, "n2", 10, 1, RaftMembership.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
             );
             var ready = raft.step(new RaftEvent.Receive("n2", snapshot));
 
@@ -625,14 +630,14 @@ class RaftTest {
 
             var entries = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
-                List.of(new LogEntry.Data(1, 1, "data".getBytes())),
+                List.of(new LogEntry.Data(1, 1, bytes("data"))),
                 1
             );
             raft.step(new RaftEvent.Receive("n2", entries));
             assertEquals(1, raft.commitIndex());
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 1, 1, RaftMembership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
+                1, "n2", 1, 1, RaftMembership.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
             );
             var ready = raft.step(new RaftEvent.Receive("n2", snapshot));
 
@@ -715,7 +720,7 @@ class RaftTest {
             assertEquals(5, raft.term());
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                3, "n3", 10, 3, RaftMembership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
+                3, "n3", 10, 3, RaftMembership.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
             );
             var ready = raft.step(new RaftEvent.Receive("n3", snapshot));
 
@@ -734,7 +739,7 @@ class RaftTest {
             }
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 10, 1, RaftMembership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
+                1, "n2", 10, 1, RaftMembership.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
             );
             raft.step(new RaftEvent.Receive("n2", snapshot));
 
@@ -750,7 +755,7 @@ class RaftTest {
     class CommitSafety {
         @Test
         void leaderDoesNotCommitEntriesFromPreviousTerm() {
-            var oldEntry = new LogEntry.Data(1, 1, "old".getBytes());
+            var oldEntry = new LogEntry.Data(1, 1, bytes("old"));
             var raft = createRaftWithLog("n1", List.of(oldEntry), new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
             tickUntilCandidate(raft, List.of("n2", "n3"));
@@ -768,7 +773,7 @@ class RaftTest {
 
         @Test
         void leaderCommitsCurrentTermEntryImplicitlyCommittingPrevious() {
-            var oldEntry = new LogEntry.Data(1, 1, "old".getBytes());
+            var oldEntry = new LogEntry.Data(1, 1, bytes("old"));
             var raft = createRaftWithLog("n1", List.of(oldEntry), new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
             tickUntilCandidate(raft, List.of("n2", "n3"));
@@ -783,7 +788,7 @@ class RaftTest {
 
         @Test
         void leaderRequiresMajorityForCurrentTermEntry() {
-            var oldEntry = new LogEntry.Data(1, 1, "old".getBytes());
+            var oldEntry = new LogEntry.Data(1, 1, bytes("old"));
             var raft = createRaftWithLog("n1", List.of(oldEntry), new RaftPersistentState(1, null, 0), "n1", "n2", "n3", "n4", "n5");
 
             tickUntilCandidate(raft, List.of("n2", "n3", "n4", "n5"));
@@ -822,8 +827,8 @@ class RaftTest {
         @Test
         void restoresLogEntries() {
             List<LogEntry> entries = List.of(
-                new LogEntry.Data(1, 1, "first".getBytes()),
-                new LogEntry.Data(2, 1, "second".getBytes())
+                new LogEntry.Data(1, 1, bytes("first")),
+                new LogEntry.Data(2, 1, bytes("second"))
             );
             var raft = createRaftWithLog("n1", entries, new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
@@ -852,7 +857,7 @@ class RaftTest {
 
         @Test
         void restoredNodeCanBecomeLeader() {
-            List<LogEntry> entries = List.of(new LogEntry.Data(1, 1, "data".getBytes()));
+            List<LogEntry> entries = List.of(new LogEntry.Data(1, 1, bytes("data")));
             var raft = createRaftWithLog("n1", entries, new RaftPersistentState(1, null, 0), "n1");
 
             tickUntilTimeout(raft);
@@ -860,7 +865,7 @@ class RaftTest {
             assertTrue(raft.isLeader());
             assertEquals(2, raft.term());
 
-            raft.step(new RaftEvent.Propose("new-data".getBytes()));
+            raft.step(new RaftEvent.Propose(bytes("new-data")));
             assertEquals(3, raft.commitIndex());
         }
 
@@ -882,17 +887,17 @@ class RaftTest {
         @Test
         void followerTruncatesConflictingEntries() {
             List<LogEntry> entries = List.of(
-                new LogEntry.Data(1, 1, "a".getBytes()),
-                new LogEntry.Data(2, 1, "b".getBytes()),
-                new LogEntry.Data(3, 1, "c".getBytes())
+                new LogEntry.Data(1, 1, bytes("a")),
+                new LogEntry.Data(2, 1, bytes("b")),
+                new LogEntry.Data(3, 1, bytes("c"))
             );
             var raft = createRaftWithLog("n1", entries, new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
             var appendEntries = new RaftMessage.AppendEntries(
                 2, "n2", 1, 1,
                 List.of(
-                    new LogEntry.Data(2, 2, "new-b".getBytes()),
-                    new LogEntry.Data(3, 2, "new-c".getBytes())
+                    new LogEntry.Data(2, 2, bytes("new-b")),
+                    new LogEntry.Data(3, 2, bytes("new-c"))
                 ),
                 0
             );
@@ -910,17 +915,17 @@ class RaftTest {
         @Test
         void followerAcceptsEntriesAfterConflictResolution() {
             List<LogEntry> entries = List.of(
-                new LogEntry.Data(1, 1, "a".getBytes()),
-                new LogEntry.Data(2, 1, "b".getBytes())
+                new LogEntry.Data(1, 1, bytes("a")),
+                new LogEntry.Data(2, 1, bytes("b"))
             );
             var raft = createRaftWithLog("n1", entries, new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
             var appendEntries = new RaftMessage.AppendEntries(
                 2, "n2", 1, 1,
                 List.of(
-                    new LogEntry.Data(2, 2, "new-b".getBytes()),
-                    new LogEntry.Data(3, 2, "new-c".getBytes()),
-                    new LogEntry.Data(4, 2, "new-d".getBytes())
+                    new LogEntry.Data(2, 2, bytes("new-b")),
+                    new LogEntry.Data(3, 2, bytes("new-c")),
+                    new LogEntry.Data(4, 2, bytes("new-d"))
                 ),
                 0
             );
@@ -936,14 +941,14 @@ class RaftTest {
         @Test
         void followerRejectsIfPrevLogDoesNotMatch() {
             List<LogEntry> entries = List.of(
-                new LogEntry.Data(1, 1, "a".getBytes()),
-                new LogEntry.Data(2, 1, "b".getBytes())
+                new LogEntry.Data(1, 1, bytes("a")),
+                new LogEntry.Data(2, 1, bytes("b"))
             );
             var raft = createRaftWithLog("n1", entries, new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
             var appendEntries = new RaftMessage.AppendEntries(
                 2, "n2", 2, 2,
-                List.of(new LogEntry.Data(3, 2, "c".getBytes())),
+                List.of(new LogEntry.Data(3, 2, bytes("c"))),
                 0
             );
             var ready = raft.step(new RaftEvent.Receive("n2", appendEntries));
@@ -986,7 +991,7 @@ class RaftTest {
 
             var appendEntries = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
-                List.of(new LogEntry.Data(1, 1, "data".getBytes())),
+                List.of(new LogEntry.Data(1, 1, bytes("data"))),
                 0
             );
 
@@ -1212,7 +1217,7 @@ class RaftTest {
 
             var appendEntries = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
-                List.of(new LogEntry.Data(1, 1, "data".getBytes())),
+                List.of(new LogEntry.Data(1, 1, bytes("data"))),
                 0
             );
             raft.step(new RaftEvent.Receive("n2", appendEntries));
@@ -1285,12 +1290,12 @@ class RaftTest {
             tickUntilTimeout(raft);
             assertTrue(raft.isLeader());
 
-            var ready = raft.step(new RaftEvent.ReadIndex("req-1".getBytes()));
+            var ready = raft.step(new RaftEvent.ReadIndex(bytes("req-1")));
 
             assertEquals(1, ready.application().readStates().size());
             var readState = ready.application().readStates().get(0);
             assertEquals(raft.commitIndex(), readState.index());
-            assertArrayEquals("req-1".getBytes(), readState.context());
+            assertEquals(bytes("req-1"), readState.context());
         }
 
         @Test
@@ -1298,7 +1303,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftEvent.ReadIndex("req-1".getBytes()));
+            var ready = raft.step(new RaftEvent.ReadIndex(bytes("req-1")));
 
             assertTrue(ready.application().readStates().isEmpty());
             var appendEntries = getAppendEntries(ready);
@@ -1310,13 +1315,13 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ReadIndex("req-1".getBytes()));
+            raft.step(new RaftEvent.ReadIndex(bytes("req-1")));
 
             var ackReady = raft.step(new RaftEvent.Receive("n2",
                 new RaftMessage.AppendEntriesResponse(raft.term(), true, 1)));
 
             assertEquals(1, ackReady.application().readStates().size());
-            assertArrayEquals("req-1".getBytes(), ackReady.application().readStates().get(0).context());
+            assertEquals(bytes("req-1"), ackReady.application().readStates().get(0).context());
         }
 
         @Test
@@ -1325,7 +1330,7 @@ class RaftTest {
             becomeLeader(raft, List.of("n2", "n3"));
 
             long commitIndexAtRequest = raft.commitIndex();
-            var readIndexMsg = new RaftMessage.ReadIndex(raft.term(), "req-1".getBytes());
+            var readIndexMsg = new RaftMessage.ReadIndex(raft.term(), bytes("req-1"));
             raft.step(new RaftEvent.Receive("n2", readIndexMsg));
 
             var ackReady = raft.step(new RaftEvent.Receive("n3",
@@ -1334,7 +1339,7 @@ class RaftTest {
             var response = findResponse(ackReady, RaftMessage.ReadIndexResponse.class);
             assertTrue(response.isPresent());
             assertEquals(commitIndexAtRequest, response.get().readIndex());
-            assertArrayEquals("req-1".getBytes(), response.get().context());
+            assertEquals(bytes("req-1"), response.get().context());
         }
 
         @Test
@@ -1342,7 +1347,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ReadIndex("req-1".getBytes()));
+            raft.step(new RaftEvent.ReadIndex(bytes("req-1")));
 
             var higherTermMsg = new RaftMessage.AppendEntries(10, "n2", 0, 0, List.of(), 0);
             raft.step(new RaftEvent.Receive("n2", higherTermMsg));
@@ -1362,7 +1367,7 @@ class RaftTest {
             raft.step(new RaftEvent.Receive("n2", heartbeat));
             assertEquals("n2", raft.leaderId().orElseThrow());
 
-            var ready = raft.step(new RaftEvent.ReadIndex("req-1".getBytes()));
+            var ready = raft.step(new RaftEvent.ReadIndex(bytes("req-1")));
 
             var readIndexMsg = ready.messages().stream()
                 .filter(m -> m.to().equals("n2"))
@@ -1371,7 +1376,7 @@ class RaftTest {
                 .findFirst();
 
             assertTrue(readIndexMsg.isPresent());
-            assertArrayEquals("req-1".getBytes(), readIndexMsg.get().context());
+            assertEquals(bytes("req-1"), readIndexMsg.get().context());
         }
 
         @Test
@@ -1381,12 +1386,12 @@ class RaftTest {
             var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0);
             raft.step(new RaftEvent.Receive("n2", heartbeat));
 
-            var response = new RaftMessage.ReadIndexResponse(1, 5, "req-1".getBytes());
+            var response = new RaftMessage.ReadIndexResponse(1, 5, bytes("req-1"));
             var ready = raft.step(new RaftEvent.Receive("n2", response));
 
             assertEquals(1, ready.application().readStates().size());
             assertEquals(5, ready.application().readStates().get(0).index());
-            assertArrayEquals("req-1".getBytes(), ready.application().readStates().get(0).context());
+            assertEquals(bytes("req-1"), ready.application().readStates().get(0).context());
         }
 
         @Test
@@ -1394,7 +1399,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             assertTrue(raft.leaderId().isEmpty());
 
-            var ready = raft.step(new RaftEvent.ReadIndex("req-1".getBytes()));
+            var ready = raft.step(new RaftEvent.ReadIndex(bytes("req-1")));
 
             assertTrue(ready.messages().isEmpty());
             assertTrue(ready.application().readStates().isEmpty());
@@ -1407,7 +1412,7 @@ class RaftTest {
             var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0);
             raft.step(new RaftEvent.Receive("n2", heartbeat));
 
-            var response = new RaftMessage.ReadIndexResponse(1, 0, "req-1".getBytes());
+            var response = new RaftMessage.ReadIndexResponse(1, 0, bytes("req-1"));
             var ready = raft.step(new RaftEvent.Receive("n2", response));
 
             assertTrue(ready.application().readStates().isEmpty());
@@ -1417,7 +1422,7 @@ class RaftTest {
         void nonLeaderRespondsWithZeroReadIndex() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var readIndexMsg = new RaftMessage.ReadIndex(1, "req-1".getBytes());
+            var readIndexMsg = new RaftMessage.ReadIndex(1, bytes("req-1"));
             var ready = raft.step(new RaftEvent.Receive("n2", readIndexMsg));
 
             var response = findResponse(ready, RaftMessage.ReadIndexResponse.class).orElseThrow();
@@ -1429,8 +1434,8 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ReadIndex("req-1".getBytes()));
-            raft.step(new RaftEvent.ReadIndex("req-2".getBytes()));
+            raft.step(new RaftEvent.ReadIndex(bytes("req-1")));
+            raft.step(new RaftEvent.ReadIndex(bytes("req-2")));
 
             var ackReady = raft.step(new RaftEvent.Receive("n2",
                 new RaftMessage.AppendEntriesResponse(raft.term(), true, 1)));
@@ -1443,7 +1448,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             assertEquals(0, raft.term());
 
-            var readIndexMsg = new RaftMessage.ReadIndex(10, "req-1".getBytes());
+            var readIndexMsg = new RaftMessage.ReadIndex(10, bytes("req-1"));
             raft.step(new RaftEvent.Receive("n2", readIndexMsg));
 
             assertEquals(0, raft.term());
@@ -1454,7 +1459,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             assertEquals(0, raft.term());
 
-            var response = new RaftMessage.ReadIndexResponse(10, 5, "req-1".getBytes());
+            var response = new RaftMessage.ReadIndexResponse(10, 5, bytes("req-1"));
             raft.step(new RaftEvent.Receive("n2", response));
 
             assertEquals(0, raft.term());
@@ -1468,7 +1473,7 @@ class RaftTest {
             raft.step(new RaftEvent.Receive("n2", heartbeat));
             assertEquals("n2", raft.leaderId().orElseThrow());
 
-            var response = new RaftMessage.ReadIndexResponse(1, 5, "req-1".getBytes());
+            var response = new RaftMessage.ReadIndexResponse(1, 5, bytes("req-1"));
             var ready = raft.step(new RaftEvent.Receive("n3", response));
 
             assertTrue(ready.application().readStates().isEmpty());
@@ -1503,7 +1508,7 @@ class RaftTest {
 
             var request = new RaftMessage.AppendEntries(
                 1, "n1", 0, 0,
-                List.of(new LogEntry.Data(1, 1, "data".getBytes())),
+                List.of(new LogEntry.Data(1, 1, bytes("data"))),
                 0
             );
             var ready = learner.step(new RaftEvent.Receive("n1", request));
@@ -1519,7 +1524,7 @@ class RaftTest {
 
             var request = new RaftMessage.AppendEntries(
                 1, "n1", 0, 0,
-                List.of(new LogEntry.Data(1, 1, "data".getBytes())),
+                List.of(new LogEntry.Data(1, 1, bytes("data"))),
                 1
             );
             learner.step(new RaftEvent.Receive("n1", request));
@@ -1533,7 +1538,7 @@ class RaftTest {
             var leader = createRaft("n1", membership, CONFIG);
             becomeLeader(leader, List.of("n2", "n3"));
 
-            leader.step(new RaftEvent.Propose("hello".getBytes()));
+            leader.step(new RaftEvent.Propose(bytes("hello")));
             assertEquals(0, leader.commitIndex());
 
             var learnerResponse = new RaftMessage.AppendEntriesResponse(1, true, 2);
@@ -1553,7 +1558,7 @@ class RaftTest {
             learner.step(new RaftEvent.Receive("n1", heartbeat));
             assertEquals("n1", learner.leaderId().orElseThrow());
 
-            var ready = learner.step(new RaftEvent.ReadIndex("req-1".getBytes()));
+            var ready = learner.step(new RaftEvent.ReadIndex(bytes("req-1")));
 
             var readIndexMsg = ready.messages().stream()
                 .filter(m -> m.to().equals("n1"))
@@ -1562,7 +1567,7 @@ class RaftTest {
                 .findFirst();
 
             assertTrue(readIndexMsg.isPresent());
-            assertArrayEquals("req-1".getBytes(), readIndexMsg.get().context());
+            assertEquals(bytes("req-1"), readIndexMsg.get().context());
         }
 
         @Test
@@ -1572,12 +1577,12 @@ class RaftTest {
             var heartbeat = new RaftMessage.AppendEntries(1, "n1", 0, 0, List.of(), 0);
             learner.step(new RaftEvent.Receive("n1", heartbeat));
 
-            var response = new RaftMessage.ReadIndexResponse(1, 5, "req-1".getBytes());
+            var response = new RaftMessage.ReadIndexResponse(1, 5, bytes("req-1"));
             var ready = learner.step(new RaftEvent.Receive("n1", response));
 
             assertEquals(1, ready.application().readStates().size());
             assertEquals(5, ready.application().readStates().get(0).index());
-            assertArrayEquals("req-1".getBytes(), ready.application().readStates().get(0).context());
+            assertEquals(bytes("req-1"), ready.application().readStates().get(0).context());
         }
 
         @Test
@@ -1603,7 +1608,7 @@ class RaftTest {
             var leader = createRaft("n1", membership, CONFIG);
             becomeLeader(leader, List.of("n2"));
 
-            var ready = leader.step(new RaftEvent.Propose("hello".getBytes()));
+            var ready = leader.step(new RaftEvent.Propose(bytes("hello")));
 
             var targets = ready.messages().stream()
                 .filter(m -> m.message() instanceof RaftMessage.AppendEntries)

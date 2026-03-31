@@ -1,5 +1,7 @@
 package io.partdb.raft;
 
+import io.partdb.bytes.Bytes;
+
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -67,29 +69,17 @@ public record RaftReady(
 
     public record Outbound(String to, RaftMessage message) {}
 
-    public record ApplyEntry(long index, long term, byte[] data) {
+    public record ApplyEntry(long index, long term, Bytes data) {
         public ApplyEntry {
-            Objects.requireNonNull(data, "data must not be null");
-            data = data.clone();
-        }
-
-        @Override
-        public byte[] data() {
-            return data.clone();
+            data = Objects.requireNonNull(data, "data must not be null");
         }
     }
 
     public record SnapshotTransfer(String peer, long index, long term) {}
 
-    public record ReadState(long index, byte[] context) {
+    public record ReadState(long index, Bytes context) {
         public ReadState {
-            Objects.requireNonNull(context, "context must not be null");
-            context = context.clone();
-        }
-
-        @Override
-        public byte[] context() {
-            return context.clone();
+            context = Objects.requireNonNull(context, "context must not be null");
         }
     }
 

@@ -1,5 +1,7 @@
 package io.partdb.raft;
 
+import io.partdb.bytes.Bytes;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -26,11 +28,11 @@ final class RaftStepAccumulator {
         messages.add(new RaftReady.Outbound(to, message));
     }
 
-    void apply(long index, long term, byte[] data) {
+    void apply(long index, long term, Bytes data) {
         toApply.add(new RaftReady.ApplyEntry(index, term, data));
     }
 
-    void addReadState(long index, byte[] context) {
+    void addReadState(long index, Bytes context) {
         readStates.add(new RaftReady.ReadState(index, context));
     }
 

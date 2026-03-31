@@ -3,6 +3,7 @@ package io.partdb.client;
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.stub.StreamObserver;
+import io.partdb.bytes.Bytes;
 import io.partdb.grpc.kv.proto.KvProto;
 import io.partdb.grpc.kv.proto.KvServiceGrpc;
 
@@ -40,11 +41,11 @@ public final class KvClient implements AutoCloseable {
         });
     }
 
-    public CompletableFuture<Optional<byte[]>> get(byte[] key) {
+    public CompletableFuture<Optional<Bytes>> get(Bytes key) {
         return get(key, ReadConsistency.LINEARIZABLE);
     }
 
-    public CompletableFuture<Optional<byte[]>> get(byte[] key, ReadConsistency consistency) {
+    public CompletableFuture<Optional<Bytes>> get(Bytes key, ReadConsistency consistency) {
         KvProto.GetRequest request = KvProto.GetRequest.newBuilder()
             .setHeader(buildHeader())
             .setKey(toByteString(key))
@@ -52,7 +53,7 @@ public final class KvClient implements AutoCloseable {
             .build();
 
         return executeWithRetry(() -> {
-            CompletableFuture<Optional<byte[]>> future = new CompletableFuture<>();
+            CompletableFuture<Optional<Bytes>> future = new CompletableFuture<>();
             getStub().get(request, new StreamObserver<>() {
                 @Override
                 public void onNext(KvProto.GetResponse response) {
@@ -61,7 +62,7 @@ public final class KvClient implements AutoCloseable {
                     } else if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
                         handleError(response.getError(), future);
                     } else {
-                        future.complete(Optional.of(response.getValue().toByteArray()));
+                        future.complete(Optional.of(Bytes.copyOf(response.getValue().toByteArray())));
                     }
                 }
 
@@ -78,11 +79,11 @@ public final class KvClient implements AutoCloseable {
         });
     }
 
-    public CompletableFuture<Void> put(byte[] key, byte[] value) {
+    public CompletableFuture<Void> put(Bytes key, Bytes value) {
         return put(key, value, 0);
     }
 
-    public CompletableFuture<Void> put(byte[] key, byte[] value, long leaseId) {
+    public CompletableFuture<Void> put(Bytes key, Bytes value, long leaseId) {
         KvProto.PutRequest request = KvProto.PutRequest.newBuilder()
             .setHeader(buildHeader())
             .setKey(toByteString(key))
@@ -115,7 +116,7 @@ public final class KvClient implements AutoCloseable {
         });
     }
 
-    public CompletableFuture<Void> delete(byte[] key) {
+    public CompletableFuture<Void> delete(Bytes key) {
         KvProto.DeleteRequest request = KvProto.DeleteRequest.newBuilder()
             .setHeader(buildHeader())
             .setKey(toByteString(key))
@@ -146,20 +147,20 @@ public final class KvClient implements AutoCloseable {
         });
     }
 
-    public CompletableFuture<ScanCursor> scan(byte[] startKey, byte[] endKey) {
+    public CompletableFuture<ScanCursor> scan(Optional<Bytes> startKey, Optional<Bytes> endKey) {
         return scan(startKey, endKey, 0, ReadConsistency.LINEARIZABLE);
     }
 
     public CompletableFuture<ScanCursor> scan(
-        byte[] startKey,
-        byte[] endKey,
+        Optional<Bytes> startKey,
+        Optional<Bytes> endKey,
         int limit,
         ReadConsistency consistency
     ) {
         KvProto.ScanRequest request = KvProto.ScanRequest.newBuilder()
             .setHeader(buildHeader())
-            .setStartKey(toByteString(startKey))
-            .setEndKey(toByteString(endKey))
+            .setStartKey(startKey.map(KvClient::toByteString).orElse(ByteString.EMPTY))
+            .setEndKey(endKey.map(KvClient::toByteString).orElse(ByteString.EMPTY))
             .setLimit(limit)
             .setConsistency(toProtoConsistency(consistency))
             .build();
@@ -167,16 +168,16 @@ public final class KvClient implements AutoCloseable {
         return startScan(request, 0);
     }
 
-    public CompletableFuture<List<KeyValue>> batchGet(List<byte[]> keys) {
+    public CompletableFuture<List<KeyValue>> batchGet(List<Bytes> keys) {
         return batchGet(keys, ReadConsistency.LINEARIZABLE);
     }
 
-    public CompletableFuture<List<KeyValue>> batchGet(List<byte[]> keys, ReadConsistency consistency) {
+    public CompletableFuture<List<KeyValue>> batchGet(List<Bytes> keys, ReadConsistency consistency) {
         KvProto.BatchGetRequest.Builder builder = KvProto.BatchGetRequest.newBuilder()
             .setHeader(buildHeader())
             .setConsistency(toProtoConsistency(consistency));
 
-        for (byte[] key : keys) {
+        for (Bytes key : keys) {
             builder.addKeys(toByteString(key));
         }
 
@@ -194,8 +195,8 @@ public final class KvClient implements AutoCloseable {
                         for (KvProto.KeyValue kv : response.getValuesList()) {
                             if (kv.getFound()) {
                                 results.add(new KeyValue(
-                                    kv.getKey().toByteArray(),
-                                    kv.getValue().toByteArray(),
+                                    Bytes.copyOf(kv.getKey().toByteArray()),
+                                    Bytes.copyOf(kv.getValue().toByteArray()),
                                     kv.getRevision()
                                 ));
                             }
@@ -459,8 +460,8 @@ public final class KvClient implements AutoCloseable {
         };
     }
 
-    private static ByteString toByteString(byte[] bytes) {
-        return ByteString.copyFrom(bytes);
+    private static ByteString toByteString(Bytes bytes) {
+        return ByteString.copyFrom(bytes.asReadOnlyByteBuffer());
     }
 
     private KvServiceGrpc.KvServiceStub getStub() {
@@ -516,8 +517,8 @@ public final class KvClient implements AutoCloseable {
                 }
 
                 cursor.addResult(new KeyValue(
-                    response.getKey().toByteArray(),
-                    response.getValue().toByteArray(),
+                    Bytes.copyOf(response.getKey().toByteArray()),
+                    Bytes.copyOf(response.getValue().toByteArray()),
                     response.getRevision()
                 ));
                 published.set(true);

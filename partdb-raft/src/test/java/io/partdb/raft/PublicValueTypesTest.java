@@ -1,60 +1,50 @@
 package io.partdb.raft;
 
+import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class PublicValueTypesTest {
 
     @Test
-    void logEntryDataDefensivelyCopiesPayload() {
+    void logEntryDataHasValueSemantics() {
         byte[] payload = "entry".getBytes(StandardCharsets.UTF_8);
-        var entry = new LogEntry.Data(1, 1, payload);
+        var entry = new LogEntry.Data(1, 1, Bytes.copyOf(payload));
 
         payload[0] = 'E';
-        assertArrayEquals("entry".getBytes(StandardCharsets.UTF_8), entry.data());
-
-        byte[] returned = entry.data();
-        returned[0] = 'X';
-        assertArrayEquals("entry".getBytes(StandardCharsets.UTF_8), entry.data());
-        assertNotSame(payload, entry.data());
+        assertEquals(Bytes.utf8("entry"), entry.data());
+        assertEquals(new LogEntry.Data(1, 1, Bytes.utf8("entry")), entry);
     }
 
     @Test
-    void snapshotDefensivelyCopiesPayload() {
+    void snapshotHasValueSemantics() {
         byte[] data = "snapshot".getBytes(StandardCharsets.UTF_8);
-        var snapshot = new RaftSnapshot(3, 2, RaftMembership.ofVoters("n1"), data);
+        var snapshot = new RaftSnapshot(3, 2, RaftMembership.ofVoters("n1"), Bytes.copyOf(data));
 
         data[0] = 'S';
-        assertArrayEquals("snapshot".getBytes(StandardCharsets.UTF_8), snapshot.data());
-
-        byte[] returned = snapshot.data();
-        returned[0] = 'X';
-        assertArrayEquals("snapshot".getBytes(StandardCharsets.UTF_8), snapshot.data());
+        assertEquals(Bytes.utf8("snapshot"), snapshot.data());
+        assertEquals(new RaftSnapshot(3, 2, RaftMembership.ofVoters("n1"), Bytes.utf8("snapshot")), snapshot);
     }
 
     @Test
-    void readIndexMessageDefensivelyCopiesContext() {
+    void readIndexMessageHasValueSemantics() {
         byte[] context = "ctx".getBytes(StandardCharsets.UTF_8);
-        var message = new RaftMessage.ReadIndex(4, context);
+        var message = new RaftMessage.ReadIndex(4, Bytes.copyOf(context));
 
         context[0] = 'C';
-        assertArrayEquals("ctx".getBytes(StandardCharsets.UTF_8), message.context());
-
-        byte[] returned = message.context();
-        returned[0] = 'X';
-        assertArrayEquals("ctx".getBytes(StandardCharsets.UTF_8), message.context());
+        assertEquals(Bytes.utf8("ctx"), message.context());
+        assertEquals(new RaftMessage.ReadIndex(4, Bytes.utf8("ctx")), message);
     }
 
     @Test
-    void readyDefensivelyCopiesApplyPayloadsAndLists() {
+    void readyUsesBytesValues() {
         byte[] data = "apply".getBytes(StandardCharsets.UTF_8);
-        var applyEntry = new RaftReady.ApplyEntry(2, 1, data);
+        var applyEntry = new RaftReady.ApplyEntry(2, 1, Bytes.copyOf(data));
         var ready = new RaftReady(
             RaftReady.Persistence.EMPTY,
             List.of(),
@@ -63,10 +53,7 @@ class PublicValueTypesTest {
         );
 
         data[0] = 'A';
-        assertArrayEquals("apply".getBytes(StandardCharsets.UTF_8), ready.application().entries().getFirst().data());
-
-        byte[] returned = ready.application().entries().getFirst().data();
-        returned[0] = 'X';
-        assertArrayEquals("apply".getBytes(StandardCharsets.UTF_8), ready.application().entries().getFirst().data());
+        assertEquals(Bytes.utf8("apply"), ready.application().entries().getFirst().data());
+        assertEquals(new RaftReady.ApplyEntry(2, 1, Bytes.utf8("apply")), ready.application().entries().getFirst());
     }
 }

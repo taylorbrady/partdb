@@ -1,6 +1,7 @@
 package io.partdb.node.command;
 
 import com.google.protobuf.ByteString;
+import io.partdb.bytes.Bytes;
 import io.partdb.node.command.proto.CommandProto.Command;
 import io.partdb.node.command.proto.CommandProto.Delete;
 import io.partdb.node.command.proto.CommandProto.Put;
@@ -15,29 +16,29 @@ public final class CommandProposer {
         this.raftNode = raftNode;
     }
 
-    public CompletableFuture<Long> put(byte[] key, byte[] value, long leaseId) {
+    public CompletableFuture<Long> put(Bytes key, Bytes value, long leaseId) {
         var command = Command.newBuilder()
             .setPut(Put.newBuilder()
-                .setKey(ByteString.copyFrom(key))
-                .setValue(ByteString.copyFrom(value))
+                .setKey(ByteString.copyFrom(key.asReadOnlyByteBuffer()))
+                .setValue(ByteString.copyFrom(value.asReadOnlyByteBuffer()))
                 .setLeaseId(leaseId))
             .build();
-        return raftNode.propose(command.toByteArray())
+        return raftNode.propose(Bytes.copyOf(command.toByteArray()))
             .thenCompose(result -> raftNode.waitForApplied(result.index()));
     }
 
-    public CompletableFuture<Long> delete(byte[] key) {
+    public CompletableFuture<Long> delete(Bytes key) {
         var command = Command.newBuilder()
             .setDelete(Delete.newBuilder()
-                .setKey(ByteString.copyFrom(key)))
+                .setKey(ByteString.copyFrom(key.asReadOnlyByteBuffer())))
             .build();
-        return raftNode.propose(command.toByteArray())
+        return raftNode.propose(Bytes.copyOf(command.toByteArray()))
             .thenCompose(result -> raftNode.waitForApplied(result.index()));
     }
 
     public CompletableFuture<Long> propose(Command.Builder commandBuilder) {
         var command = commandBuilder.build();
-        return raftNode.propose(command.toByteArray())
+        return raftNode.propose(Bytes.copyOf(command.toByteArray()))
             .thenCompose(result -> raftNode.waitForApplied(result.index()));
     }
 }

@@ -1,5 +1,7 @@
 package io.partdb.node.lease;
 
+import io.partdb.bytes.Bytes;
+
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -35,29 +37,27 @@ public final class LeaseRegistry {
         byId.remove(leaseId);
     }
 
-    public void attachKey(long leaseId, byte[] key) {
+    public void attachKey(long leaseId, Bytes key) {
         var lease = byId.get(leaseId);
         if (lease != null) {
-            lease.keys().add(LeaseKey.of(key));
+            lease.keys().add(key);
         }
     }
 
-    public void detachKey(long leaseId, byte[] key) {
+    public void detachKey(long leaseId, Bytes key) {
         var lease = byId.get(leaseId);
         if (lease != null) {
-            lease.keys().remove(LeaseKey.of(key));
+            lease.keys().remove(key);
         }
     }
 
-    public List<byte[]> attachedKeys(long leaseId) {
+    public List<Bytes> attachedKeys(long leaseId) {
         var lease = byId.get(leaseId);
         if (lease == null) {
             return List.of();
         }
 
-        return lease.keys().stream()
-            .map(LeaseKey::toByteArray)
-            .toList();
+        return lease.keys().stream().toList();
     }
 
     public void keepAlive(long leaseId) {

@@ -1,9 +1,9 @@
 package io.partdb.app;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.client.KvClient;
 import io.partdb.client.ServerEndpoint;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
@@ -57,7 +57,7 @@ record DeleteCommand(ServerEndpoint endpoint, String key) implements AppCommand 
     @Override
     public int execute(CliRuntime runtime) {
         try (var client = new KvClient(runtime.kvClientConfig(endpoint))) {
-            runtime.await(client.delete(key.getBytes(StandardCharsets.UTF_8)));
+            runtime.await(client.delete(Bytes.utf8(key)));
             runtime.out().println("OK");
             return 0;
         } catch (TimeoutException e) {

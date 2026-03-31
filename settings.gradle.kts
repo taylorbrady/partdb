@@ -1,6 +1,7 @@
 rootProject.name = "partdb"
 
 include(
+    "partdb-bytes",
     "partdb-node",
     "partdb-storage",
     "partdb-raft",

@@ -1,8 +1,10 @@
 package io.partdb.raft;
 
+import io.partdb.bytes.Bytes;
+
 import java.util.Objects;
 
-public record RaftSnapshot(long index, long term, RaftMembership membership, byte[] data) {
+public record RaftSnapshot(long index, long term, RaftMembership membership, Bytes data) {
 
     public RaftSnapshot {
         if (index < 0) {
@@ -14,12 +16,6 @@ public record RaftSnapshot(long index, long term, RaftMembership membership, byt
         if (membership == null) {
             throw new IllegalArgumentException("membership must not be null");
         }
-        Objects.requireNonNull(data, "data must not be null");
-        data = data.clone();
-    }
-
-    @Override
-    public byte[] data() {
-        return data.clone();
+        data = Objects.requireNonNull(data, "data must not be null");
     }
 }

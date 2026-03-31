@@ -1,5 +1,6 @@
 package io.partdb.node.transport;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.node.NodeMembership;
 
 import java.util.List;
@@ -64,19 +65,13 @@ public sealed interface ConsensusMessage {
         long lastIncludedIndex,
         long lastIncludedTerm,
         NodeMembership membership,
-        byte[] data
+        Bytes data
     ) implements Request {
         public InstallSnapshot {
             validateTerm(term);
             leaderId = requireNonBlank(leaderId, "leaderId");
             Objects.requireNonNull(membership, "membership must not be null");
-            Objects.requireNonNull(data, "data must not be null");
-            data = data.clone();
-        }
-
-        @Override
-        public byte[] data() {
-            return data.clone();
+            data = Objects.requireNonNull(data, "data must not be null");
         }
     }
 
@@ -109,34 +104,22 @@ public sealed interface ConsensusMessage {
 
     record ReadIndex(
         long term,
-        byte[] context
+        Bytes context
     ) implements Request {
         public ReadIndex {
             validateTerm(term);
-            Objects.requireNonNull(context, "context must not be null");
-            context = context.clone();
-        }
-
-        @Override
-        public byte[] context() {
-            return context.clone();
+            context = Objects.requireNonNull(context, "context must not be null");
         }
     }
 
     record ReadIndexResponse(
         long term,
         long readIndex,
-        byte[] context
+        Bytes context
     ) implements Response {
         public ReadIndexResponse {
             validateTerm(term);
-            Objects.requireNonNull(context, "context must not be null");
-            context = context.clone();
-        }
-
-        @Override
-        public byte[] context() {
-            return context.clone();
+            context = Objects.requireNonNull(context, "context must not be null");
         }
     }
 

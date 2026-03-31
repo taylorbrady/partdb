@@ -1,6 +1,7 @@
 package io.partdb.transport.grpc;
 
 import com.google.protobuf.ByteString;
+import io.partdb.bytes.Bytes;
 import io.partdb.node.NodeMembership;
 import io.partdb.node.transport.ConsensusLogEntry;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
@@ -14,7 +15,7 @@ final class ConsensusModelProtoConverters {
             case DATA -> new ConsensusLogEntry.Data(
                 proto.getIndex(),
                 proto.getTerm(),
-                proto.getData().toByteArray()
+                Bytes.copyOf(proto.getData().toByteArray())
             );
             case NO_OP -> new ConsensusLogEntry.NoOp(
                 proto.getIndex(),
@@ -35,7 +36,7 @@ final class ConsensusModelProtoConverters {
             .setTerm(entry.term());
 
         switch (entry) {
-            case ConsensusLogEntry.Data data -> builder.setData(ByteString.copyFrom(data.data()));
+            case ConsensusLogEntry.Data data -> builder.setData(ByteString.copyFrom(data.data().asReadOnlyByteBuffer()));
             case ConsensusLogEntry.NoOp _ -> builder.setNoOp(true);
             case ConsensusLogEntry.Config config -> builder.setConfig(toProto(config.membership()));
         }

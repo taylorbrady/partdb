@@ -3,6 +3,7 @@ plugins {
 }
 
 dependencies {
+    api(project(":partdb-bytes"))
     implementation(project(":partdb-grpc"))
 
     val grpcVersion = "1.80.0"

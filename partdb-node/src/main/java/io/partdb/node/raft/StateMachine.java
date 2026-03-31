@@ -1,9 +1,11 @@
 package io.partdb.node.raft;
 
+import io.partdb.bytes.Bytes;
+
 public interface StateMachine {
-    void apply(long index, byte[] data);
+    void apply(long index, Bytes data);
 
-    byte[] snapshot();
+    Bytes snapshot();
 
-    void restore(long index, byte[] snapshot);
+    void restore(long index, Bytes snapshot);
 }

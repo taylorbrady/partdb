@@ -1,36 +1,25 @@
 package io.partdb.client;
 
+import io.partdb.bytes.Bytes;
+
 public sealed interface WriteOp permits WriteOp.Put, WriteOp.Delete {
 
-    record Put(byte[] key, byte[] value, long leaseId) implements WriteOp {
+    record Put(Bytes key, Bytes value, long leaseId) implements WriteOp {
         public Put {
-            key = key.clone();
-            value = value.clone();
-        }
-
-        public Put(byte[] key, byte[] value) {
-            this(key, value, 0);
-        }
-
-        @Override
-        public byte[] key() {
-            return key.clone();
-        }
-
-        @Override
-        public byte[] value() {
-            return value.clone();
+            if (key == null) {
+                throw new IllegalArgumentException("key must not be null");
+            }
+            if (value == null) {
+                throw new IllegalArgumentException("value must not be null");
+            }
         }
     }
 
-    record Delete(byte[] key) implements WriteOp {
+    record Delete(Bytes key) implements WriteOp {
         public Delete {
-            key = key.clone();
-        }
-
-        @Override
-        public byte[] key() {
-            return key.clone();
+            if (key == null) {
+                throw new IllegalArgumentException("key must not be null");
+            }
         }
     }
 }

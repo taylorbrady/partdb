@@ -2,6 +2,7 @@ package io.partdb.transport.grpc;
 
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
+import io.partdb.bytes.Bytes;
 import io.partdb.grpc.kv.proto.KvProto;
 import io.partdb.grpc.kv.proto.KvProto.BatchGetRequest;
 import io.partdb.grpc.kv.proto.KvProto.BatchGetResponse;
@@ -55,7 +56,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void get(GetRequest request, StreamObserver<GetResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
-        CompletableFuture<Optional<byte[]>> future = readWithConsistency(
+        CompletableFuture<Optional<Bytes>> future = readWithConsistency(
             request.getConsistency(),
             () -> node.get(toBytes(request.getKey()))
         );
@@ -87,8 +88,8 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void put(PutRequest request, StreamObserver<PutResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
-        byte[] key = toBytes(request.getKey());
-        byte[] value = toBytes(request.getValue());
+        Bytes key = toBytes(request.getKey());
+        Bytes value = toBytes(request.getValue());
         long leaseId = request.getLeaseId();
 
         node.put(key, value, leaseId)
@@ -110,7 +111,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void delete(DeleteRequest request, StreamObserver<DeleteResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
-        byte[] key = toBytes(request.getKey());
+        Bytes key = toBytes(request.getKey());
 
         node.delete(key)
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
@@ -132,8 +133,12 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     public void scan(ScanRequest request, StreamObserver<ScanResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
 
-        byte[] startKey = request.getStartKey().isEmpty() ? null : toBytes(request.getStartKey());
-        byte[] endKey = request.getEndKey().isEmpty() ? null : toBytes(request.getEndKey());
+        Optional<Bytes> startKey = request.getStartKey().isEmpty()
+            ? Optional.empty()
+            : Optional.of(toBytes(request.getStartKey()));
+        Optional<Bytes> endKey = request.getEndKey().isEmpty()
+            ? Optional.empty()
+            : Optional.of(toBytes(request.getEndKey()));
         int limit = request.getLimit() > 0 ? request.getLimit() : Integer.MAX_VALUE;
 
         CompletableFuture<Stream<KeyValueEntry>> future = readWithConsistency(
@@ -178,7 +183,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
             () -> {
                 List<KeyValue> results = new ArrayList<>();
                 for (ByteString keyBytes : request.getKeysList()) {
-                    Optional<byte[]> value = node.get(keyBytes.toByteArray());
+                    Optional<Bytes> value = node.get(Bytes.copyOf(keyBytes.toByteArray()));
                     results.add(buildKeyValue(keyBytes, value));
                 }
                 return results;
@@ -316,15 +321,15 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         return Duration.ofMillis(header.getTimeoutMs());
     }
 
-    private static byte[] toBytes(ByteString bytes) {
-        return bytes.toByteArray();
+    private static Bytes toBytes(ByteString bytes) {
+        return Bytes.copyOf(bytes.toByteArray());
     }
 
-    private static ByteString toByteString(byte[] bytes) {
-        return ByteString.copyFrom(bytes);
+    private static ByteString toByteString(Bytes bytes) {
+        return ByteString.copyFrom(bytes.asReadOnlyByteBuffer());
     }
 
-    private static KeyValue buildKeyValue(ByteString key, Optional<byte[]> value) {
+    private static KeyValue buildKeyValue(ByteString key, Optional<Bytes> value) {
         KeyValue.Builder builder = KeyValue.newBuilder()
             .setKey(key)
             .setFound(value.isPresent());

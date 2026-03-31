@@ -239,7 +239,7 @@ final class GrpcConsensusTransport implements ConsensusTransport {
             .setHeader(ConsensusProtoConverters.toSnapshotHeader(msg))
             .build());
 
-        byte[] data = msg.data();
+        byte[] data = msg.data().toByteArray();
         int offset = 0;
         int chunkSize = config.snapshotChunkSize();
 

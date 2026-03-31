@@ -1,9 +1,9 @@
 package io.partdb.app;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.client.KvClient;
 import io.partdb.client.ServerEndpoint;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
@@ -62,8 +62,8 @@ record PutCommand(ServerEndpoint endpoint, String key, String value) implements 
     public int execute(CliRuntime runtime) {
         try (var client = new KvClient(runtime.kvClientConfig(endpoint))) {
             runtime.await(client.put(
-                key.getBytes(StandardCharsets.UTF_8),
-                value.getBytes(StandardCharsets.UTF_8)
+                Bytes.utf8(key),
+                Bytes.utf8(value)
             ));
             runtime.out().println("OK");
             return 0;

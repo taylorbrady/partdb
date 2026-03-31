@@ -1,5 +1,6 @@
 package io.partdb.node;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.node.command.CommandProposer;
 import io.partdb.node.kv.KvStore;
 import io.partdb.node.lease.LeaseManager;
@@ -53,33 +54,36 @@ public final class PartDbNode implements AutoCloseable {
         this.leaseManager = new LeaseManager(raftNode, proposer, kvStore.leaseRegistry());
     }
 
-    public Optional<byte[]> get(byte[] key) {
+    public Optional<Bytes> get(Bytes key) {
         Objects.requireNonNull(key, "key must not be null");
-        return kvStore.get(key.clone())
-            .map(byte[]::clone);
+        return kvStore.get(key.toByteArray())
+            .map(Bytes::copyOf);
     }
 
-    public Stream<KeyValueEntry> scan(byte[] startKey, byte[] endKey) {
-        byte[] scanStart = startKey != null ? startKey.clone() : null;
-        byte[] scanEnd = endKey != null ? endKey.clone() : null;
-        return kvStore.scan(scanStart, scanEnd)
+    public Stream<KeyValueEntry> scan(Optional<Bytes> startKey, Optional<Bytes> endKey) {
+        Objects.requireNonNull(startKey, "startKey must not be null");
+        Objects.requireNonNull(endKey, "endKey must not be null");
+        return kvStore.scan(
+            startKey.map(Bytes::toByteArray).orElse(null),
+            endKey.map(Bytes::toByteArray).orElse(null)
+        )
             .map(entry -> new KeyValueEntry(
-                entry.key(),
-                entry.value(),
+                Bytes.copyOf(entry.key()),
+                Bytes.copyOf(entry.value()),
                 entry.version(),
                 entry.leaseId()
             ));
     }
 
-    public CompletableFuture<Long> put(byte[] key, byte[] value, long leaseId) {
+    public CompletableFuture<Long> put(Bytes key, Bytes value, long leaseId) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(value, "value must not be null");
-        return trackProposal(proposer.put(key.clone(), value.clone(), leaseId));
+        return trackProposal(proposer.put(key, value, leaseId));
     }
 
-    public CompletableFuture<Long> delete(byte[] key) {
+    public CompletableFuture<Long> delete(Bytes key) {
         Objects.requireNonNull(key, "key must not be null");
-        return trackProposal(proposer.delete(key.clone()));
+        return trackProposal(proposer.delete(key));
     }
 
     public CompletableFuture<Long> grantLease(long ttlNanos) {

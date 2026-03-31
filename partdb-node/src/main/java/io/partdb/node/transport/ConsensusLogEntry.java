@@ -1,5 +1,6 @@
 package io.partdb.node.transport;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.node.NodeMembership;
 
 import java.util.Objects;
@@ -9,16 +10,10 @@ public sealed interface ConsensusLogEntry {
 
     long term();
 
-    record Data(long index, long term, byte[] data) implements ConsensusLogEntry {
+    record Data(long index, long term, Bytes data) implements ConsensusLogEntry {
         public Data {
             validateIndexAndTerm(index, term);
-            Objects.requireNonNull(data, "data must not be null");
-            data = data.clone();
-        }
-
-        @Override
-        public byte[] data() {
-            return data.clone();
+            data = Objects.requireNonNull(data, "data must not be null");
         }
     }
 

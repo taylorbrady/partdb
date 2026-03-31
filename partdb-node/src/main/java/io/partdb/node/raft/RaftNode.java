@@ -1,5 +1,6 @@
 package io.partdb.node.raft;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.RaftMembership;
 import io.partdb.raft.Raft;
@@ -35,7 +36,7 @@ public final class RaftNode implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(RaftNode.class);
 
     private sealed interface NodeEvent {
-        record Proposal(long id, byte[] data) implements NodeEvent {}
+        record Proposal(long id, Bytes data) implements NodeEvent {}
         record Raft(RaftEvent event) implements NodeEvent {}
         record Tick() implements NodeEvent {}
     }
@@ -117,7 +118,7 @@ public final class RaftNode implements AutoCloseable {
         return new Builder();
     }
 
-    public CompletableFuture<ProposalResult> propose(byte[] data) {
+    public CompletableFuture<ProposalResult> propose(Bytes data) {
         if (!running) {
             return CompletableFuture.failedFuture(new RaftException.Shutdown());
         }
@@ -135,7 +136,7 @@ public final class RaftNode implements AutoCloseable {
         long id = readContextCounter.incrementAndGet();
         var future = new CompletableFuture<ReadResult>();
         pendingReads.put(id, future);
-        events.offer(new NodeEvent.Raft(new RaftEvent.ReadIndex(longToBytes(id))));
+        events.offer(new NodeEvent.Raft(new RaftEvent.ReadIndex(Bytes.copyOf(longToBytes(id)))));
         return future;
     }
 
@@ -213,7 +214,7 @@ public final class RaftNode implements AutoCloseable {
             try {
                 var event = events.take();
                 switch (event) {
-                    case NodeEvent.Proposal(long id, byte[] data) -> handleProposal(id, data);
+                    case NodeEvent.Proposal(long id, Bytes data) -> handleProposal(id, data);
                     case NodeEvent.Tick() -> expireStaleRpcs();
                     case NodeEvent.Raft(RaftEvent re) -> {
                         var ready = raft.step(re);
@@ -285,7 +286,7 @@ public final class RaftNode implements AutoCloseable {
         keysToRemove.forEach(pendingRpcs::remove);
     }
 
-    private void handleProposal(long proposalId, byte[] data) {
+    private void handleProposal(long proposalId, Bytes data) {
         var future = pendingProposals.remove(proposalId);
         if (future == null) {
             return;
@@ -416,7 +417,7 @@ public final class RaftNode implements AutoCloseable {
     private void sendSnapshot(RaftReady.SnapshotTransfer request) {
         var snapshot = store.snapshot();
         if (snapshot.isEmpty()) {
-            byte[] data = stateMachine.snapshot();
+            Bytes data = stateMachine.snapshot();
             var newSnapshot = new RaftSnapshot(request.index(), request.term(), raft.membership(), data);
             store.saveSnapshot(newSnapshot);
             snapshot = Optional.of(newSnapshot);
@@ -483,8 +484,8 @@ public final class RaftNode implements AutoCloseable {
         return ByteBuffer.allocate(8).putLong(value).array();
     }
 
-    private static long bytesToLong(byte[] bytes) {
-        return ByteBuffer.wrap(bytes).getLong();
+    private static long bytesToLong(Bytes bytes) {
+        return ByteBuffer.wrap(bytes.toByteArray()).getLong();
     }
 
     public static final class Builder {

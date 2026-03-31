@@ -1,9 +1,9 @@
 package io.partdb.app;
 
+import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 
@@ -143,11 +143,11 @@ class MultiNodeClusterIntegrationTest {
         }
     }
 
-    private static byte[] bytes(String value) {
-        return value.getBytes(StandardCharsets.UTF_8);
+    private static Bytes bytes(String value) {
+        return Bytes.utf8(value);
     }
 
-    private static String decode(byte[] value) {
-        return new String(value, StandardCharsets.UTF_8);
+    private static String decode(Bytes value) {
+        return value.utf8();
     }
 }

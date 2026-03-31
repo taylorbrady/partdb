@@ -1,6 +1,7 @@
 package io.partdb.node.kv;
 
 import com.google.protobuf.ByteString;
+import io.partdb.bytes.Bytes;
 import io.partdb.node.command.proto.CommandProto.Command;
 import io.partdb.node.command.proto.CommandProto.GrantLease;
 import io.partdb.node.command.proto.CommandProto.Put;
@@ -26,13 +27,13 @@ class KvStoreTest {
         Path sourceDir = tempDir.resolve("source");
         Path restoredDir = tempDir.resolve("restored");
 
-        byte[] snapshot;
+        Bytes snapshot;
         byte[] key = "lease-key".getBytes(StandardCharsets.UTF_8);
         byte[] value = "lease-value".getBytes(StandardCharsets.UTF_8);
 
         try (KvStore source = KvStore.open(sourceDir, StorageConfig.defaults())) {
-            source.apply(1, grantLease(7, 1_000_000_000).toByteArray());
-            source.apply(2, put(key, value, 7).toByteArray());
+            source.apply(1, Bytes.copyOf(grantLease(7, 1_000_000_000).toByteArray()));
+            source.apply(2, Bytes.copyOf(put(key, value, 7).toByteArray()));
 
             assertTrue(source.get(key).isPresent());
             snapshot = source.snapshot();
@@ -44,7 +45,7 @@ class KvStoreTest {
             assertTrue(restored.get(key).isPresent());
             assertArrayEquals(value, restored.get(key).orElseThrow());
 
-            restored.apply(3, revokeLease(7).toByteArray());
+            restored.apply(3, Bytes.copyOf(revokeLease(7).toByteArray()));
 
             assertFalse(restored.get(key).isPresent());
         }

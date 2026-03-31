@@ -1,22 +1,12 @@
 package io.partdb.client;
 
+import io.partdb.bytes.Bytes;
+
 import java.util.Objects;
 
-public record KeyValue(byte[] key, byte[] value, long revision) {
+public record KeyValue(Bytes key, Bytes value, long revision) {
     public KeyValue {
-        Objects.requireNonNull(key, "key must not be null");
-        Objects.requireNonNull(value, "value must not be null");
-        key = key.clone();
-        value = value.clone();
-    }
-
-    @Override
-    public byte[] key() {
-        return key.clone();
-    }
-
-    @Override
-    public byte[] value() {
-        return value.clone();
+        key = Objects.requireNonNull(key, "key must not be null");
+        value = Objects.requireNonNull(value, "value must not be null");
     }
 }

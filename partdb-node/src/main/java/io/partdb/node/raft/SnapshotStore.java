@@ -1,5 +1,6 @@
 package io.partdb.node.raft;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.raft.RaftMembership;
 import io.partdb.raft.RaftSnapshot;
 import io.partdb.storage.StorageException;
@@ -52,7 +53,7 @@ public final class SnapshotStore implements AutoCloseable {
 
             byte[] membershipBytes = encodeMembership(snapshot.membership());
             int membershipLen = membershipBytes.length;
-            byte[] data = snapshot.data() != null ? snapshot.data() : new byte[0];
+            Bytes data = snapshot.data();
 
             ByteBuffer header = ByteBuffer.allocate(HEADER_SIZE + 4 + membershipLen).order(BYTE_ORDER);
             header.putInt(MAGIC);
@@ -64,12 +65,12 @@ public final class SnapshotStore implements AutoCloseable {
             header.flip();
 
             channel.write(header);
-            channel.write(ByteBuffer.wrap(data));
+            channel.write(data.asReadOnlyByteBuffer());
 
             CRC32C crc = new CRC32C();
             header.rewind();
             crc.update(header);
-            crc.update(data);
+            crc.update(data.toByteArray());
 
             ByteBuffer crcBuf = ByteBuffer.allocate(4).order(BYTE_ORDER);
             crcBuf.putInt((int) crc.getValue());
@@ -180,7 +181,7 @@ public final class SnapshotStore implements AutoCloseable {
                 throw new StorageException.Corruption("RaftSnapshot CRC mismatch: " + path);
             }
 
-            return new RaftSnapshot(index, term, membership, data);
+            return new RaftSnapshot(index, term, membership, Bytes.copyOf(data));
 
         } catch (IOException e) {
             throw new StorageException.IO("Failed to load snapshot: " + path, e);

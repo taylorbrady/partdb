@@ -1,6 +1,7 @@
 package io.partdb.transport.grpc;
 
 import com.google.protobuf.ByteString;
+import io.partdb.bytes.Bytes;
 import io.partdb.node.transport.ConsensusMessage;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 
@@ -129,14 +130,14 @@ final class ConsensusProtoConverters {
     static ConsensusMessage.ReadIndex fromProto(RaftProto.ReadIndexRequest proto) {
         return new ConsensusMessage.ReadIndex(
             proto.getTerm(),
-            proto.getContext().toByteArray()
+            Bytes.copyOf(proto.getContext().toByteArray())
         );
     }
 
     static RaftProto.ReadIndexRequest toProto(ConsensusMessage.ReadIndex msg) {
         return RaftProto.ReadIndexRequest.newBuilder()
             .setTerm(msg.term())
-            .setContext(ByteString.copyFrom(msg.context()))
+            .setContext(ByteString.copyFrom(msg.context().asReadOnlyByteBuffer()))
             .build();
     }
 
@@ -144,7 +145,7 @@ final class ConsensusProtoConverters {
         return new ConsensusMessage.ReadIndexResponse(
             proto.getTerm(),
             proto.getReadIndex(),
-            proto.getContext().toByteArray()
+            Bytes.copyOf(proto.getContext().toByteArray())
         );
     }
 
@@ -152,7 +153,7 @@ final class ConsensusProtoConverters {
         return RaftProto.ReadIndexResponse.newBuilder()
             .setTerm(msg.term())
             .setReadIndex(msg.readIndex())
-            .setContext(ByteString.copyFrom(msg.context()))
+            .setContext(ByteString.copyFrom(msg.context().asReadOnlyByteBuffer()))
             .build();
     }
 
@@ -163,7 +164,7 @@ final class ConsensusProtoConverters {
             .setLastIncludedIndex(msg.lastIncludedIndex())
             .setLastIncludedTerm(msg.lastIncludedTerm())
             .setMembership(ConsensusModelProtoConverters.toProto(msg.membership()))
-            .setTotalSize(msg.data().length)
+            .setTotalSize(msg.data().size())
             .build();
     }
 
@@ -174,7 +175,7 @@ final class ConsensusProtoConverters {
             header.getLastIncludedIndex(),
             header.getLastIncludedTerm(),
             ConsensusModelProtoConverters.fromProto(header.getMembership()),
-            data
+            Bytes.copyOf(data)
         );
     }
 }

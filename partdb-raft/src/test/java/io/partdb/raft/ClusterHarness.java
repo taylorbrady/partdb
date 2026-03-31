@@ -1,5 +1,7 @@
 package io.partdb.raft;
 
+import io.partdb.bytes.Bytes;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -173,7 +175,7 @@ final class ClusterHarness {
     void propose(String nodeId, byte[] data) {
         var node = nodes.get(nodeId);
         if (node != null) {
-            var ready = node.raft().step(new RaftEvent.Propose(data));
+            var ready = node.raft().step(new RaftEvent.Propose(Bytes.copyOf(data)));
             processReady(nodeId, ready);
         }
     }
@@ -181,7 +183,7 @@ final class ClusterHarness {
     void readIndex(String nodeId, byte[] context) {
         var node = nodes.get(nodeId);
         if (node != null) {
-            var ready = node.raft().step(new RaftEvent.ReadIndex(context));
+            var ready = node.raft().step(new RaftEvent.ReadIndex(Bytes.copyOf(context)));
             processReady(nodeId, ready);
         }
     }
@@ -269,13 +271,13 @@ final class ClusterHarness {
         }
 
         for (var readState : ready.application().readStates()) {
-            readStates.add(new ReadState(from, readState.index(), readState.context()));
+            readStates.add(new ReadState(from, readState.index(), readState.context().toByteArray()));
         }
 
         var snapshot = ready.snapshotTransfer().orElse(null);
         if (snapshot != null) {
             var outgoingSnapshot = node.storage().snapshot()
-                .orElseGet(() -> new RaftSnapshot(snapshot.index(), snapshot.term(), node.raft().membership(), new byte[0]));
+                .orElseGet(() -> new RaftSnapshot(snapshot.index(), snapshot.term(), node.raft().membership(), Bytes.EMPTY));
             var msg = new RaftMessage.InstallSnapshot(
                 node.raft().term(),
                 from,

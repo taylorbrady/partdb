@@ -1,5 +1,6 @@
 package io.partdb.node.raft;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.LogEntry;
 import io.partdb.raft.RaftMembership;
@@ -22,12 +23,12 @@ public final class LogCodec {
 
     public static void writeEntry(ByteBuffer buf, LogEntry entry) {
         switch (entry) {
-            case LogEntry.Data(long index, long term, byte[] data) -> {
+            case LogEntry.Data(long index, long term, Bytes data) -> {
                 buf.put(ENTRY_TYPE_DATA);
                 buf.putLong(index);
                 buf.putLong(term);
-                buf.putInt(data.length);
-                buf.put(data);
+                buf.putInt(data.size());
+                buf.put(data.asReadOnlyByteBuffer());
             }
             case LogEntry.NoOp(long index, long term) -> {
                 buf.put(ENTRY_TYPE_NOOP);
@@ -53,7 +54,7 @@ public final class LogCodec {
                 int dataLen = buf.getInt();
                 byte[] data = new byte[dataLen];
                 buf.get(data);
-                yield new LogEntry.Data(index, term, data);
+                yield new LogEntry.Data(index, term, Bytes.copyOf(data));
             }
             case ENTRY_TYPE_NOOP -> new LogEntry.NoOp(index, term);
             case ENTRY_TYPE_CONFIG -> {
@@ -66,7 +67,7 @@ public final class LogCodec {
 
     public static int entrySize(LogEntry entry) {
         return switch (entry) {
-            case LogEntry.Data(long index, long term, byte[] data) -> 1 + 8 + 8 + 4 + data.length;
+            case LogEntry.Data(long index, long term, Bytes data) -> 1 + 8 + 8 + 4 + data.size();
             case LogEntry.NoOp(long index, long term) -> 1 + 8 + 8;
             case LogEntry.Config(long index, long term, RaftMembership membership) -> 1 + 8 + 8 + membershipSize(membership);
         };

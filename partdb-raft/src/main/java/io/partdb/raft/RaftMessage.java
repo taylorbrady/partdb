@@ -1,5 +1,7 @@
 package io.partdb.raft;
 
+import io.partdb.bytes.Bytes;
+
 import java.util.List;
 import java.util.Objects;
 
@@ -69,7 +71,7 @@ public sealed interface RaftMessage {
         long lastIncludedIndex,
         long lastIncludedTerm,
         RaftMembership membership,
-        byte[] data
+        Bytes data
     ) implements Request {
         public InstallSnapshot {
             if (term < 0) {
@@ -77,13 +79,7 @@ public sealed interface RaftMessage {
             }
             Objects.requireNonNull(leaderId, "leaderId must not be null");
             Objects.requireNonNull(membership, "membership must not be null");
-            Objects.requireNonNull(data, "data must not be null");
-            data = data.clone();
-        }
-
-        @Override
-        public byte[] data() {
-            return data.clone();
+            data = Objects.requireNonNull(data, "data must not be null");
         }
     }
 
@@ -122,38 +118,26 @@ public sealed interface RaftMessage {
 
     record ReadIndex(
         long term,
-        byte[] context
+        Bytes context
     ) implements Request {
         public ReadIndex {
             if (term < 0) {
                 throw new IllegalArgumentException("term must be non-negative");
             }
-            Objects.requireNonNull(context, "context must not be null");
-            context = context.clone();
-        }
-
-        @Override
-        public byte[] context() {
-            return context.clone();
+            context = Objects.requireNonNull(context, "context must not be null");
         }
     }
 
     record ReadIndexResponse(
         long term,
         long readIndex,
-        byte[] context
+        Bytes context
     ) implements Response {
         public ReadIndexResponse {
             if (term < 0) {
                 throw new IllegalArgumentException("term must be non-negative");
             }
-            Objects.requireNonNull(context, "context must not be null");
-            context = context.clone();
-        }
-
-        @Override
-        public byte[] context() {
-            return context.clone();
+            context = Objects.requireNonNull(context, "context must not be null");
         }
     }
 }

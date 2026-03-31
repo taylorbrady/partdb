@@ -1,12 +1,14 @@
 package io.partdb.node.lease;
 
+import io.partdb.bytes.Bytes;
+
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 final class Lease {
     private final long id;
     private final long ttlNanos;
-    private final Set<LeaseKey> keys = ConcurrentHashMap.newKeySet();
+    private final Set<Bytes> keys = ConcurrentHashMap.newKeySet();
     private volatile long expiresAtNanos;
 
     public Lease(long id, long ttlNanos) {
@@ -39,7 +41,7 @@ final class Lease {
         return expiresAtNanos;
     }
 
-    public Set<LeaseKey> keys() {
+    public Set<Bytes> keys() {
         return keys;
     }
 

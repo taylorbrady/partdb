@@ -1,30 +1,20 @@
 package io.partdb.raft;
 
+import io.partdb.bytes.Bytes;
+
 import java.util.Objects;
 
 public sealed interface RaftEvent {
     record Tick() implements RaftEvent {}
-    record Propose(byte[] data) implements RaftEvent {
+    record Propose(Bytes data) implements RaftEvent {
         public Propose {
-            Objects.requireNonNull(data, "data must not be null");
-            data = data.clone();
-        }
-
-        @Override
-        public byte[] data() {
-            return data.clone();
+            data = Objects.requireNonNull(data, "data must not be null");
         }
     }
     record Receive(String from, RaftMessage message) implements RaftEvent {}
-    record ReadIndex(byte[] context) implements RaftEvent {
+    record ReadIndex(Bytes context) implements RaftEvent {
         public ReadIndex {
-            Objects.requireNonNull(context, "context must not be null");
-            context = context.clone();
-        }
-
-        @Override
-        public byte[] context() {
-            return context.clone();
+            context = Objects.requireNonNull(context, "context must not be null");
         }
     }
 

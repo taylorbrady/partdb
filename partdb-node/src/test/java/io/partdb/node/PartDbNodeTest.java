@@ -1,17 +1,17 @@
 package io.partdb.node;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.node.transport.ConsensusMessage;
 import io.partdb.node.transport.ConsensusTransport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PartDbNodeTest {
@@ -33,7 +33,7 @@ class PartDbNodeTest {
             long barrierIndex = node.linearizableBarrier().get(5, TimeUnit.SECONDS);
 
             assertTrue(barrierIndex > 0);
-            assertArrayEquals(bytes("value"), node.get(bytes("key")).orElseThrow());
+            assertEquals(bytes("value"), node.get(bytes("key")).orElseThrow());
         }
     }
 
@@ -48,8 +48,8 @@ class PartDbNodeTest {
         throw new AssertionError("Node did not become leader");
     }
 
-    private static byte[] bytes(String value) {
-        return value.getBytes(StandardCharsets.UTF_8);
+    private static Bytes bytes(String value) {
+        return Bytes.utf8(value);
     }
 
     private static final class NoOpConsensusTransport implements ConsensusTransport {

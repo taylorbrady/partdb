@@ -26,7 +26,7 @@ final class InMemoryStorage implements RaftLogView {
             if (entry.index() >= fromIndex && entry.index() < toIndex) {
                 result.add(entry);
                 switch (entry) {
-                    case LogEntry.Data data -> bytes += data.data().length;
+                    case LogEntry.Data data -> bytes += data.data().size();
                     case LogEntry.NoOp _, LogEntry.Config _ -> {}
                 }
                 if (bytes >= maxBytes && !result.isEmpty()) {

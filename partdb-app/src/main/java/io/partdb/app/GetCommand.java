@@ -1,5 +1,6 @@
 package io.partdb.app;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.client.KvClient;
 import io.partdb.client.ServerEndpoint;
 
@@ -58,9 +59,9 @@ record GetCommand(ServerEndpoint endpoint, String key) implements AppCommand {
     @Override
     public int execute(CliRuntime runtime) {
         try (var client = new KvClient(runtime.kvClientConfig(endpoint))) {
-            Optional<byte[]> result = runtime.await(client.get(key.getBytes(StandardCharsets.UTF_8)));
+            Optional<Bytes> result = runtime.await(client.get(Bytes.utf8(key)));
             if (result.isPresent()) {
-                runtime.out().println(new String(result.get(), StandardCharsets.UTF_8));
+                runtime.out().println(result.get().utf8());
                 return 0;
             }
             runtime.err().println("(not found)");

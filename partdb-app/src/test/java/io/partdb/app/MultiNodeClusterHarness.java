@@ -1,5 +1,6 @@
 package io.partdb.app;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.client.ClusterClient;
 import io.partdb.client.ClusterClientConfig;
 import io.partdb.client.ClusterMember;
@@ -21,7 +22,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -180,14 +180,14 @@ final class MultiNodeClusterHarness implements AutoCloseable {
     }
 
     void awaitNodeValue(String nodeId, String key, String expectedValue, Duration timeout) throws Exception {
-        byte[] expectedBytes = bytes(expectedValue);
+        Bytes expectedBytes = bytes(expectedValue);
         long deadlineNanos = System.nanoTime() + timeout.toNanos();
         Throwable lastFailure = null;
 
         while (System.nanoTime() < deadlineNanos) {
             try (var client = newKvClient(nodeId)) {
                 var value = client.get(bytes(key), ReadConsistency.STALE).get();
-                if (value.isPresent() && Arrays.equals(value.get(), expectedBytes)) {
+                if (value.isPresent() && value.get().equals(expectedBytes)) {
                     return;
                 }
             } catch (Exception e) {
@@ -323,8 +323,8 @@ final class MultiNodeClusterHarness implements AutoCloseable {
         return Optional.empty();
     }
 
-    private static byte[] bytes(String value) {
-        return value.getBytes(StandardCharsets.UTF_8);
+    private static Bytes bytes(String value) {
+        return Bytes.utf8(value);
     }
 
     private static int freePort() throws IOException {

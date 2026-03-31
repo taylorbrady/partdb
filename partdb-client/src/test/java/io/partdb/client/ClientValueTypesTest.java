@@ -1,54 +1,46 @@
 package io.partdb.client;
 
+import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
 
 class ClientValueTypesTest {
 
     @Test
-    void keyValueDefensivelyCopiesArrays() {
+    void keyValueHasValueSemantics() {
         byte[] key = "key".getBytes(StandardCharsets.UTF_8);
         byte[] value = "value".getBytes(StandardCharsets.UTF_8);
 
-        var keyValue = new KeyValue(key, value, 7);
+        var keyValue = new KeyValue(Bytes.copyOf(key), Bytes.copyOf(value), 7);
 
         key[0] = 'K';
         value[0] = 'V';
 
-        assertArrayEquals("key".getBytes(StandardCharsets.UTF_8), keyValue.key());
-        assertArrayEquals("value".getBytes(StandardCharsets.UTF_8), keyValue.value());
-        assertNotSame(key, keyValue.key());
-        assertNotSame(value, keyValue.value());
-
-        byte[] returnedKey = keyValue.key();
-        byte[] returnedValue = keyValue.value();
-        returnedKey[0] = 'X';
-        returnedValue[0] = 'Y';
-
-        assertArrayEquals("key".getBytes(StandardCharsets.UTF_8), keyValue.key());
-        assertArrayEquals("value".getBytes(StandardCharsets.UTF_8), keyValue.value());
+        assertEquals(Bytes.utf8("key"), keyValue.key());
+        assertEquals(Bytes.utf8("value"), keyValue.value());
+        assertEquals(new KeyValue(Bytes.utf8("key"), Bytes.utf8("value"), 7), keyValue);
     }
 
     @Test
-    void writeOpsDefensivelyCopyArrays() {
+    void writeOpsHaveValueSemantics() {
         byte[] key = "key".getBytes(StandardCharsets.UTF_8);
         byte[] value = "value".getBytes(StandardCharsets.UTF_8);
 
-        var put = new WriteOp.Put(key, value, 5);
-        var delete = new WriteOp.Delete(key);
+        var put = new WriteOp.Put(Bytes.copyOf(key), Bytes.copyOf(value), 5);
+        var delete = new WriteOp.Delete(Bytes.copyOf(key));
 
         key[0] = 'K';
         value[0] = 'V';
 
-        assertArrayEquals("key".getBytes(StandardCharsets.UTF_8), put.key());
-        assertArrayEquals("value".getBytes(StandardCharsets.UTF_8), put.value());
-        assertArrayEquals("key".getBytes(StandardCharsets.UTF_8), delete.key());
+        assertEquals(Bytes.utf8("key"), put.key());
+        assertEquals(Bytes.utf8("value"), put.value());
+        assertEquals(Bytes.utf8("key"), delete.key());
+        assertEquals(new WriteOp.Put(Bytes.utf8("key"), Bytes.utf8("value"), 5), put);
+        assertEquals(new WriteOp.Delete(Bytes.utf8("key")), delete);
     }
 
     @Test

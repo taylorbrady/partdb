@@ -1,5 +1,7 @@
 package io.partdb.raft;
 
+import io.partdb.bytes.Bytes;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -14,7 +16,7 @@ import java.util.function.IntUnaryOperator;
 
 public final class Raft {
 
-    private record PendingRead(long index, byte[] context, String requester, Set<String> acks) {}
+    private record PendingRead(long index, Bytes context, String requester, Set<String> acks) {}
 
     private final String id;
     private RaftMembership membership;
@@ -272,7 +274,7 @@ public final class Raft {
         }
     }
 
-    private void propose(byte[] data, RaftStepAccumulator accumulator) {
+    private void propose(Bytes data, RaftStepAccumulator accumulator) {
         if (role != RaftRole.LEADER) {
             return;
         }
@@ -642,7 +644,7 @@ public final class Raft {
         matchIndex.put(from, lastIncludedIndex());
     }
 
-    private void handleReadIndexEvent(byte[] context, RaftStepAccumulator accumulator) {
+    private void handleReadIndexEvent(Bytes context, RaftStepAccumulator accumulator) {
         if (role == RaftRole.LEADER) {
             startReadIndexConfirmation(null, context, accumulator);
         } else if (leaderId != null) {
@@ -673,7 +675,7 @@ public final class Raft {
         }
     }
 
-    private void startReadIndexConfirmation(String requester, byte[] context, RaftStepAccumulator accumulator) {
+    private void startReadIndexConfirmation(String requester, Bytes context, RaftStepAccumulator accumulator) {
         if (role != RaftRole.LEADER) {
             return;
         }
