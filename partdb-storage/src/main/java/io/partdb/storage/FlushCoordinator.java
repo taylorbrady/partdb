@@ -22,7 +22,7 @@ final class FlushCoordinator implements AutoCloseable {
     private final Semaphore flushPermits;
     private final ExecutorService flushExecutor;
 
-    private volatile List<Memtable> immutableMemtables;
+    private volatile List<ImmutableMemtable> immutableMemtables;
 
     FlushCoordinator(TableCatalog tableCatalog, Runnable onImmutableMemtablesChanged) {
         this.tableCatalog = tableCatalog;
@@ -33,7 +33,7 @@ final class FlushCoordinator implements AutoCloseable {
         this.immutableMemtables = List.of();
     }
 
-    void enqueue(Memtable memtable) {
+    void enqueue(ImmutableMemtable memtable) {
         try {
             flushPermits.acquire();
         } catch (InterruptedException e) {
@@ -51,9 +51,10 @@ final class FlushCoordinator implements AutoCloseable {
         }
 
         flushExecutor.submit(this::flushPendingMemtables);
+        onImmutableMemtablesChanged.run();
     }
 
-    List<Memtable> immutableMemtables() {
+    List<ImmutableMemtable> immutableMemtables() {
         return immutableMemtables;
     }
 
@@ -91,14 +92,14 @@ final class FlushCoordinator implements AutoCloseable {
 
     private void flushPendingMemtables() {
         while (true) {
-            List<Memtable> current = immutableMemtables;
+            List<ImmutableMemtable> current = immutableMemtables;
             if (current.isEmpty()) {
                 return;
             }
-            Memtable toFlush = current.getFirst();
+            ImmutableMemtable toFlush = current.getFirst();
 
             try {
-                tableCatalog.flush(toFlush.scan(null, null));
+                tableCatalog.flush(toFlush.scan(ScanBounds.all()));
             } finally {
                 immutableMemtablesLock.lock();
                 try {

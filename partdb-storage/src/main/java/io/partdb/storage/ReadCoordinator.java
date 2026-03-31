@@ -10,13 +10,13 @@ import java.util.function.Supplier;
 
 final class ReadCoordinator {
 
-    private final Supplier<Memtable> activeMemtableSupplier;
-    private final Supplier<List<Memtable>> immutableMemtablesSupplier;
+    private final Supplier<MutableMemtable> activeMemtableSupplier;
+    private final Supplier<List<ImmutableMemtable>> immutableMemtablesSupplier;
     private final TableCatalog tableCatalog;
 
     ReadCoordinator(
-        Supplier<Memtable> activeMemtableSupplier,
-        Supplier<List<Memtable>> immutableMemtablesSupplier,
+        Supplier<MutableMemtable> activeMemtableSupplier,
+        Supplier<List<ImmutableMemtable>> immutableMemtablesSupplier,
         TableCatalog tableCatalog
     ) {
         this.activeMemtableSupplier = Objects.requireNonNull(activeMemtableSupplier, "activeMemtableSupplier");
@@ -32,16 +32,16 @@ final class ReadCoordinator {
         return result.flatMap(ReadCoordinator::resolveEntry);
     }
 
-    EngineEntryCursor scan(Slice startKey, Slice endKey) {
+    EngineEntryCursor scan(ScanBounds bounds) {
         CatalogSnapshot readers = tableCatalog.acquire();
         try {
             List<Iterator<Mutation>> iterators = new ArrayList<>();
 
-            iterators.add(activeMemtableSupplier.get().scan(startKey, endKey));
-            addImmutableMemtableIterators(iterators, startKey, endKey, immutableMemtablesSupplier.get());
+            iterators.add(activeMemtableSupplier.get().scan(bounds));
+            addImmutableMemtableIterators(iterators, bounds, immutableMemtablesSupplier.get());
 
-            for (SSTable sstable : readers.scanTables(startKey, endKey)) {
-                iterators.add(sstable.scan(startKey, endKey));
+            for (SSTableReader sstable : readers.scanTables(bounds)) {
+                iterators.add(sstable.scan(bounds));
             }
 
             return new ScanCursor(readers, new MergingIterator(iterators));
@@ -66,7 +66,11 @@ final class ReadCoordinator {
         }
     }
 
-    static Optional<Mutation> lookupMutation(Slice key, Memtable activeMemtable, List<Memtable> immutableMemtables) {
+    static Optional<Mutation> lookupMutation(
+        Slice key,
+        MutableMemtable activeMemtable,
+        List<ImmutableMemtable> immutableMemtables
+    ) {
         Optional<Mutation> result = activeMemtable.get(key);
         if (result.isPresent()) {
             return result;
@@ -91,12 +95,11 @@ final class ReadCoordinator {
 
     private static void addImmutableMemtableIterators(
         List<Iterator<Mutation>> iterators,
-        Slice startKey,
-        Slice endKey,
-        List<Memtable> immutableMemtables
+        ScanBounds bounds,
+        List<ImmutableMemtable> immutableMemtables
     ) {
         for (int i = immutableMemtables.size() - 1; i >= 0; i--) {
-            iterators.add(immutableMemtables.get(i).scan(startKey, endKey));
+            iterators.add(immutableMemtables.get(i).scan(bounds));
         }
     }
 

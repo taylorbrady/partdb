@@ -33,11 +33,11 @@ final class CatalogCheckpoint {
     static CatalogCheckpoint capture(CatalogSnapshot view) {
         SSTableManifest manifest = view.manifest();
         var readersById = view.all().stream()
-            .collect(Collectors.toMap(SSTable::id, reader -> reader));
+            .collect(Collectors.toMap(SSTableReader::id, reader -> reader));
 
         List<CheckpointSSTable> sstables = new ArrayList<>(manifest.sstables().size());
         for (SSTableMetadata metadata : manifest.sstables()) {
-            SSTable reader = readersById.get(metadata.id());
+            SSTableReader reader = readersById.get(metadata.id());
             if (reader == null) {
                 throw new StorageException.Corruption(
                     "Missing SSTable reader for checkpoint: " + metadata.id()
@@ -163,10 +163,10 @@ final class CatalogCheckpoint {
     }
 
     void validate(Path directory) {
-        List<SSTable> readers = new ArrayList<>(sstables.size());
+        List<SSTableReader> readers = new ArrayList<>(sstables.size());
         try {
             for (SSTableMetadata metadata : manifest.sstables()) {
-                SSTable reader = SSTable.open(
+                SSTableReader reader = SSTableReader.open(
                     metadata.id(),
                     metadata.level(),
                     stagedPath(directory, metadata.id()),
@@ -182,7 +182,7 @@ final class CatalogCheckpoint {
         } catch (RuntimeException e) {
             throw new StorageException.Corruption("Checkpoint validation failed", e);
         } finally {
-            for (SSTable reader : readers) {
+            for (SSTableReader reader : readers) {
                 reader.close();
             }
         }
@@ -191,7 +191,7 @@ final class CatalogCheckpoint {
     ActivatedCatalog activate(Path directory, BlockCache cache) throws IOException {
         commitTo(directory);
         manifest.writeTo(directory);
-        return new ActivatedCatalog(manifest, TableCatalog.loadSSTablesFromManifest(directory, cache, manifest));
+        return new ActivatedCatalog(manifest, TableCatalog.loadReadersFromManifest(directory, cache, manifest));
     }
 
     void cleanup(Path directory) {
@@ -221,7 +221,7 @@ final class CatalogCheckpoint {
         return directory.resolve("%06d.sst%s".formatted(id, RESTORE_SUFFIX));
     }
 
-    record ActivatedCatalog(SSTableManifest manifest, List<SSTable> readers) {}
+    record ActivatedCatalog(SSTableManifest manifest, List<SSTableReader> readers) {}
 
     private record CheckpointSSTable(long id, byte[] data) {}
 }

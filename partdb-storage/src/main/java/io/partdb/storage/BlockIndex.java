@@ -61,12 +61,13 @@ final class BlockIndex {
         return index >= 0 ? Optional.of(entries.get(index)) : Optional.empty();
     }
 
-    public List<Entry> findInRange(Slice startKey, Slice endKey) {
+    public List<Entry> findInRange(ScanBounds bounds) {
         if (entries.isEmpty()) {
             return List.of();
         }
 
         int startIndex = 0;
+        Slice startKey = bounds.startInclusive();
         if (startKey != null) {
             startIndex = indexOf(startKey);
             if (startIndex < 0) {
@@ -75,6 +76,7 @@ final class BlockIndex {
         }
 
         List<Entry> result = new ArrayList<>();
+        Slice endKey = bounds.endExclusive();
         for (int i = startIndex; i < entries.size(); i++) {
             Entry entry = entries.get(i);
             if (endKey != null && entry.firstKey().compareTo(endKey) >= 0) {

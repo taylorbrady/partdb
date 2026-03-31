@@ -202,7 +202,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
             Slice startKey = key("key-020");
             Slice endKey = key("key-030");
 
-            List<EngineEntry> entries = readAll(tree.scan(startKey, endKey));
+            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.between(startKey, endKey)));
 
             assertEquals(10, entries.size());
             for (EngineEntry e : entries) {

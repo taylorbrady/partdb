@@ -47,17 +47,17 @@ public final class VersionedKeyValueStore implements AutoCloseable {
 
         return switch (range) {
             case KeyRange.All _ ->
-                new CursorAdapter(runtime.scan(null, null));
+                new CursorAdapter(runtime.scan(ScanBounds.all()));
             case KeyRange.From(var startInclusive) ->
-                new CursorAdapter(runtime.scan(Slice.of(startInclusive.toByteArray()), null));
+                new CursorAdapter(runtime.scan(ScanBounds.from(Slice.of(startInclusive.toByteArray()))));
             case KeyRange.Until(var endExclusive) ->
-                new CursorAdapter(runtime.scan(null, Slice.of(endExclusive.toByteArray())));
+                new CursorAdapter(runtime.scan(ScanBounds.until(Slice.of(endExclusive.toByteArray()))));
             case KeyRange.Between(var startInclusive, var endExclusive) ->
                 new CursorAdapter(
-                    runtime.scan(
+                    runtime.scan(ScanBounds.between(
                         Slice.of(startInclusive.toByteArray()),
                         Slice.of(endExclusive.toByteArray())
-                    )
+                    ))
                 );
         };
     }

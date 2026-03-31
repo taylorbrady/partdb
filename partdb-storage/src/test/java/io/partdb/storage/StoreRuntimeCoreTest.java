@@ -69,14 +69,18 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
 
     @Test
     void prefersNewestImmutableMemtableValue() {
-        Memtable active = new Memtable();
-        Memtable older = new Memtable();
-        Memtable newer = new Memtable();
+        MutableMemtable active = new MutableMemtable();
+        MutableMemtable older = new MutableMemtable();
+        MutableMemtable newer = new MutableMemtable();
 
         older.put(new Mutation.Put(key("key"), value("older"), 1));
         newer.put(new Mutation.Put(key("key"), value("newer"), 2));
 
-        Optional<Mutation> result = StoreRuntime.lookupMutation(key("key"), active, List.of(older, newer));
+        Optional<Mutation> result = StoreRuntime.lookupMutation(
+            key("key"),
+            active,
+            List.of(older.freeze(), newer.freeze())
+        );
 
         assertTrue(result.isPresent());
         assertInstanceOf(Mutation.Put.class, result.get());
@@ -90,7 +94,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
             tree.put(key(2), value(20), nextRevision());
             tree.put(key(3), value(30), nextRevision());
 
-            List<EngineEntry> entries = readAll(tree.scan(null, null));
+            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.all()));
 
             assertEquals(3, entries.size());
             assertEquals(key(1), entries.get(0).key());
@@ -107,7 +111,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
             tree.put(key(3), value(30), nextRevision());
             tree.put(key(4), value(40), nextRevision());
 
-            List<EngineEntry> entries = readAll(tree.scan(key(2), key(4)));
+            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.between(key(2), key(4))));
 
             assertEquals(2, entries.size());
             assertEquals(key(2), entries.get(0).key());
@@ -123,7 +127,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
             tree.delete(key(2), nextRevision());
             tree.put(key(3), value(30), nextRevision());
 
-            List<EngineEntry> entries = readAll(tree.scan(null, null));
+            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.all()));
 
             assertEquals(2, entries.size());
             assertEquals(key(1), entries.get(0).key());
@@ -140,7 +144,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
                 tree.put(key(i), largeValue(100), nextRevision());
             }
 
-            List<EngineEntry> entries = readAll(tree.scan(null, null));
+            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.all()));
 
             assertEquals(20, entries.size());
             for (int i = 0; i < 20; i++) {
@@ -158,7 +162,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
             tree.put(key(2), largeValue(100), nextRevision());
             tree.put(key(1), value(20), nextRevision());
 
-            List<EngineEntry> entries = readAll(tree.scan(null, null));
+            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.all()));
 
             Optional<EngineEntry> keyEntry = entries.stream()
                 .filter(e -> e.key().equals(key(1)))

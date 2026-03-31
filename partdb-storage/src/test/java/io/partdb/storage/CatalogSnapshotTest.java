@@ -32,13 +32,13 @@ class CatalogSnapshotTest {
             10
         );
 
-        SSTable newerReader = SSTable.open(
+        SSTableReader newerReader = SSTableReader.open(
             newerDescriptor.id(),
             newerDescriptor.level(),
             tablePath(newerDescriptor.id()),
             NoOpBlockCache.INSTANCE
         );
-        SSTable olderReader = SSTable.open(
+        SSTableReader olderReader = SSTableReader.open(
             olderDescriptor.id(),
             olderDescriptor.level(),
             tablePath(olderDescriptor.id()),
@@ -69,14 +69,14 @@ class CatalogSnapshotTest {
         SSTableMetadata l1 = writeTable(2, 1, "a", "l1", 20);
         SSTableMetadata l2 = writeTable(3, 2, "a", "l2", 10);
 
-        SSTable l2Reader = SSTable.open(l2.id(), l2.level(), tablePath(l2.id()), NoOpBlockCache.INSTANCE);
-        SSTable newestL0Reader = SSTable.open(
+        SSTableReader l2Reader = SSTableReader.open(l2.id(), l2.level(), tablePath(l2.id()), NoOpBlockCache.INSTANCE);
+        SSTableReader newestL0Reader = SSTableReader.open(
             newestL0.id(),
             newestL0.level(),
             tablePath(newestL0.id()),
             NoOpBlockCache.INSTANCE
         );
-        SSTable l1Reader = SSTable.open(l1.id(), l1.level(), tablePath(l1.id()), NoOpBlockCache.INSTANCE);
+        SSTableReader l1Reader = SSTableReader.open(l1.id(), l1.level(), tablePath(l1.id()), NoOpBlockCache.INSTANCE);
 
         SSTableSetRef ref = SSTableSetRef.of(List.of(l2Reader, newestL0Reader, l1Reader));
         SSTableSetRef acquired = switch (ref.tryAcquire()) {
@@ -89,16 +89,16 @@ class CatalogSnapshotTest {
 
         SSTableManifest manifest = new SSTableManifest(3, List.of(newestL0, l1, l2));
         try (CatalogSnapshot view = new CatalogSnapshot(acquired, manifest)) {
-            List<SSTable> tables = view.scanTables(slice("a"), slice("z"));
+            List<SSTableReader> tables = view.scanTables(ScanBounds.between(slice("a"), slice("z")));
 
             assertEquals(List.of(newestL0Reader, l1Reader, l2Reader), tables);
         }
     }
 
     private SSTableMetadata writeTable(long id, int level, String key, String value, long revision) {
-        try (SSTable.Builder builder = SSTable.builder(id, level, tablePath(id), LsmConfig.defaults())) {
-            builder.add(new Mutation.Put(slice(key), slice(value), revision));
-            return builder.finish();
+        try (SSTableWriter writer = SSTableWriter.create(id, level, tablePath(id), LsmConfig.defaults())) {
+            writer.add(new Mutation.Put(slice(key), slice(value), revision));
+            return writer.finish();
         }
     }
 

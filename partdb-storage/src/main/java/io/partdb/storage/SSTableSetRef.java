@@ -25,19 +25,19 @@ final class SSTableSetRef {
         record Retired() implements AcquireResult {}
     }
 
-    private final List<SSTable> readers;
+    private final List<SSTableReader> readers;
     private volatile int state;
-    private volatile List<SSTable> readersToClose;
+    private volatile List<SSTableReader> readersToClose;
     private final AtomicBoolean closed;
 
-    private SSTableSetRef(List<SSTable> readers) {
+    private SSTableSetRef(List<SSTableReader> readers) {
         this.readers = readers;
         this.state = 0;
         this.readersToClose = List.of();
         this.closed = new AtomicBoolean(false);
     }
 
-    public static SSTableSetRef of(List<SSTable> readers) {
+    public static SSTableSetRef of(List<SSTableReader> readers) {
         return new SSTableSetRef(List.copyOf(readers));
     }
 
@@ -72,7 +72,7 @@ final class SSTableSetRef {
         }
     }
 
-    public void retire(List<SSTable> orphanedReaders) {
+    public void retire(List<SSTableReader> orphanedReaders) {
         this.readersToClose = List.copyOf(orphanedReaders);
         VarHandle.releaseFence();
 
@@ -98,13 +98,13 @@ final class SSTableSetRef {
 
     private void closeOrphanedReaders() {
         if (closed.compareAndSet(false, true)) {
-            for (SSTable reader : readersToClose) {
+            for (SSTableReader reader : readersToClose) {
                 reader.close();
             }
         }
     }
 
-    public List<SSTable> readers() {
+    public List<SSTableReader> readers() {
         return readers;
     }
 }

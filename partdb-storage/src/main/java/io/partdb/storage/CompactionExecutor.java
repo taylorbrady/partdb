@@ -25,7 +25,7 @@ final class CompactionExecutor {
 
     CompactionResult compact(CompactionTask task) {
         long startNanos = System.nanoTime();
-        List<SSTable> inputs = null;
+        List<SSTableReader> inputs = null;
         List<SSTableMetadata> completedOutputs = new ArrayList<>();
 
         try {
@@ -63,11 +63,11 @@ final class CompactionExecutor {
         }
     }
 
-    private List<SSTable> openSSTables(List<SSTableMetadata> metadata) {
-        List<SSTable> readers = new ArrayList<>();
+    private List<SSTableReader> openSSTables(List<SSTableMetadata> metadata) {
+        List<SSTableReader> readers = new ArrayList<>();
         try {
             for (SSTableMetadata table : metadata) {
-                readers.add(tableCatalog.openForCompaction(table));
+                readers.add(tableCatalog.openCompactionReader(table));
             }
             return readers;
         } catch (Exception e) {
@@ -77,14 +77,14 @@ final class CompactionExecutor {
     }
 
     private List<SSTableMetadata> merge(
-        List<SSTable> sources,
+        List<SSTableReader> sources,
         int targetLevel,
         boolean gcTombstones,
         List<SSTableMetadata> grandparents,
         List<SSTableMetadata> completedOutputs
     ) {
         List<Iterator<Mutation>> iterators = sources.stream()
-            .map(table -> table.scan(null, null))
+            .map(table -> table.scan(ScanBounds.all()))
             .toList();
 
         Iterator<Mutation> merged = new MergingIterator(iterators);
@@ -104,23 +104,23 @@ final class CompactionExecutor {
         Mutation pending = null;
 
         while (pending != null || entries.hasNext()) {
-            try (SSTable.Builder builder = tableCatalog.createBuilder(targetLevel)) {
+            try (SSTableWriter writer = tableCatalog.createWriter(targetLevel)) {
                 Slice firstKey = null;
                 while (pending != null || entries.hasNext()) {
                     Mutation next = pending != null ? pending : entries.next();
                     pending = null;
 
-                    if (shouldFinishOutput(builder, firstKey, next, grandparents)) {
+                    if (shouldFinishOutput(writer, firstKey, next, grandparents)) {
                         pending = next;
                         break;
                     }
 
-                    builder.add(next);
+                    writer.add(next);
                     if (firstKey == null) {
                         firstKey = next.key();
                     }
                 }
-                completedOutputs.add(builder.finish());
+                completedOutputs.add(writer.finish());
             }
         }
 
@@ -128,16 +128,16 @@ final class CompactionExecutor {
     }
 
     private boolean shouldFinishOutput(
-        SSTable.Builder builder,
+        SSTableWriter writer,
         Slice firstKey,
         Mutation next,
         List<SSTableMetadata> grandparents
     ) {
-        if (builder.uncompressedBytes() == 0 || firstKey == null) {
+        if (writer.uncompressedBytes() == 0 || firstKey == null) {
             return false;
         }
 
-        if (builder.uncompressedBytes() + next.sizeInBytes() > config.targetUncompressedSize()) {
+        if (writer.uncompressedBytes() + next.sizeInBytes() > config.targetUncompressedSize()) {
             return true;
         }
 
@@ -177,8 +177,8 @@ final class CompactionExecutor {
         }
     }
 
-    private void closeAll(List<SSTable> tables) {
-        for (SSTable table : tables) {
+    private void closeAll(List<SSTableReader> tables) {
+        for (SSTableReader table : tables) {
             try {
                 table.close();
             } catch (Exception e) {

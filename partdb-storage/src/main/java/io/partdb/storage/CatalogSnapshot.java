@@ -12,7 +12,7 @@ final class CatalogSnapshot implements AutoCloseable {
     private final SSTableSetRef ref;
     private final SSTableManifest manifest;
     private final int maxLevel;
-    private final Map<Long, SSTable> readersById;
+    private final Map<Long, SSTableReader> readersById;
 
     CatalogSnapshot(SSTableSetRef ref, SSTableManifest manifest) {
         this.ref = ref;
@@ -21,11 +21,11 @@ final class CatalogSnapshot implements AutoCloseable {
         this.readersById = indexReaders(ref.readers());
     }
 
-    List<SSTable> level0() {
+    List<SSTableReader> level0() {
         return level(0);
     }
 
-    List<SSTable> level(int level) {
+    List<SSTableReader> level(int level) {
         return readersFor(manifest.level(level));
     }
 
@@ -47,18 +47,18 @@ final class CatalogSnapshot implements AutoCloseable {
         return Optional.empty();
     }
 
-    List<SSTable> scanTables(Slice startKey, Slice endKey) {
-        List<SSTable> tables = new ArrayList<>(manifest.sstables().size());
+    List<SSTableReader> scanTables(ScanBounds bounds) {
+        List<SSTableReader> tables = new ArrayList<>(manifest.sstables().size());
 
         for (SSTableMetadata metadata : manifest.level(0)) {
-            if (metadata.overlaps(startKey, endKey)) {
+            if (metadata.overlaps(bounds)) {
                 tables.add(readerFor(metadata));
             }
         }
 
         for (int level = 1; level <= maxLevel; level++) {
             for (SSTableMetadata metadata : manifest.level(level)) {
-                if (metadata.overlaps(startKey, endKey)) {
+                if (metadata.overlaps(bounds)) {
                     tables.add(readerFor(metadata));
                 }
             }
@@ -75,7 +75,7 @@ final class CatalogSnapshot implements AutoCloseable {
         return manifest;
     }
 
-    List<SSTable> all() {
+    List<SSTableReader> all() {
         return readersFor(manifest.sstables());
     }
 
@@ -99,16 +99,16 @@ final class CatalogSnapshot implements AutoCloseable {
         return Optional.empty();
     }
 
-    private List<SSTable> readersFor(List<SSTableMetadata> metadata) {
-        List<SSTable> readers = new ArrayList<>(metadata.size());
+    private List<SSTableReader> readersFor(List<SSTableMetadata> metadata) {
+        List<SSTableReader> readers = new ArrayList<>(metadata.size());
         for (SSTableMetadata table : metadata) {
             readers.add(readerFor(table));
         }
         return List.copyOf(readers);
     }
 
-    private SSTable readerFor(SSTableMetadata metadata) {
-        SSTable reader = readersById.get(metadata.id());
+    private SSTableReader readerFor(SSTableMetadata metadata) {
+        SSTableReader reader = readersById.get(metadata.id());
         if (reader == null) {
             throw new StorageException.Corruption(
                 "Missing SSTable reader for metadata id " + metadata.id()
@@ -117,9 +117,9 @@ final class CatalogSnapshot implements AutoCloseable {
         return reader;
     }
 
-    private static Map<Long, SSTable> indexReaders(List<SSTable> readers) {
-        Map<Long, SSTable> readersById = new HashMap<>(readers.size());
-        for (SSTable reader : readers) {
+    private static Map<Long, SSTableReader> indexReaders(List<SSTableReader> readers) {
+        Map<Long, SSTableReader> readersById = new HashMap<>(readers.size());
+        for (SSTableReader reader : readers) {
             readersById.put(reader.id(), reader);
         }
         return Map.copyOf(readersById);

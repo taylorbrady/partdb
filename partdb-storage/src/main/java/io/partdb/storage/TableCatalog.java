@@ -88,16 +88,16 @@ final class TableCatalog implements AutoCloseable {
             List<Long> discoveredIds = discoverSSTableIds(directory);
             validateManifestState(manifest, discoveredIds);
 
-            List<SSTable> sstables = manifest.sstables().isEmpty()
+            List<SSTableReader> readers = manifest.sstables().isEmpty()
                 ? List.of()
-                : loadSSTablesFromManifest(directory, blockCache, manifest);
+                : loadReadersFromManifest(directory, blockCache, manifest);
 
             return new TableCatalog(
                 directory,
                 config,
                 blockCache,
                 manifest,
-                SSTableSetRef.of(sstables),
+                SSTableSetRef.of(readers),
                 stats
             );
         } catch (IOException e) {
@@ -107,14 +107,14 @@ final class TableCatalog implements AutoCloseable {
 
     void flush(Iterator<Mutation> mutations) {
         SSTableMetadata metadata;
-        try (SSTable.Builder builder = createBuilder(0)) {
+        try (SSTableWriter writer = createWriter(0)) {
             while (mutations.hasNext()) {
-                builder.add(mutations.next());
+                writer.add(mutations.next());
             }
-            metadata = builder.finish();
+            metadata = writer.finish();
         }
 
-        SSTable reader = openReader(metadata);
+        SSTableReader reader = openReader(metadata);
         addFlushed(metadata, reader);
         scheduleCompaction();
     }
@@ -226,19 +226,19 @@ final class TableCatalog implements AutoCloseable {
         }
     }
 
-    SSTable.Builder createBuilder(int level) {
+    SSTableWriter createWriter(int level) {
         long id = nextId.incrementAndGet();
-        return SSTable.builder(id, level, resolvePath(id), config);
+        return SSTableWriter.create(id, level, resolvePath(id), config);
     }
 
-    SSTable openReader(SSTableMetadata metadata) {
+    SSTableReader openReader(SSTableMetadata metadata) {
         Path path = resolvePath(metadata.id());
-        return SSTable.open(metadata.id(), metadata.level(), path, cache);
+        return SSTableReader.open(metadata.id(), metadata.level(), path, cache);
     }
 
-    SSTable openForCompaction(SSTableMetadata metadata) {
+    SSTableReader openCompactionReader(SSTableMetadata metadata) {
         Path path = resolvePath(metadata.id());
-        return SSTable.open(metadata.id(), metadata.level(), path, NoOpBlockCache.INSTANCE);
+        return SSTableReader.open(metadata.id(), metadata.level(), path, NoOpBlockCache.INSTANCE);
     }
 
     void delete(long id) throws IOException {
@@ -254,12 +254,12 @@ final class TableCatalog implements AutoCloseable {
         compactionManager.close();
 
         SSTableSetRef finalSet = currentSet;
-        List<SSTable> allReaders = new ArrayList<>(finalSet.readers());
+        List<SSTableReader> allReaders = new ArrayList<>(finalSet.readers());
         finalSet.retire(allReaders);
         awaitDrain(finalSet, SHUTDOWN_DRAIN_TIMEOUT);
     }
 
-    private void addFlushed(SSTableMetadata metadata, SSTable reader) {
+    private void addFlushed(SSTableMetadata metadata, SSTableReader reader) {
         stateLock.lock();
         try {
             List<SSTableMetadata> updatedMetadata = new ArrayList<>(manifest.sstables());
@@ -268,7 +268,7 @@ final class TableCatalog implements AutoCloseable {
             manifest.writeTo(directory);
             stats.updateSstables(manifest);
 
-            List<SSTable> newReaders = new ArrayList<>();
+            List<SSTableReader> newReaders = new ArrayList<>();
             newReaders.add(reader);
             newReaders.addAll(currentSet.readers());
 
@@ -294,10 +294,10 @@ final class TableCatalog implements AutoCloseable {
                 .map(SSTableMetadata::id)
                 .collect(Collectors.toSet());
 
-            List<SSTable> orphanedReaders = new ArrayList<>();
-            List<SSTable> retainedReaders = new ArrayList<>();
+            List<SSTableReader> orphanedReaders = new ArrayList<>();
+            List<SSTableReader> retainedReaders = new ArrayList<>();
 
-            for (SSTable reader : currentSet.readers()) {
+            for (SSTableReader reader : currentSet.readers()) {
                 if (removedIds.contains(reader.id())) {
                     orphanedReaders.add(reader);
                 } else {
@@ -363,7 +363,7 @@ final class TableCatalog implements AutoCloseable {
 
         while (!set.isDrained()) {
             if (System.nanoTime() > deadlineNanos) {
-                for (SSTable reader : set.readers()) {
+                for (SSTableReader reader : set.readers()) {
                     reader.close();
                 }
                 return;
@@ -387,15 +387,15 @@ final class TableCatalog implements AutoCloseable {
         }
     }
 
-    static List<SSTable> loadSSTablesFromManifest(
+    static List<SSTableReader> loadReadersFromManifest(
         Path directory,
         BlockCache cache,
         SSTableManifest manifest
     ) {
-        List<SSTable> readers = new ArrayList<>(manifest.sstables().size());
+        List<SSTableReader> readers = new ArrayList<>(manifest.sstables().size());
         for (SSTableMetadata desc : manifest.sstables()) {
             Path path = directory.resolve("%06d.sst".formatted(desc.id()));
-            readers.add(SSTable.open(desc.id(), desc.level(), path, cache));
+            readers.add(SSTableReader.open(desc.id(), desc.level(), path, cache));
         }
 
         return readers;
@@ -500,7 +500,7 @@ final class TableCatalog implements AutoCloseable {
 
         manifest = previousManifest;
         nextId.set(previousManifest.nextSSTableId());
-        currentSet = SSTableSetRef.of(loadSSTablesFromManifest(directory, cache, previousManifest));
+        currentSet = SSTableSetRef.of(loadReadersFromManifest(directory, cache, previousManifest));
     }
 
     private void cleanupRestoreBackups(SSTableManifest previousManifest) throws IOException {

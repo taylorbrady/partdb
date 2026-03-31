@@ -19,7 +19,7 @@ class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
             }
             tree.flush();
 
-            try (EngineEntryCursor cursor = tree.scan(null, null)) {
+            try (EngineEntryCursor cursor = tree.scan(ScanBounds.all())) {
                 assertTrue(cursor.hasNext());
                 assertNotNull(cursor.next());
             }
@@ -34,9 +34,9 @@ class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
             }
             tree.flush();
 
-            try (EngineEntryCursor cursor1 = tree.scan(null, null);
-                 EngineEntryCursor cursor2 = tree.scan(null, null);
-                 EngineEntryCursor cursor3 = tree.scan(null, null)) {
+            try (EngineEntryCursor cursor1 = tree.scan(ScanBounds.all());
+                 EngineEntryCursor cursor2 = tree.scan(ScanBounds.all());
+                 EngineEntryCursor cursor3 = tree.scan(ScanBounds.all())) {
 
                 List<EngineEntry> entries1 = readAll(cursor1);
                 List<EngineEntry> entries2 = readAll(cursor2);
@@ -61,7 +61,7 @@ class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
                 tree.flush();
             }
 
-            try (EngineEntryCursor cursor = tree.scan(null, null)) {
+            try (EngineEntryCursor cursor = tree.scan(ScanBounds.all())) {
                 Thread.sleep(1000);
 
                 List<EngineEntry> entries = readAll(cursor);
@@ -82,7 +82,7 @@ class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
             }
             tree.flush();
 
-            try (EngineEntryCursor cursor = tree.scan(null, null)) {
+            try (EngineEntryCursor cursor = tree.scan(ScanBounds.all())) {
                 List<EngineEntry> first10 = new ArrayList<>();
                 while (cursor.hasNext() && first10.size() < 10) {
                     first10.add(cursor.next());

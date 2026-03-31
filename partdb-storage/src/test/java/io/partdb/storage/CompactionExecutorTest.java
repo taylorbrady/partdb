@@ -22,11 +22,11 @@ class CompactionExecutorTest {
 
         try (TableCatalog store = TableCatalog.open(tempDir, config, new StorageRuntimeStats())) {
             SSTableMetadata input;
-            try (SSTable.Builder builder = store.createBuilder(0)) {
-                builder.add(put("key-1", value(96), 1));
-                builder.add(put("key-2", value(96), 2));
-                builder.add(put("key-3", value(96), 3));
-                input = builder.finish();
+            try (SSTableWriter writer = store.createWriter(0)) {
+                writer.add(put("key-1", value(96), 1));
+                writer.add(put("key-2", value(96), 2));
+                writer.add(put("key-3", value(96), 3));
+                input = writer.finish();
             }
 
             CompactionExecutor executor = new CompactionExecutor(store, config);
@@ -47,11 +47,11 @@ class CompactionExecutorTest {
 
         try (TableCatalog store = TableCatalog.open(tempDir, config, new StorageRuntimeStats())) {
             SSTableMetadata input;
-            try (SSTable.Builder builder = store.createBuilder(0)) {
-                builder.add(put("key-1", value(96), 1));
-                builder.add(put("key-2", value(96), 2));
-                builder.add(put("key-3", value(96), 3));
-                input = builder.finish();
+            try (SSTableWriter writer = store.createWriter(0)) {
+                writer.add(put("key-1", value(96), 1));
+                writer.add(put("key-2", value(96), 2));
+                writer.add(put("key-3", value(96), 3));
+                input = writer.finish();
             }
 
             List<SSTableMetadata> grandparents = List.of(

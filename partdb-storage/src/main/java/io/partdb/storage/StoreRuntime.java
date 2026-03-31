@@ -3,6 +3,7 @@ package io.partdb.storage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -11,7 +12,7 @@ import java.util.concurrent.locks.ReentrantLock;
 final class StoreRuntime implements AutoCloseable {
 
     private final LsmConfig config;
-    private final AtomicReference<Memtable> activeMemtable;
+    private final AtomicReference<MutableMemtable> activeMemtable;
     private final ReentrantLock rotationLock;
     private final AtomicBoolean closed;
     private final TableCatalog tableCatalog;
@@ -24,7 +25,7 @@ final class StoreRuntime implements AutoCloseable {
         this.config = config;
         this.tableCatalog = tableCatalog;
         this.stats = stats;
-        this.activeMemtable = new AtomicReference<>(new Memtable());
+        this.activeMemtable = new AtomicReference<>(new MutableMemtable());
         this.rotationLock = new ReentrantLock();
         this.closed = new AtomicBoolean(false);
         this.flushCoordinator = new FlushCoordinator(tableCatalog, this::refreshMemtableStats);
@@ -63,8 +64,8 @@ final class StoreRuntime implements AutoCloseable {
         return readCoordinator.get(key);
     }
 
-    EngineEntryCursor scan(Slice startKey, Slice endKey) {
-        return readCoordinator.scan(startKey, endKey);
+    EngineEntryCursor scan(ScanBounds bounds) {
+        return readCoordinator.scan(bounds);
     }
 
     byte[] checkpoint() {
@@ -87,7 +88,7 @@ final class StoreRuntime implements AutoCloseable {
     void flush() {
         rotationLock.lock();
         try {
-            Memtable current = activeMemtable.get();
+            MutableMemtable current = activeMemtable.get();
             if (current.entryCount() == 0) {
                 flushCoordinator.awaitIdle();
                 return;
@@ -111,7 +112,11 @@ final class StoreRuntime implements AutoCloseable {
         tableCatalog.close();
     }
 
-    static Optional<Mutation> lookupMutation(Slice key, Memtable activeMemtable, java.util.List<Memtable> immutableMemtables) {
+    static Optional<Mutation> lookupMutation(
+        Slice key,
+        MutableMemtable activeMemtable,
+        List<ImmutableMemtable> immutableMemtables
+    ) {
         return ReadCoordinator.lookupMutation(key, activeMemtable, immutableMemtables);
     }
 
@@ -121,24 +126,31 @@ final class StoreRuntime implements AutoCloseable {
             return;
         }
 
-        Memtable memtable = activeMemtable.get();
-        Memtable.WriteResult writeResult = memtable.put(mutation);
-        if (writeResult == Memtable.WriteResult.DUPLICATE) {
-            return;
-        }
-        refreshMemtableStats();
+        while (true) {
+            MutableMemtable memtable = activeMemtable.get();
+            MutableMemtable.WriteResult writeResult = memtable.put(mutation);
+            if (writeResult == MutableMemtable.WriteResult.DUPLICATE) {
+                return;
+            }
+            if (writeResult == MutableMemtable.WriteResult.FROZEN) {
+                continue;
+            }
 
-        if (memtable.sizeInBytes() >= config.memtableMaxSizeBytes()) {
-            tryRotateMemtable(memtable);
+            refreshMemtableStats();
+
+            if (memtable.sizeInBytes() >= config.memtableMaxSizeBytes()) {
+                tryRotateMemtable(memtable);
+            }
+            return;
         }
     }
 
-    private void tryRotateMemtable(Memtable fullMemtable) {
+    private void tryRotateMemtable(MutableMemtable fullMemtable) {
         if (!rotationLock.tryLock()) {
             return;
         }
         try {
-            Memtable current = activeMemtable.get();
+            MutableMemtable current = activeMemtable.get();
             if (current != fullMemtable) {
                 return;
             }
@@ -151,14 +163,14 @@ final class StoreRuntime implements AutoCloseable {
         }
     }
 
-    private void rotateMemtable(Memtable current) {
-        flushCoordinator.enqueue(current);
-        activeMemtable.set(new Memtable());
+    private void rotateMemtable(MutableMemtable current) {
+        flushCoordinator.enqueue(current.freeze());
+        activeMemtable.set(new MutableMemtable());
         refreshMemtableStats();
     }
 
     private void resetMemtables() {
-        activeMemtable.set(new Memtable());
+        activeMemtable.set(new MutableMemtable());
         refreshMemtableStats();
     }
 

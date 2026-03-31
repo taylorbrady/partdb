@@ -72,7 +72,7 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
 
             tree.flush();
 
-            List<EngineEntry> entries = readAll(tree.scan(null, null));
+            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.all()));
             assertFalse(entries.isEmpty());
         }
     }
@@ -230,7 +230,7 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
                     try {
                         startLatch.await();
                         for (int round = 0; round < 10; round++) {
-                            try (EngineEntryCursor cursor = tree.scan(null, null)) {
+                            try (EngineEntryCursor cursor = tree.scan(ScanBounds.all())) {
                                 while (cursor.hasNext()) {
                                     cursor.next();
                                 }

@@ -44,6 +44,10 @@ record SSTableMetadata(
         return afterStart && beforeEnd;
     }
 
+    public boolean overlaps(ScanBounds bounds) {
+        return bounds.overlaps(smallestKey, largestKey);
+    }
+
     public boolean mightContain(Slice key) {
         return key.compareTo(smallestKey) >= 0 && key.compareTo(largestKey) <= 0;
     }
