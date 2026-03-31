@@ -53,18 +53,18 @@ final class StoreRuntime implements AutoCloseable {
     }
 
     void put(Slice key, Slice value, long revision) {
-        applyMutation(new Mutation.Put(key, value, revision));
+        applyStoredEntry(new StoredEntry.Value(key, value, revision));
     }
 
     void delete(Slice key, long revision) {
-        applyMutation(new Mutation.Tombstone(key, revision));
+        applyStoredEntry(new StoredEntry.Tombstone(key, revision));
     }
 
-    Optional<EngineEntry> get(Slice key) {
+    Optional<StoredEntry.Value> get(Slice key) {
         return readCoordinator.get(key);
     }
 
-    EngineEntryCursor scan(ScanBounds bounds) {
+    StoredValueCursor scan(ScanBounds bounds) {
         return readCoordinator.scan(bounds);
     }
 
@@ -112,23 +112,23 @@ final class StoreRuntime implements AutoCloseable {
         tableCatalog.close();
     }
 
-    static Optional<Mutation> lookupMutation(
+    static Optional<StoredEntry> lookupStoredEntry(
         Slice key,
         MutableMemtable activeMemtable,
         List<ImmutableMemtable> immutableMemtables
     ) {
-        return ReadCoordinator.lookupMutation(key, activeMemtable, immutableMemtables);
+        return ReadCoordinator.lookupStoredEntry(key, activeMemtable, immutableMemtables);
     }
 
-    private void applyMutation(Mutation mutation) {
-        ValidationResult validation = validateMutation(mutation);
+    private void applyStoredEntry(StoredEntry entry) {
+        ValidationResult validation = validateStoredEntry(entry);
         if (validation == ValidationResult.DUPLICATE) {
             return;
         }
 
         while (true) {
             MutableMemtable memtable = activeMemtable.get();
-            MutableMemtable.WriteResult writeResult = memtable.put(mutation);
+            MutableMemtable.WriteResult writeResult = memtable.put(entry);
             if (writeResult == MutableMemtable.WriteResult.DUPLICATE) {
                 return;
             }
@@ -174,31 +174,31 @@ final class StoreRuntime implements AutoCloseable {
         refreshMemtableStats();
     }
 
-    private ValidationResult validateMutation(Mutation mutation) {
-        Optional<Mutation> existing = readCoordinator.lookupVisibleMutation(mutation.key());
+    private ValidationResult validateStoredEntry(StoredEntry entry) {
+        Optional<StoredEntry> existing = readCoordinator.lookupLatestEntry(entry.key());
         if (existing.isEmpty()) {
             return ValidationResult.APPLY;
         }
 
-        Mutation current = existing.get();
-        if (mutation.revision() > current.revision()) {
+        StoredEntry current = existing.get();
+        if (entry.revision() > current.revision()) {
             return ValidationResult.APPLY;
         }
 
-        if (mutation.revision() == current.revision() && mutation.equals(current)) {
+        if (entry.revision() == current.revision() && entry.equals(current)) {
             return ValidationResult.DUPLICATE;
         }
 
-        if (mutation.revision() < current.revision()) {
+        if (entry.revision() < current.revision()) {
             throw new StorageException.InvalidRevision(
                 "Revision %d for key %s is older than current revision %d"
-                    .formatted(mutation.revision(), mutation.key(), current.revision())
+                    .formatted(entry.revision(), entry.key(), current.revision())
             );
         }
 
         throw new StorageException.InvalidRevision(
             "Conflicting mutation for key %s at revision %d"
-                .formatted(mutation.key(), mutation.revision())
+                .formatted(entry.key(), entry.revision())
         );
     }
 

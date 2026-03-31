@@ -49,7 +49,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
             Thread.sleep(1000);
 
             for (int i = 0; i < 20; i++) {
-                Optional<EngineEntry> result = tree.get(key(String.format("key-%02d", i)));
+                Optional<StoredEntry.Value> result = tree.get(key(String.format("key-%02d", i)));
                 assertTrue(result.isPresent());
                 assertTrue(new String(result.get().value().toByteArray(), StandardCharsets.UTF_8).startsWith("v4"));
             }
@@ -124,7 +124,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
             Thread.sleep(1000);
 
             for (int i = 0; i < 30; i++) {
-                Optional<EngineEntry> result = tree.get(key(String.format("key-%02d", i)));
+                Optional<StoredEntry.Value> result = tree.get(key(String.format("key-%02d", i)));
                 assertTrue(result.isPresent());
                 assertEquals(expectedValues.get(i), new String(result.get().value().toByteArray(), StandardCharsets.UTF_8));
             }
@@ -180,7 +180,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
 
         try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < keys.size(); i++) {
-                Optional<EngineEntry> result = tree.get(keys.get(i));
+                Optional<StoredEntry.Value> result = tree.get(keys.get(i));
                 assertTrue(result.isPresent());
                 assertEquals(values.get(i), result.get().value());
             }
@@ -202,10 +202,10 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
             Slice startKey = key("key-020");
             Slice endKey = key("key-030");
 
-            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.between(startKey, endKey)));
+            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.between(startKey, endKey)));
 
             assertEquals(10, entries.size());
-            for (EngineEntry e : entries) {
+            for (StoredEntry.Value e : entries) {
                 assertTrue(e.key().compareTo(startKey) >= 0);
                 assertTrue(e.key().compareTo(endKey) < 0);
             }

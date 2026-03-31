@@ -2,7 +2,7 @@ package io.partdb.storage;
 
 import java.util.Iterator;
 
-interface EngineEntryCursor extends Iterator<EngineEntry>, AutoCloseable {
+interface StoredValueCursor extends Iterator<StoredEntry.Value>, AutoCloseable {
 
     @Override
     void close();

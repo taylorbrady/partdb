@@ -83,12 +83,12 @@ final class CompactionExecutor {
         List<SSTableMetadata> grandparents,
         List<SSTableMetadata> completedOutputs
     ) {
-        List<Iterator<Mutation>> iterators = sources.stream()
+        List<Iterator<StoredEntry>> iterators = sources.stream()
             .map(table -> table.scan(ScanBounds.all()))
             .toList();
 
-        Iterator<Mutation> merged = new MergingIterator(iterators);
-        Iterator<Mutation> filtered = gcTombstones
+        Iterator<StoredEntry> merged = new MergingIterator(iterators);
+        Iterator<StoredEntry> filtered = gcTombstones
             ? new TombstoneFilter(merged)
             : merged;
 
@@ -96,18 +96,18 @@ final class CompactionExecutor {
     }
 
     private List<SSTableMetadata> writeOutputs(
-        Iterator<Mutation> entries,
+        Iterator<StoredEntry> entries,
         int targetLevel,
         List<SSTableMetadata> grandparents,
         List<SSTableMetadata> completedOutputs
     ) {
-        Mutation pending = null;
+        StoredEntry pending = null;
 
         while (pending != null || entries.hasNext()) {
             try (SSTableWriter writer = tableCatalog.createWriter(targetLevel)) {
                 Slice firstKey = null;
                 while (pending != null || entries.hasNext()) {
-                    Mutation next = pending != null ? pending : entries.next();
+                    StoredEntry next = pending != null ? pending : entries.next();
                     pending = null;
 
                     if (shouldFinishOutput(writer, firstKey, next, grandparents)) {
@@ -130,14 +130,14 @@ final class CompactionExecutor {
     private boolean shouldFinishOutput(
         SSTableWriter writer,
         Slice firstKey,
-        Mutation next,
+        StoredEntry next,
         List<SSTableMetadata> grandparents
     ) {
         if (writer.uncompressedBytes() == 0 || firstKey == null) {
             return false;
         }
 
-        if (writer.uncompressedBytes() + next.sizeInBytes() > config.targetUncompressedSize()) {
+        if (writer.uncompressedBytes() + next.encodedSizeBytes() > config.targetUncompressedSize()) {
             return true;
         }
 
@@ -189,12 +189,12 @@ final class CompactionExecutor {
         }
     }
 
-    private static final class TombstoneFilter implements Iterator<Mutation> {
+    private static final class TombstoneFilter implements Iterator<StoredEntry> {
 
-        private final Iterator<Mutation> source;
-        private Mutation next;
+        private final Iterator<StoredEntry> source;
+        private StoredEntry next;
 
-        TombstoneFilter(Iterator<Mutation> source) {
+        TombstoneFilter(Iterator<StoredEntry> source) {
             this.source = source;
             advance();
         }
@@ -205,20 +205,20 @@ final class CompactionExecutor {
         }
 
         @Override
-        public Mutation next() {
+        public StoredEntry next() {
             if (next == null) {
                 throw new NoSuchElementException();
             }
-            Mutation result = next;
+            StoredEntry result = next;
             advance();
             return result;
         }
 
         private void advance() {
             while (source.hasNext()) {
-                Mutation mutation = source.next();
-                if (!(mutation instanceof Mutation.Tombstone)) {
-                    next = mutation;
+                StoredEntry entry = source.next();
+                if (!(entry instanceof StoredEntry.Tombstone)) {
+                    next = entry;
                     return;
                 }
             }

@@ -45,21 +45,20 @@ class CatalogSnapshotTest {
             NoOpBlockCache.INSTANCE
         );
 
-        SSTableSetRef ref = SSTableSetRef.of(List.of(olderReader, newerReader));
-        SSTableSetRef acquired = switch (ref.tryAcquire()) {
-            case SSTableSetRef.AcquireResult.Success(var sstableSet) -> sstableSet;
-            case SSTableSetRef.AcquireResult.Retired _ ->
-                throw new AssertionError("fresh SSTableSetRef should be acquirable");
-        };
-
-        ref.retire(List.of(olderReader, newerReader));
-
         SSTableManifest manifest = new SSTableManifest(2, List.of(newerDescriptor, olderDescriptor));
-        try (CatalogSnapshot view = new CatalogSnapshot(acquired, manifest)) {
-            Mutation mutation = view.get(slice("shared-key")).orElseThrow();
+        CatalogGeneration generation = new CatalogGeneration(manifest, List.of(olderReader, newerReader));
+        CatalogGeneration.CatalogLease lease = generation.tryAcquire();
+        if (lease == null) {
+            throw new AssertionError("fresh catalog generation should be acquirable");
+        }
 
-            assertInstanceOf(Mutation.Put.class, mutation);
-            assertEquals(slice("newer-value"), ((Mutation.Put) mutation).value());
+        generation.retire(List.of());
+
+        try (CatalogSnapshot view = new CatalogSnapshot(lease)) {
+            StoredEntry mutation = view.get(slice("shared-key")).orElseThrow();
+
+            assertInstanceOf(StoredEntry.Value.class, mutation);
+            assertEquals(slice("newer-value"), ((StoredEntry.Value) mutation).value());
         }
     }
 
@@ -78,17 +77,16 @@ class CatalogSnapshotTest {
         );
         SSTableReader l1Reader = SSTableReader.open(l1.id(), l1.level(), tablePath(l1.id()), NoOpBlockCache.INSTANCE);
 
-        SSTableSetRef ref = SSTableSetRef.of(List.of(l2Reader, newestL0Reader, l1Reader));
-        SSTableSetRef acquired = switch (ref.tryAcquire()) {
-            case SSTableSetRef.AcquireResult.Success(var sstableSet) -> sstableSet;
-            case SSTableSetRef.AcquireResult.Retired _ ->
-                throw new AssertionError("fresh SSTableSetRef should be acquirable");
-        };
-
-        ref.retire(List.of(l2Reader, newestL0Reader, l1Reader));
-
         SSTableManifest manifest = new SSTableManifest(3, List.of(newestL0, l1, l2));
-        try (CatalogSnapshot view = new CatalogSnapshot(acquired, manifest)) {
+        CatalogGeneration generation = new CatalogGeneration(manifest, List.of(l2Reader, newestL0Reader, l1Reader));
+        CatalogGeneration.CatalogLease lease = generation.tryAcquire();
+        if (lease == null) {
+            throw new AssertionError("fresh catalog generation should be acquirable");
+        }
+
+        generation.retire(List.of());
+
+        try (CatalogSnapshot view = new CatalogSnapshot(lease)) {
             List<SSTableReader> tables = view.scanTables(ScanBounds.between(slice("a"), slice("z")));
 
             assertEquals(List.of(newestL0Reader, l1Reader, l2Reader), tables);
@@ -97,7 +95,7 @@ class CatalogSnapshotTest {
 
     private SSTableMetadata writeTable(long id, int level, String key, String value, long revision) {
         try (SSTableWriter writer = SSTableWriter.create(id, level, tablePath(id), LsmConfig.defaults())) {
-            writer.add(new Mutation.Put(slice(key), slice(value), revision));
+            writer.add(new StoredEntry.Value(slice(key), slice(value), revision));
             return writer.finish();
         }
     }

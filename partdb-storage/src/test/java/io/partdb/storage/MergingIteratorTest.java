@@ -21,21 +21,21 @@ class MergingIteratorTest {
         return Slice.of(s);
     }
 
-    private static Mutation put(String key, String value, long revision) {
-        return new Mutation.Put(key(key), value(value), revision);
+    private static StoredEntry put(String key, String value, long revision) {
+        return new StoredEntry.Value(key(key), value(value), revision);
     }
 
-    private static Mutation tombstone(String key, long revision) {
-        return new Mutation.Tombstone(key(key), revision);
+    private static StoredEntry tombstone(String key, long revision) {
+        return new StoredEntry.Tombstone(key(key), revision);
     }
 
-    private static List<Mutation> drain(Iterator<Mutation> iterator) {
-        List<Mutation> result = new ArrayList<>();
+    private static List<StoredEntry> drain(Iterator<StoredEntry> iterator) {
+        List<StoredEntry> result = new ArrayList<>();
         iterator.forEachRemaining(result::add);
         return result;
     }
 
-    private static List<String> keys(List<Mutation> mutations) {
+    private static List<String> keys(List<StoredEntry> mutations) {
         return mutations.stream()
             .map(m -> new String(m.key().toByteArray()))
             .toList();
@@ -79,7 +79,7 @@ class MergingIteratorTest {
                 Collections.emptyIterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(List.of("a"), keys(result));
         }
@@ -90,14 +90,14 @@ class MergingIteratorTest {
 
         @Test
         void passesThrough() {
-            List<Mutation> input = List.of(
+            List<StoredEntry> input = List.of(
                 put("a", "v1", 1),
                 put("b", "v2", 2),
                 put("c", "v3", 3)
             );
 
             MergingIterator iterator = new MergingIterator(List.of(input.iterator()));
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(List.of("a", "b", "c"), keys(result));
         }
@@ -108,7 +108,7 @@ class MergingIteratorTest {
                 List.of(put("a", "v1", 1)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(1, result.size());
             assertEquals(key("a"), result.getFirst().key());
@@ -125,7 +125,7 @@ class MergingIteratorTest {
                 List.of(put("b", "v2", 2), put("d", "v4", 4)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(List.of("a", "b", "c", "d"), keys(result));
         }
@@ -137,7 +137,7 @@ class MergingIteratorTest {
                 List.of(put("b", "v2", 2), put("d", "v4", 4), put("f", "v6", 6)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(List.of("a", "b", "c", "d", "e", "f"), keys(result));
         }
@@ -150,7 +150,7 @@ class MergingIteratorTest {
                 List.of(put("c", "v3", 3), put("f", "v6", 6)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(List.of("a", "b", "c", "d", "e", "f"), keys(result));
         }
@@ -163,7 +163,7 @@ class MergingIteratorTest {
                 List.of(put("m", "v3", 3)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(List.of("a", "m", "z"), keys(result));
         }
@@ -179,11 +179,11 @@ class MergingIteratorTest {
                 List.of(put("a", "new", 2)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(1, result.size());
             assertEquals(2, result.getFirst().revision());
-            assertEquals(value("new"), ((Mutation.Put) result.getFirst()).value());
+            assertEquals(value("new"), ((StoredEntry.Value) result.getFirst()).value());
         }
 
         @Test
@@ -193,7 +193,7 @@ class MergingIteratorTest {
                 List.of(put("a", "old", 1)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(1, result.size());
             assertEquals(2, result.getFirst().revision());
@@ -206,10 +206,10 @@ class MergingIteratorTest {
                 List.of(put("a", "second", 1)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(1, result.size());
-            assertEquals(value("first"), ((Mutation.Put) result.getFirst()).value());
+            assertEquals(value("first"), ((StoredEntry.Value) result.getFirst()).value());
         }
 
         @Test
@@ -220,11 +220,11 @@ class MergingIteratorTest {
                 List.of(put("a", "v3", 2)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(1, result.size());
             assertEquals(3, result.getFirst().revision());
-            assertEquals(value("v2"), ((Mutation.Put) result.getFirst()).value());
+            assertEquals(value("v2"), ((StoredEntry.Value) result.getFirst()).value());
         }
 
         @Test
@@ -234,7 +234,7 @@ class MergingIteratorTest {
                 List.of(put("a", "new", 2), put("b", "b1", 4)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(List.of("a", "b", "c"), keys(result));
             assertEquals(2, result.getFirst().revision());
@@ -250,7 +250,7 @@ class MergingIteratorTest {
                 ).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(1, result.size());
             assertEquals(3, result.getFirst().revision());
@@ -266,10 +266,10 @@ class MergingIteratorTest {
                 List.of(tombstone("a", 1)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(1, result.size());
-            assertInstanceOf(Mutation.Tombstone.class, result.getFirst());
+            assertInstanceOf(StoredEntry.Tombstone.class, result.getFirst());
         }
 
         @Test
@@ -279,10 +279,10 @@ class MergingIteratorTest {
                 List.of(tombstone("a", 2)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(1, result.size());
-            assertInstanceOf(Mutation.Tombstone.class, result.getFirst());
+            assertInstanceOf(StoredEntry.Tombstone.class, result.getFirst());
         }
 
         @Test
@@ -292,10 +292,10 @@ class MergingIteratorTest {
                 List.of(put("a", "v1", 2)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(1, result.size());
-            assertInstanceOf(Mutation.Put.class, result.getFirst());
+            assertInstanceOf(StoredEntry.Value.class, result.getFirst());
         }
 
         @Test
@@ -305,13 +305,13 @@ class MergingIteratorTest {
                 List.of(tombstone("b", 2), put("d", "v4", 4)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(4, result.size());
-            assertInstanceOf(Mutation.Put.class, result.get(0));
-            assertInstanceOf(Mutation.Tombstone.class, result.get(1));
-            assertInstanceOf(Mutation.Tombstone.class, result.get(2));
-            assertInstanceOf(Mutation.Put.class, result.get(3));
+            assertInstanceOf(StoredEntry.Value.class, result.get(0));
+            assertInstanceOf(StoredEntry.Tombstone.class, result.get(1));
+            assertInstanceOf(StoredEntry.Tombstone.class, result.get(2));
+            assertInstanceOf(StoredEntry.Value.class, result.get(3));
         }
     }
 
@@ -374,7 +374,7 @@ class MergingIteratorTest {
                 List.of(put("a", "max", Long.MAX_VALUE)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(1, result.size());
             assertEquals(Long.MAX_VALUE, result.getFirst().revision());
@@ -387,7 +387,7 @@ class MergingIteratorTest {
                 List.of(put("a", "v1", 2)).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(2, result.size());
             assertEquals(key(""), result.getFirst().key());
@@ -395,13 +395,13 @@ class MergingIteratorTest {
 
         @Test
         void manyIterators() {
-            List<Iterator<Mutation>> iterators = new ArrayList<>();
+            List<Iterator<StoredEntry>> iterators = new ArrayList<>();
             for (int i = 0; i < 100; i++) {
                 iterators.add(List.of(put("key" + String.format("%03d", i), "v" + i, i)).iterator());
             }
 
             MergingIterator iterator = new MergingIterator(iterators);
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(100, result.size());
             for (int i = 0; i < 100; i++) {
@@ -411,13 +411,13 @@ class MergingIteratorTest {
 
         @Test
         void allSameKey() {
-            List<Iterator<Mutation>> iterators = new ArrayList<>();
+            List<Iterator<StoredEntry>> iterators = new ArrayList<>();
             for (int i = 0; i < 10; i++) {
                 iterators.add(List.of(put("same", "v" + i, i)).iterator());
             }
 
             MergingIterator iterator = new MergingIterator(iterators);
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(1, result.size());
             assertEquals(9, result.getFirst().revision());
@@ -425,12 +425,12 @@ class MergingIteratorTest {
 
         @Test
         void binaryKeyOrdering() {
-            Mutation highByte = new Mutation.Put(
+            StoredEntry highByte = new StoredEntry.Value(
                 Slice.of(new byte[]{(byte) 0xFF}),
                 value("high"),
                 2
             );
-            Mutation lowByte = new Mutation.Put(
+            StoredEntry lowByte = new StoredEntry.Value(
                 Slice.of(new byte[]{(byte) 0x00}),
                 value("low"),
                 3
@@ -442,7 +442,7 @@ class MergingIteratorTest {
                 List.of(lowByte).iterator()
             ));
 
-            List<Mutation> result = drain(iterator);
+            List<StoredEntry> result = drain(iterator);
 
             assertEquals(3, result.size());
             assertArrayEquals(new byte[]{0x00}, result.get(0).key().toByteArray());

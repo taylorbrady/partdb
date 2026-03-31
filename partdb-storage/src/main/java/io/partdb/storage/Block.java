@@ -11,7 +11,7 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.zip.CRC32C;
 
-final class Block implements Iterable<Mutation> {
+final class Block implements Iterable<StoredEntry> {
 
     private static final int TRAILER_SIZE = 12;
 
@@ -59,7 +59,7 @@ final class Block implements Iterable<Mutation> {
         return new Block(segment, entryCount, offsetTableStart);
     }
 
-    public Optional<Mutation> find(Slice key) {
+    public Optional<StoredEntry> find(Slice key) {
         int index = binarySearchKey(key);
         if (index < 0) {
             return Optional.empty();
@@ -75,7 +75,7 @@ final class Block implements Iterable<Mutation> {
         return segment.byteSize();
     }
 
-    public Mutation entry(int index) {
+    public StoredEntry entry(int index) {
         if (index < 0 || index >= entryCount) {
             throw new IndexOutOfBoundsException("index: " + index + ", entryCount: " + entryCount);
         }
@@ -97,7 +97,7 @@ final class Block implements Iterable<Mutation> {
     }
 
     @Override
-    public Iterator<Mutation> iterator() {
+    public Iterator<StoredEntry> iterator() {
         return new BlockIterator();
     }
 
@@ -147,7 +147,7 @@ final class Block implements Iterable<Mutation> {
         return result;
     }
 
-    private Mutation parseEntryAt(int offset) {
+    private StoredEntry parseEntryAt(int offset) {
         if (offset + 13L > offsetTableStart) {
             throw new StorageException.Corruption("Truncated block entry header");
         }
@@ -178,14 +178,14 @@ final class Block implements Iterable<Mutation> {
             if (valueLength != 0) {
                 throw new StorageException.Corruption("Tombstone block entry must not carry a value");
             }
-            return new Mutation.Tombstone(key, revision);
+            return new StoredEntry.Tombstone(key, revision);
         } else {
             Slice value = Slice.wrap(segment.asSlice(valueOffset + 4, valueLength));
-            return new Mutation.Put(key, value, revision);
+            return new StoredEntry.Value(key, value, revision);
         }
     }
 
-    private final class BlockIterator implements Iterator<Mutation> {
+    private final class BlockIterator implements Iterator<StoredEntry> {
         private int index = 0;
 
         @Override
@@ -194,7 +194,7 @@ final class Block implements Iterable<Mutation> {
         }
 
         @Override
-        public Mutation next() {
+        public StoredEntry next() {
             if (!hasNext()) {
                 throw new NoSuchElementException();
             }
@@ -204,14 +204,14 @@ final class Block implements Iterable<Mutation> {
 
     public static final class Builder {
 
-        private final List<Mutation> entries = new ArrayList<>();
+        private final List<StoredEntry> entries = new ArrayList<>();
         private final List<Integer> offsets = new ArrayList<>();
         private int currentOffset = 0;
 
-        public Builder add(Mutation mutation) {
+        public Builder add(StoredEntry entry) {
             offsets.add(currentOffset);
-            entries.add(mutation);
-            currentOffset += entrySize(mutation);
+            entries.add(entry);
+            currentOffset += entry.encodedSizeBytes();
             return this;
         }
 
@@ -251,8 +251,8 @@ final class Block implements Iterable<Mutation> {
 
             ByteBuffer buffer = ByteBuffer.allocate(totalSize).order(ByteOrder.nativeOrder());
 
-            for (Mutation mutation : entries) {
-                writeEntry(buffer, mutation);
+            for (StoredEntry entry : entries) {
+                writeEntry(buffer, entry);
             }
 
             for (int offset : offsets) {
@@ -276,31 +276,24 @@ final class Block implements Iterable<Mutation> {
             return this;
         }
 
-        private void writeEntry(ByteBuffer buffer, Mutation mutation) {
-            switch (mutation) {
-                case Mutation.Tombstone t -> {
+        private void writeEntry(ByteBuffer buffer, StoredEntry entry) {
+            switch (entry) {
+                case StoredEntry.Tombstone t -> {
                     buffer.put((byte) 0x01);
                     buffer.putLong(t.revision());
                     buffer.putInt(t.key().length());
                     buffer.put(t.key().toByteArray());
                     buffer.putInt(0);
                 }
-                case Mutation.Put p -> {
+                case StoredEntry.Value value -> {
                     buffer.put((byte) 0x00);
-                    buffer.putLong(p.revision());
-                    buffer.putInt(p.key().length());
-                    buffer.put(p.key().toByteArray());
-                    buffer.putInt(p.value().length());
-                    buffer.put(p.value().toByteArray());
+                    buffer.putLong(value.revision());
+                    buffer.putInt(value.key().length());
+                    buffer.put(value.key().toByteArray());
+                    buffer.putInt(value.value().length());
+                    buffer.put(value.value().toByteArray());
                 }
             }
-        }
-
-        private int entrySize(Mutation mutation) {
-            return switch (mutation) {
-                case Mutation.Put p -> 1 + 8 + 4 + mutation.key().length() + 4 + p.value().length();
-                case Mutation.Tombstone _ -> 1 + 8 + 4 + mutation.key().length() + 4;
-            };
         }
     }
 }

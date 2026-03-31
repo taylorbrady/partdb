@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
-class EngineEntryTest {
+class StoredEntryValueTest {
 
     @Test
     void recordAccessors() {
@@ -13,7 +13,7 @@ class EngineEntryTest {
         Slice value = Slice.of("value");
         long revision = 1000L;
 
-        EngineEntry entry = new EngineEntry(key, value, revision);
+        StoredEntry.Value entry = new StoredEntry.Value(key, value, revision);
 
         assertEquals(key, entry.key());
         assertEquals(value, entry.value());
@@ -25,8 +25,8 @@ class EngineEntryTest {
         Slice key = Slice.of("key");
         Slice value = Slice.of("value");
 
-        EngineEntry entry1 = new EngineEntry(key, value, 1000L);
-        EngineEntry entry2 = new EngineEntry(key, value, 1000L);
+        StoredEntry.Value entry1 = new StoredEntry.Value(key, value, 1000L);
+        StoredEntry.Value entry2 = new StoredEntry.Value(key, value, 1000L);
 
         assertEquals(entry1, entry2);
         assertEquals(entry1.hashCode(), entry2.hashCode());
@@ -37,8 +37,8 @@ class EngineEntryTest {
         Slice key = Slice.of("key");
         Slice value = Slice.of("value");
 
-        EngineEntry entry1 = new EngineEntry(key, value, 1000L);
-        EngineEntry entry2 = new EngineEntry(key, value, 2000L);
+        StoredEntry.Value entry1 = new StoredEntry.Value(key, value, 1000L);
+        StoredEntry.Value entry2 = new StoredEntry.Value(key, value, 2000L);
 
         assertNotEquals(entry1, entry2);
     }
@@ -47,8 +47,8 @@ class EngineEntryTest {
     void notEqualWhenKeyDiffers() {
         Slice value = Slice.of("value");
 
-        EngineEntry entry1 = new EngineEntry(Slice.of("key1"), value, 1000L);
-        EngineEntry entry2 = new EngineEntry(Slice.of("key2"), value, 1000L);
+        StoredEntry.Value entry1 = new StoredEntry.Value(Slice.of("key1"), value, 1000L);
+        StoredEntry.Value entry2 = new StoredEntry.Value(Slice.of("key2"), value, 1000L);
 
         assertNotEquals(entry1, entry2);
     }
@@ -57,8 +57,8 @@ class EngineEntryTest {
     void notEqualWhenValueDiffers() {
         Slice key = Slice.of("key");
 
-        EngineEntry entry1 = new EngineEntry(key, Slice.of("value1"), 1000L);
-        EngineEntry entry2 = new EngineEntry(key, Slice.of("value2"), 1000L);
+        StoredEntry.Value entry1 = new StoredEntry.Value(key, Slice.of("value1"), 1000L);
+        StoredEntry.Value entry2 = new StoredEntry.Value(key, Slice.of("value2"), 1000L);
 
         assertNotEquals(entry1, entry2);
     }

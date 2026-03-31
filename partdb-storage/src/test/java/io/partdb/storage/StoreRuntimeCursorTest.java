@@ -19,7 +19,7 @@ class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
             }
             tree.flush();
 
-            try (EngineEntryCursor cursor = tree.scan(ScanBounds.all())) {
+            try (StoredValueCursor cursor = tree.scan(ScanBounds.all())) {
                 assertTrue(cursor.hasNext());
                 assertNotNull(cursor.next());
             }
@@ -34,13 +34,13 @@ class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
             }
             tree.flush();
 
-            try (EngineEntryCursor cursor1 = tree.scan(ScanBounds.all());
-                 EngineEntryCursor cursor2 = tree.scan(ScanBounds.all());
-                 EngineEntryCursor cursor3 = tree.scan(ScanBounds.all())) {
+            try (StoredValueCursor cursor1 = tree.scan(ScanBounds.all());
+                 StoredValueCursor cursor2 = tree.scan(ScanBounds.all());
+                 StoredValueCursor cursor3 = tree.scan(ScanBounds.all())) {
 
-                List<EngineEntry> entries1 = readAll(cursor1);
-                List<EngineEntry> entries2 = readAll(cursor2);
-                List<EngineEntry> entries3 = readAll(cursor3);
+                List<StoredEntry.Value> entries1 = readAll(cursor1);
+                List<StoredEntry.Value> entries2 = readAll(cursor2);
+                List<StoredEntry.Value> entries3 = readAll(cursor3);
 
                 assertEquals(20, entries1.size());
                 assertEquals(20, entries2.size());
@@ -61,12 +61,12 @@ class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
                 tree.flush();
             }
 
-            try (EngineEntryCursor cursor = tree.scan(ScanBounds.all())) {
+            try (StoredValueCursor cursor = tree.scan(ScanBounds.all())) {
                 Thread.sleep(1000);
 
-                List<EngineEntry> entries = readAll(cursor);
+                List<StoredEntry.Value> entries = readAll(cursor);
                 assertEquals(30, entries.size());
-                for (EngineEntry e : entries) {
+                for (StoredEntry.Value e : entries) {
                     assertNotNull(e.key());
                     assertNotNull(e.value());
                 }
@@ -82,8 +82,8 @@ class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
             }
             tree.flush();
 
-            try (EngineEntryCursor cursor = tree.scan(ScanBounds.all())) {
-                List<EngineEntry> first10 = new ArrayList<>();
+            try (StoredValueCursor cursor = tree.scan(ScanBounds.all())) {
+                List<StoredEntry.Value> first10 = new ArrayList<>();
                 while (cursor.hasNext() && first10.size() < 10) {
                     first10.add(cursor.next());
                 }

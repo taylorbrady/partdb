@@ -18,7 +18,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
         try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
 
-            Optional<EngineEntry> result = tree.get(key(1));
+            Optional<StoredEntry.Value> result = tree.get(key(1));
 
             assertTrue(result.isPresent());
             assertEquals(value(10), result.get().value());
@@ -28,7 +28,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
     @Test
     void getNonExistentKey() {
         try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
-            Optional<EngineEntry> result = tree.get(key(99));
+            Optional<StoredEntry.Value> result = tree.get(key(99));
             assertTrue(result.isEmpty());
         }
     }
@@ -39,7 +39,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
             tree.put(key(1), value(10), nextRevision());
             tree.delete(key(1), nextRevision());
 
-            Optional<EngineEntry> result = tree.get(key(1));
+            Optional<StoredEntry.Value> result = tree.get(key(1));
             assertTrue(result.isEmpty());
         }
     }
@@ -49,7 +49,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
         try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.delete(key(1), nextRevision());
 
-            Optional<EngineEntry> result = tree.get(key(1));
+            Optional<StoredEntry.Value> result = tree.get(key(1));
             assertTrue(result.isEmpty());
         }
     }
@@ -60,7 +60,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(1), value(20), nextRevision());
 
-            Optional<EngineEntry> result = tree.get(key(1));
+            Optional<StoredEntry.Value> result = tree.get(key(1));
 
             assertTrue(result.isPresent());
             assertEquals(value(20), result.get().value());
@@ -73,18 +73,18 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
         MutableMemtable older = new MutableMemtable();
         MutableMemtable newer = new MutableMemtable();
 
-        older.put(new Mutation.Put(key("key"), value("older"), 1));
-        newer.put(new Mutation.Put(key("key"), value("newer"), 2));
+        older.put(new StoredEntry.Value(key("key"), value("older"), 1));
+        newer.put(new StoredEntry.Value(key("key"), value("newer"), 2));
 
-        Optional<Mutation> result = StoreRuntime.lookupMutation(
+        Optional<StoredEntry> result = StoreRuntime.lookupStoredEntry(
             key("key"),
             active,
             List.of(older.freeze(), newer.freeze())
         );
 
         assertTrue(result.isPresent());
-        assertInstanceOf(Mutation.Put.class, result.get());
-        assertEquals(value("newer"), ((Mutation.Put) result.get()).value());
+        assertInstanceOf(StoredEntry.Value.class, result.get());
+        assertEquals(value("newer"), ((StoredEntry.Value) result.get()).value());
     }
 
     @Test
@@ -94,7 +94,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
             tree.put(key(2), value(20), nextRevision());
             tree.put(key(3), value(30), nextRevision());
 
-            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.all()));
+            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.all()));
 
             assertEquals(3, entries.size());
             assertEquals(key(1), entries.get(0).key());
@@ -111,7 +111,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
             tree.put(key(3), value(30), nextRevision());
             tree.put(key(4), value(40), nextRevision());
 
-            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.between(key(2), key(4))));
+            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.between(key(2), key(4))));
 
             assertEquals(2, entries.size());
             assertEquals(key(2), entries.get(0).key());
@@ -127,7 +127,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
             tree.delete(key(2), nextRevision());
             tree.put(key(3), value(30), nextRevision());
 
-            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.all()));
+            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.all()));
 
             assertEquals(2, entries.size());
             assertEquals(key(1), entries.get(0).key());
@@ -144,7 +144,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
                 tree.put(key(i), largeValue(100), nextRevision());
             }
 
-            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.all()));
+            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.all()));
 
             assertEquals(20, entries.size());
             for (int i = 0; i < 20; i++) {
@@ -162,9 +162,9 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
             tree.put(key(2), largeValue(100), nextRevision());
             tree.put(key(1), value(20), nextRevision());
 
-            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.all()));
+            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.all()));
 
-            Optional<EngineEntry> keyEntry = entries.stream()
+            Optional<StoredEntry.Value> keyEntry = entries.stream()
                 .filter(e -> e.key().equals(key(1)))
                 .findFirst();
 
@@ -212,8 +212,8 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
         }
 
         try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
-            Optional<EngineEntry> result1 = tree.get(key(1));
-            Optional<EngineEntry> result2 = tree.get(key(2));
+            Optional<StoredEntry.Value> result1 = tree.get(key(1));
+            Optional<StoredEntry.Value> result2 = tree.get(key(2));
 
             assertTrue(result1.isPresent());
             assertEquals(value(10), result1.get().value());
@@ -230,7 +230,7 @@ class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
             tree.flush();
             tree.put(key(1), value(20), nextRevision());
 
-            Optional<EngineEntry> result = tree.get(key(1));
+            Optional<StoredEntry.Value> result = tree.get(key(1));
 
             assertTrue(result.isPresent());
             assertEquals(value(20), result.get().value());

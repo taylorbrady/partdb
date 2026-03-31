@@ -82,9 +82,9 @@ public final class VersionedKeyValueStore implements AutoCloseable {
     }
 
     private static final class CursorAdapter implements EntryCursor {
-        private final EngineEntryCursor cursor;
+        private final StoredValueCursor cursor;
 
-        private CursorAdapter(EngineEntryCursor cursor) {
+        private CursorAdapter(StoredValueCursor cursor) {
             this.cursor = cursor;
         }
 
@@ -99,7 +99,7 @@ public final class VersionedKeyValueStore implements AutoCloseable {
                 throw new NoSuchElementException();
             }
 
-            EngineEntry entry = cursor.next();
+            StoredEntry.Value entry = cursor.next();
             return new VersionedEntry(
                 Bytes.copyOf(entry.key().toByteArray()),
                 Bytes.copyOf(entry.value().toByteArray()),

@@ -70,8 +70,8 @@ class CompactionExecutorTest {
         }
     }
 
-    private static Mutation.Put put(String key, byte[] value, long revision) {
-        return new Mutation.Put(slice(key), Slice.of(value), revision);
+    private static StoredEntry.Value put(String key, byte[] value, long revision) {
+        return new StoredEntry.Value(slice(key), Slice.of(value), revision);
     }
 
     private static Slice slice(String value) {

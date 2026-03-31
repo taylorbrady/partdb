@@ -99,7 +99,7 @@ final class SSTableReader implements AutoCloseable {
         return level;
     }
 
-    Optional<Mutation> get(Slice key) {
+    Optional<StoredEntry> get(Slice key) {
         if (!bloomFilter.mightContain(key)) {
             return Optional.empty();
         }
@@ -113,7 +113,7 @@ final class SSTableReader implements AutoCloseable {
         return block.find(key);
     }
 
-    Iterator<Mutation> scan(ScanBounds bounds) {
+    Iterator<StoredEntry> scan(ScanBounds bounds) {
         return new ScanIterator(bounds);
     }
 
@@ -244,13 +244,13 @@ final class SSTableReader implements AutoCloseable {
         }
     }
 
-    private final class ScanIterator implements Iterator<Mutation> {
+    private final class ScanIterator implements Iterator<StoredEntry> {
 
         private final ScanBounds bounds;
         private final List<BlockIndex.Entry> blocks;
         private int currentBlockIndex;
-        private Iterator<Mutation> currentBlockIterator;
-        private Mutation nextMutation;
+        private Iterator<StoredEntry> currentBlockIterator;
+        private StoredEntry nextEntry;
 
         private ScanIterator(ScanBounds bounds) {
             this.bounds = bounds;
@@ -264,15 +264,15 @@ final class SSTableReader implements AutoCloseable {
 
         @Override
         public boolean hasNext() {
-            return nextMutation != null;
+            return nextEntry != null;
         }
 
         @Override
-        public Mutation next() {
-            if (nextMutation == null) {
+        public StoredEntry next() {
+            if (nextEntry == null) {
                 throw new NoSuchElementException();
             }
-            Mutation result = nextMutation;
+            StoredEntry result = nextEntry;
             advance();
             return result;
         }
@@ -280,23 +280,23 @@ final class SSTableReader implements AutoCloseable {
         private void advance() {
             while (true) {
                 if (currentBlockIterator != null && currentBlockIterator.hasNext()) {
-                    Mutation mutation = currentBlockIterator.next();
+                    StoredEntry entry = currentBlockIterator.next();
 
-                    if (!bounds.includes(mutation.key())) {
+                    if (!bounds.includes(entry.key())) {
                         Slice endExclusive = bounds.endExclusive();
-                        if (endExclusive != null && mutation.key().compareTo(endExclusive) >= 0) {
-                            nextMutation = null;
+                        if (endExclusive != null && entry.key().compareTo(endExclusive) >= 0) {
+                            nextEntry = null;
                             return;
                         }
                         continue;
                     }
 
-                    nextMutation = mutation;
+                    nextEntry = entry;
                     return;
                 }
 
                 if (currentBlockIndex >= blocks.size()) {
-                    nextMutation = null;
+                    nextEntry = null;
                     return;
                 }
 

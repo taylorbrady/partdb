@@ -27,15 +27,15 @@ final class ReadCoordinator {
         this.tableCatalog = Objects.requireNonNull(tableCatalog, "tableCatalog");
     }
 
-    Optional<EngineEntry> get(Slice key) {
-        Optional<Mutation> result = lookupVisibleMutation(key);
-        return result.flatMap(ReadCoordinator::resolveEntry);
+    Optional<StoredEntry.Value> get(Slice key) {
+        Optional<StoredEntry> result = lookupLatestEntry(key);
+        return result.flatMap(ReadCoordinator::resolveValue);
     }
 
-    EngineEntryCursor scan(ScanBounds bounds) {
+    StoredValueCursor scan(ScanBounds bounds) {
         CatalogSnapshot readers = tableCatalog.acquire();
         try {
-            List<Iterator<Mutation>> iterators = new ArrayList<>();
+            List<Iterator<StoredEntry>> iterators = new ArrayList<>();
 
             iterators.add(activeMemtableSupplier.get().scan(bounds));
             addImmutableMemtableIterators(iterators, bounds, immutableMemtablesSupplier.get());
@@ -51,8 +51,8 @@ final class ReadCoordinator {
         }
     }
 
-    Optional<Mutation> lookupVisibleMutation(Slice key) {
-        Optional<Mutation> result = lookupMutation(
+    Optional<StoredEntry> lookupLatestEntry(Slice key) {
+        Optional<StoredEntry> result = lookupStoredEntry(
             key,
             activeMemtableSupplier.get(),
             immutableMemtablesSupplier.get()
@@ -66,12 +66,12 @@ final class ReadCoordinator {
         }
     }
 
-    static Optional<Mutation> lookupMutation(
+    static Optional<StoredEntry> lookupStoredEntry(
         Slice key,
         MutableMemtable activeMemtable,
         List<ImmutableMemtable> immutableMemtables
     ) {
-        Optional<Mutation> result = activeMemtable.get(key);
+        Optional<StoredEntry> result = activeMemtable.get(key);
         if (result.isPresent()) {
             return result;
         }
@@ -86,15 +86,15 @@ final class ReadCoordinator {
         return Optional.empty();
     }
 
-    private static Optional<EngineEntry> resolveEntry(Mutation mutation) {
-        return switch (mutation) {
-            case Mutation.Tombstone _ -> Optional.empty();
-            case Mutation.Put p -> Optional.of(new EngineEntry(p.key(), p.value(), p.revision()));
+    private static Optional<StoredEntry.Value> resolveValue(StoredEntry entry) {
+        return switch (entry) {
+            case StoredEntry.Tombstone _ -> Optional.empty();
+            case StoredEntry.Value value -> Optional.of(value);
         };
     }
 
     private static void addImmutableMemtableIterators(
-        List<Iterator<Mutation>> iterators,
+        List<Iterator<StoredEntry>> iterators,
         ScanBounds bounds,
         List<ImmutableMemtable> immutableMemtables
     ) {
@@ -103,10 +103,10 @@ final class ReadCoordinator {
         }
     }
 
-    private static final class ScanCursor implements EngineEntryCursor {
+    private static final class ScanCursor implements StoredValueCursor {
         private final CatalogSnapshot readers;
         private final MergingIterator merged;
-        private EngineEntry next;
+        private StoredEntry.Value next;
         private boolean closed;
 
         private ScanCursor(CatalogSnapshot readers, MergingIterator merged) {
@@ -122,11 +122,11 @@ final class ReadCoordinator {
         }
 
         @Override
-        public EngineEntry next() {
+        public StoredEntry.Value next() {
             if (next == null) {
                 throw new NoSuchElementException();
             }
-            EngineEntry result = next;
+            StoredEntry.Value result = next;
             next = advance();
             return result;
         }
@@ -139,10 +139,10 @@ final class ReadCoordinator {
             }
         }
 
-        private EngineEntry advance() {
+        private StoredEntry.Value advance() {
             while (merged.hasNext()) {
-                if (merged.next() instanceof Mutation.Put p) {
-                    return new EngineEntry(p.key(), p.value(), p.revision());
+                if (merged.next() instanceof StoredEntry.Value value) {
+                    return value;
                 }
             }
             return null;

@@ -16,7 +16,6 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -27,9 +26,6 @@ final class TableCatalog implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(TableCatalog.class);
     private static final Pattern SSTABLE_PATTERN = Pattern.compile("(\\d{6})\\.sst");
-    private static final int MAX_ACQUIRE_ATTEMPTS = 100;
-    private static final long INITIAL_BACKOFF_NANOS = 100;
-    private static final long MAX_BACKOFF_NANOS = 10_000;
     private static final Duration SHUTDOWN_DRAIN_TIMEOUT = Duration.ofSeconds(30);
     private static final String BACKUP_SUFFIX = ".backup";
     private static final String MANIFEST_FILENAME = "MANIFEST";
@@ -44,28 +40,24 @@ final class TableCatalog implements AutoCloseable {
     private final CompactionManager compactionManager;
     private final AtomicBoolean closed;
     private final StorageRuntimeStats stats;
-
-    private volatile SSTableManifest manifest;
-    private volatile SSTableSetRef currentSet;
+    private final CatalogManager catalogManager;
 
     private TableCatalog(
         Path directory,
         LsmConfig config,
         BlockCache cache,
-        SSTableManifest manifest,
-        SSTableSetRef initialSet,
+        CatalogGeneration initialGeneration,
         StorageRuntimeStats stats
     ) {
         this.directory = Objects.requireNonNull(directory, "directory");
         this.config = Objects.requireNonNull(config, "config");
         this.cache = Objects.requireNonNull(cache, "cache");
-        this.nextId = new AtomicLong(manifest.nextSSTableId());
+        this.nextId = new AtomicLong(initialGeneration.manifest().nextSSTableId());
         this.stateLock = new ReentrantLock();
-        this.manifest = manifest;
-        this.currentSet = initialSet;
         this.closed = new AtomicBoolean(false);
         this.stats = Objects.requireNonNull(stats, "stats");
-        this.stats.updateSstables(manifest);
+        this.catalogManager = new CatalogManager(initialGeneration);
+        this.stats.updateSstables(initialGeneration.manifest());
 
         this.compactionManager = new CompactionManager(
             this,
@@ -96,8 +88,7 @@ final class TableCatalog implements AutoCloseable {
                 directory,
                 config,
                 blockCache,
-                manifest,
-                SSTableSetRef.of(readers),
+                new CatalogGeneration(manifest, readers),
                 stats
             );
         } catch (IOException e) {
@@ -105,60 +96,32 @@ final class TableCatalog implements AutoCloseable {
         }
     }
 
-    void flush(Iterator<Mutation> mutations) {
+    void flush(Iterator<StoredEntry> entries) {
         SSTableMetadata metadata;
         try (SSTableWriter writer = createWriter(0)) {
-            while (mutations.hasNext()) {
-                writer.add(mutations.next());
+            while (entries.hasNext()) {
+                writer.add(entries.next());
             }
             metadata = writer.finish();
         }
 
         SSTableReader reader = openReader(metadata);
-        addFlushed(metadata, reader);
-        scheduleCompaction();
+        try {
+            addFlushed(metadata, reader);
+            scheduleCompaction();
+        } catch (RuntimeException e) {
+            closeReaders(List.of(reader));
+            deleteSstables(List.of(metadata));
+            throw e;
+        }
     }
 
     CatalogSnapshot acquire() {
-        long backoffNanos = INITIAL_BACKOFF_NANOS;
-
-        for (int attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
-            stateLock.lock();
-            try {
-                SSTableSetRef current = currentSet;
-                SSTableManifest manifestSnapshot = manifest;
-
-                switch (current.tryAcquire()) {
-                    case SSTableSetRef.AcquireResult.Success(var acquired) -> {
-                        return new CatalogSnapshot(acquired, manifestSnapshot);
-                    }
-                    case SSTableSetRef.AcquireResult.Retired _ -> {
-                    }
-                }
-            } finally {
-                stateLock.unlock();
-            }
-
-            if (attempt < 16) {
-                Thread.onSpinWait();
-            } else {
-                LockSupport.parkNanos(backoffNanos);
-                backoffNanos = Math.min(backoffNanos * 2, MAX_BACKOFF_NANOS);
-            }
-        }
-
-        throw new IllegalStateException(
-            "Failed to acquire SSTable view after " + MAX_ACQUIRE_ATTEMPTS + " attempts"
-        );
+        return catalogManager.acquire();
     }
 
     SSTableManifest manifest() {
-        stateLock.lock();
-        try {
-            return manifest;
-        } finally {
-            stateLock.unlock();
-        }
+        return catalogManager.manifest();
     }
 
     CatalogCheckpoint captureCheckpoint() {
@@ -169,6 +132,8 @@ final class TableCatalog implements AutoCloseable {
 
     void replaceWith(CatalogCheckpoint checkpoint) {
         boolean restored = false;
+        boolean backedUpCurrentState = false;
+
         try {
             try {
                 checkpoint.stage(directory);
@@ -180,29 +145,45 @@ final class TableCatalog implements AutoCloseable {
             try (CompactionScheduler.Pause ignored = compactionManager.pauseAndAwaitQuiescence(SHUTDOWN_DRAIN_TIMEOUT)) {
                 stateLock.lock();
                 try {
-                    SSTableManifest previousManifest = manifest;
-                    SSTableManifest newManifest = checkpoint.manifest();
-                    SSTableSetRef oldSet = currentSet;
-                    oldSet.retire(List.copyOf(oldSet.readers()));
-                    awaitDrain(oldSet, SHUTDOWN_DRAIN_TIMEOUT);
+                    SSTableManifest previousManifest = manifest();
+                    CatalogGeneration previousGeneration = catalogManager.retireCurrent(
+                        closeReadersCleanup(catalogManager.currentGeneration().readers())
+                    );
+
+                    if (!previousGeneration.awaitDrain(SHUTDOWN_DRAIN_TIMEOUT)) {
+                        try {
+                            restoreLiveGeneration(previousManifest);
+                        } catch (IOException e) {
+                            throw new StorageException.IO("Failed to restore live catalog after timeout", e);
+                        }
+                        throw new StorageException.Timeout(
+                            "Timed out waiting for catalog readers to drain during restore",
+                            null
+                        );
+                    }
 
                     backupCurrentState(previousManifest);
+                    backedUpCurrentState = true;
+
                     try {
                         CatalogCheckpoint.ActivatedCatalog activated = checkpoint.activate(directory, cache);
-                        manifest = activated.manifest();
+                        CatalogGeneration restoredGeneration = new CatalogGeneration(
+                            activated.manifest(),
+                            activated.readers()
+                        );
+                        catalogManager.replaceCurrent(restoredGeneration);
                         nextId.set(activated.manifest().nextSSTableId());
-                        currentSet = SSTableSetRef.of(activated.readers());
+                        stats.updateSstables(activated.manifest());
                         restored = true;
                     } catch (IOException e) {
-                        rollbackRestore(previousManifest);
+                        rollbackRestore(previousManifest, backedUpCurrentState);
                         throw new StorageException.IO("Failed to restore checkpoint", e);
                     } catch (RuntimeException e) {
-                        rollbackRestore(previousManifest);
+                        rollbackRestore(previousManifest, backedUpCurrentState);
                         throw e;
                     }
 
                     if (restored) {
-                        stats.updateSstables(manifest);
                         try {
                             cleanupRestoreBackups(previousManifest);
                         } catch (IOException e) {
@@ -253,42 +234,49 @@ final class TableCatalog implements AutoCloseable {
 
         compactionManager.close();
 
-        SSTableSetRef finalSet = currentSet;
-        List<SSTableReader> allReaders = new ArrayList<>(finalSet.readers());
-        finalSet.retire(allReaders);
-        awaitDrain(finalSet, SHUTDOWN_DRAIN_TIMEOUT);
+        CatalogGeneration finalGeneration = catalogManager.close();
+        finalGeneration.retire(closeReadersCleanup(finalGeneration.readers()));
+        if (!finalGeneration.awaitDrain(SHUTDOWN_DRAIN_TIMEOUT)) {
+            finalGeneration.forceDrain();
+        }
     }
 
     private void addFlushed(SSTableMetadata metadata, SSTableReader reader) {
         stateLock.lock();
         try {
-            List<SSTableMetadata> updatedMetadata = new ArrayList<>(manifest.sstables());
+            SSTableManifest currentManifest = manifest();
+            CatalogGeneration currentGeneration = catalogManager.currentGeneration();
+
+            List<SSTableMetadata> updatedMetadata = new ArrayList<>(currentManifest.sstables());
             updatedMetadata.addFirst(metadata);
-            manifest = new SSTableManifest(nextId.get(), updatedMetadata);
-            manifest.writeTo(directory);
-            stats.updateSstables(manifest);
+            SSTableManifest updatedManifest = new SSTableManifest(nextId.get(), updatedMetadata);
+            updatedManifest.writeTo(directory);
+            stats.updateSstables(updatedManifest);
 
-            List<SSTableReader> newReaders = new ArrayList<>();
+            List<SSTableReader> newReaders = new ArrayList<>(currentGeneration.readers().size() + 1);
             newReaders.add(reader);
-            newReaders.addAll(currentSet.readers());
+            newReaders.addAll(currentGeneration.readers());
 
-            SSTableSetRef oldSet = currentSet;
-            currentSet = SSTableSetRef.of(newReaders);
-            oldSet.retire(List.of());
+            catalogManager.install(new CatalogGeneration(updatedManifest, newReaders), List.of());
         } finally {
             stateLock.unlock();
         }
     }
 
     private void applyCompaction(List<SSTableMetadata> removed, List<SSTableMetadata> added) {
+        List<SSTableReader> addedReaders = openReaders(added);
+
         stateLock.lock();
         try {
-            List<SSTableMetadata> updated = new ArrayList<>(manifest.sstables());
+            SSTableManifest currentManifest = manifest();
+            CatalogGeneration currentGeneration = catalogManager.currentGeneration();
+
+            List<SSTableMetadata> updated = new ArrayList<>(currentManifest.sstables());
             updated.removeAll(removed);
             updated.addAll(added);
-            manifest = new SSTableManifest(nextId.get(), updated);
-            manifest.writeTo(directory);
-            stats.updateSstables(manifest);
+            SSTableManifest updatedManifest = new SSTableManifest(nextId.get(), updated);
+            updatedManifest.writeTo(directory);
+            stats.updateSstables(updatedManifest);
 
             Set<Long> removedIds = removed.stream()
                 .map(SSTableMetadata::id)
@@ -297,7 +285,7 @@ final class TableCatalog implements AutoCloseable {
             List<SSTableReader> orphanedReaders = new ArrayList<>();
             List<SSTableReader> retainedReaders = new ArrayList<>();
 
-            for (SSTableReader reader : currentSet.readers()) {
+            for (SSTableReader reader : currentGeneration.readers()) {
                 if (removedIds.contains(reader.id())) {
                     orphanedReaders.add(reader);
                 } else {
@@ -305,13 +293,16 @@ final class TableCatalog implements AutoCloseable {
                 }
             }
 
-            for (SSTableMetadata desc : added) {
-                retainedReaders.add(openReader(desc));
-            }
+            retainedReaders.addAll(addedReaders);
 
-            SSTableSetRef oldSet = currentSet;
-            currentSet = SSTableSetRef.of(retainedReaders);
-            oldSet.retire(orphanedReaders);
+            catalogManager.install(
+                new CatalogGeneration(updatedManifest, retainedReaders),
+                compactionCleanup(orphanedReaders, removed)
+            );
+        } catch (RuntimeException e) {
+            closeReaders(addedReaders);
+            deleteSstables(added);
+            throw e;
         } finally {
             stateLock.unlock();
         }
@@ -326,10 +317,7 @@ final class TableCatalog implements AutoCloseable {
 
     private void handleCompactionResult(CompactionResult result) {
         switch (result) {
-            case CompactionResult.Success(var task, var outputs) -> {
-                applyCompaction(task.inputs(), outputs);
-                deleteOldSSTables(task.inputs());
-            }
+            case CompactionResult.Success(var task, var outputs) -> applyCompaction(task.inputs(), outputs);
             case CompactionResult.Failure(var task, var cause) ->
                 log.atError()
                     .addKeyValue("targetLevel", task.targetLevel())
@@ -338,14 +326,59 @@ final class TableCatalog implements AutoCloseable {
         }
     }
 
-    private void deleteOldSSTables(List<SSTableMetadata> metadata) {
+    private List<SSTableReader> openReaders(List<SSTableMetadata> metadata) {
+        List<SSTableReader> readers = new ArrayList<>(metadata.size());
+        try {
+            for (SSTableMetadata table : metadata) {
+                readers.add(openReader(table));
+            }
+            return readers;
+        } catch (RuntimeException e) {
+            closeReaders(readers);
+            throw e;
+        }
+    }
+
+    private List<Runnable> compactionCleanup(List<SSTableReader> orphanedReaders, List<SSTableMetadata> removed) {
+        List<Runnable> cleanup = new ArrayList<>(2);
+        if (!orphanedReaders.isEmpty()) {
+            cleanup.add(() -> closeReaders(orphanedReaders));
+        }
+        if (!removed.isEmpty()) {
+            cleanup.add(() -> deleteSstables(removed));
+        }
+        return List.copyOf(cleanup);
+    }
+
+    private List<Runnable> closeReadersCleanup(List<SSTableReader> readers) {
+        if (readers.isEmpty()) {
+            return List.of();
+        }
+        return List.of(() -> closeReaders(readers));
+    }
+
+    private void closeReaders(List<SSTableReader> readers) {
+        for (SSTableReader reader : readers) {
+            try {
+                reader.close();
+            } catch (RuntimeException e) {
+                log.atWarn()
+                    .setCause(e)
+                    .addKeyValue("sstableId", reader.id())
+                    .log("Failed to close SSTable reader");
+            }
+        }
+    }
+
+    private void deleteSstables(List<SSTableMetadata> metadata) {
         for (SSTableMetadata table : metadata) {
             try {
                 delete(table.id());
             } catch (IOException e) {
                 log.atWarn()
+                    .setCause(e)
                     .addKeyValue("sstableId", table.id())
-                    .log("Failed to delete old SSTable");
+                    .log("Failed to delete SSTable");
             }
         }
     }
@@ -358,20 +391,6 @@ final class TableCatalog implements AutoCloseable {
         return stats.snapshot();
     }
 
-    private void awaitDrain(SSTableSetRef set, Duration timeout) {
-        long deadlineNanos = System.nanoTime() + timeout.toNanos();
-
-        while (!set.isDrained()) {
-            if (System.nanoTime() > deadlineNanos) {
-                for (SSTableReader reader : set.readers()) {
-                    reader.close();
-                }
-                return;
-            }
-            LockSupport.parkNanos(1_000_000);
-        }
-    }
-
     private static List<Long> discoverSSTableIds(Path directory) throws IOException {
         if (!Files.exists(directory)) {
             return List.of();
@@ -379,10 +398,10 @@ final class TableCatalog implements AutoCloseable {
 
         try (Stream<Path> paths = Files.list(directory)) {
             return paths
-                .map(p -> p.getFileName().toString())
+                .map(path -> path.getFileName().toString())
                 .map(SSTABLE_PATTERN::matcher)
                 .filter(Matcher::matches)
-                .map(m -> Long.parseLong(m.group(1)))
+                .map(matcher -> Long.parseLong(matcher.group(1)))
                 .toList();
         }
     }
@@ -393,9 +412,9 @@ final class TableCatalog implements AutoCloseable {
         SSTableManifest manifest
     ) {
         List<SSTableReader> readers = new ArrayList<>(manifest.sstables().size());
-        for (SSTableMetadata desc : manifest.sstables()) {
-            Path path = directory.resolve("%06d.sst".formatted(desc.id()));
-            readers.add(SSTableReader.open(desc.id(), desc.level(), path, cache));
+        for (SSTableMetadata metadata : manifest.sstables()) {
+            Path path = directory.resolve("%06d.sst".formatted(metadata.id()));
+            readers.add(SSTableReader.open(metadata.id(), metadata.level(), path, cache));
         }
 
         return readers;
@@ -470,7 +489,18 @@ final class TableCatalog implements AutoCloseable {
         Files.deleteIfExists(directory.resolve(MANIFEST_TEMP_FILENAME));
     }
 
-    private void rollbackRestore(SSTableManifest previousManifest) throws IOException {
+    private void rollbackRestore(SSTableManifest previousManifest, boolean backedUpCurrentState) {
+        try {
+            if (backedUpCurrentState) {
+                rollbackRestoreFiles(previousManifest);
+            }
+            restoreLiveGeneration(previousManifest);
+        } catch (IOException e) {
+            throw new StorageException.IO("Failed to restore checkpoint", e);
+        }
+    }
+
+    private void rollbackRestoreFiles(SSTableManifest previousManifest) throws IOException {
         deleteAllSSTables();
 
         for (SSTableMetadata metadata : previousManifest.sstables()) {
@@ -497,10 +527,16 @@ final class TableCatalog implements AutoCloseable {
                 StandardCopyOption.ATOMIC_MOVE
             );
         }
+    }
 
-        manifest = previousManifest;
-        nextId.set(previousManifest.nextSSTableId());
-        currentSet = SSTableSetRef.of(loadReadersFromManifest(directory, cache, previousManifest));
+    private void restoreLiveGeneration(SSTableManifest manifest) throws IOException {
+        CatalogGeneration liveGeneration = new CatalogGeneration(
+            manifest,
+            loadReadersFromManifest(directory, cache, manifest)
+        );
+        nextId.set(manifest.nextSSTableId());
+        stats.updateSstables(manifest);
+        catalogManager.replaceCurrent(liveGeneration);
     }
 
     private void cleanupRestoreBackups(SSTableManifest previousManifest) throws IOException {

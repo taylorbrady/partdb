@@ -10,7 +10,7 @@ final class MutableMemtable implements Memtable {
 
     private static final int ENTRY_OVERHEAD = 100;
 
-    private final ConcurrentSkipListMap<Slice, Mutation> entries;
+    private final ConcurrentSkipListMap<Slice, StoredEntry> entries;
     private final AtomicLong sizeInBytes;
     private final ReentrantLock lifecycleLock;
 
@@ -23,7 +23,7 @@ final class MutableMemtable implements Memtable {
         this.immutableView = null;
     }
 
-    WriteResult put(Mutation mutation) {
+    WriteResult put(StoredEntry entry) {
         lifecycleLock.lock();
         try {
             if (immutableView != null) {
@@ -33,26 +33,26 @@ final class MutableMemtable implements Memtable {
             final long[] delta = {0};
             final WriteResult[] result = new WriteResult[1];
 
-            entries.compute(mutation.key(), (_, existing) -> {
+            entries.compute(entry.key(), (_, existing) -> {
                 if (existing == null) {
-                    delta[0] = estimateEntrySize(mutation);
+                    delta[0] = estimatedHeapBytes(entry);
                     result[0] = WriteResult.APPLIED;
-                    return mutation;
+                    return entry;
                 }
 
-                int revisionComparison = Long.compare(mutation.revision(), existing.revision());
+                int revisionComparison = Long.compare(entry.revision(), existing.revision());
                 if (revisionComparison > 0) {
-                    delta[0] = estimateEntrySize(mutation) - estimateEntrySize(existing);
+                    delta[0] = estimatedHeapBytes(entry) - estimatedHeapBytes(existing);
                     result[0] = WriteResult.APPLIED;
-                    return mutation;
+                    return entry;
                 }
 
-                if (revisionComparison == 0 && existing.equals(mutation)) {
+                if (revisionComparison == 0 && existing.equals(entry)) {
                     result[0] = WriteResult.DUPLICATE;
                     return existing;
                 }
 
-                throw invalidRevision(mutation, existing);
+                throw invalidRevision(entry, existing);
             });
 
             if (delta[0] != 0) {
@@ -77,12 +77,12 @@ final class MutableMemtable implements Memtable {
     }
 
     @Override
-    public Optional<Mutation> get(Slice key) {
+    public Optional<StoredEntry> get(Slice key) {
         return Optional.ofNullable(entries.get(key));
     }
 
     @Override
-    public Iterator<Mutation> scan(ScanBounds bounds) {
+    public Iterator<StoredEntry> scan(ScanBounds bounds) {
         return Memtable.scanEntries(entries, bounds);
     }
 
@@ -96,14 +96,14 @@ final class MutableMemtable implements Memtable {
         return entries.size();
     }
 
-    private static long estimateEntrySize(Mutation mutation) {
-        return switch (mutation) {
-            case Mutation.Put p -> ENTRY_OVERHEAD + mutation.key().length() + p.value().length() + Long.BYTES;
-            case Mutation.Tombstone _ -> ENTRY_OVERHEAD + mutation.key().length() + Long.BYTES;
+    private static long estimatedHeapBytes(StoredEntry entry) {
+        return switch (entry) {
+            case StoredEntry.Value value -> ENTRY_OVERHEAD + entry.key().length() + value.value().length() + Long.BYTES;
+            case StoredEntry.Tombstone _ -> ENTRY_OVERHEAD + entry.key().length() + Long.BYTES;
         };
     }
 
-    private static StorageException.InvalidRevision invalidRevision(Mutation attempted, Mutation existing) {
+    private static StorageException.InvalidRevision invalidRevision(StoredEntry attempted, StoredEntry existing) {
         if (attempted.revision() < existing.revision()) {
             return new StorageException.InvalidRevision(
                 "Revision %d for key %s is older than current revision %d"

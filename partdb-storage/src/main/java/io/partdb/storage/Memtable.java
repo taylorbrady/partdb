@@ -6,16 +6,16 @@ import java.util.Optional;
 
 sealed interface Memtable permits MutableMemtable, ImmutableMemtable {
 
-    Optional<Mutation> get(Slice key);
+    Optional<StoredEntry> get(Slice key);
 
-    Iterator<Mutation> scan(ScanBounds bounds);
+    Iterator<StoredEntry> scan(ScanBounds bounds);
 
     long sizeInBytes();
 
     long entryCount();
 
-    static Iterator<Mutation> scanEntries(NavigableMap<Slice, Mutation> entries, ScanBounds bounds) {
-        NavigableMap<Slice, Mutation> range;
+    static Iterator<StoredEntry> scanEntries(NavigableMap<Slice, StoredEntry> entries, ScanBounds bounds) {
+        NavigableMap<Slice, StoredEntry> range;
         Slice startKey = bounds.startInclusive();
         Slice endKey = bounds.endExclusive();
 

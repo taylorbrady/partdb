@@ -11,7 +11,7 @@ class MemtableLifecycleTest extends StoreRuntimeTestSupport {
     @Test
     void freezeIsIdempotentAndRejectsLaterWrites() {
         MutableMemtable memtable = new MutableMemtable();
-        Mutation.Put initial = new Mutation.Put(key("key"), value("value"), 1);
+        StoredEntry.Value initial = new StoredEntry.Value(key("key"), value("value"), 1);
 
         assertEquals(MutableMemtable.WriteResult.APPLIED, memtable.put(initial));
 
@@ -19,7 +19,7 @@ class MemtableLifecycleTest extends StoreRuntimeTestSupport {
         ImmutableMemtable secondFreeze = memtable.freeze();
 
         assertSame(firstFreeze, secondFreeze);
-        assertEquals(MutableMemtable.WriteResult.FROZEN, memtable.put(new Mutation.Put(key("other"), value("next"), 2)));
+        assertEquals(MutableMemtable.WriteResult.FROZEN, memtable.put(new StoredEntry.Value(key("other"), value("next"), 2)));
         assertTrue(firstFreeze.get(key("key")).isPresent());
         assertTrue(firstFreeze.get(key("other")).isEmpty());
     }

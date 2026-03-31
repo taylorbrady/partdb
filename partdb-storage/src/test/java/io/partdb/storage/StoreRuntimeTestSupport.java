@@ -43,9 +43,9 @@ abstract class StoreRuntimeTestSupport {
         return LsmConfig.defaults().withMemtableMaxSizeBytes(sizeBytes);
     }
 
-    protected static List<EngineEntry> readAll(EngineEntryCursor cursor) {
+    protected static List<StoredEntry.Value> readAll(StoredValueCursor cursor) {
         try (cursor) {
-            List<EngineEntry> entries = new ArrayList<>();
+            List<StoredEntry.Value> entries = new ArrayList<>();
             while (cursor.hasNext()) {
                 entries.add(cursor.next());
             }

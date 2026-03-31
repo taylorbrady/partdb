@@ -76,40 +76,40 @@ final class SSTableWriter implements AutoCloseable {
         return level;
     }
 
-    void add(Mutation mutation) {
+    void add(StoredEntry entry) {
         if (finished) {
             throw new IllegalStateException("Cannot add to finished writer");
         }
 
-        if (lastKey != null && mutation.key().compareTo(lastKey) <= 0) {
+        if (lastKey != null && entry.key().compareTo(lastKey) <= 0) {
             throw new IllegalArgumentException(
                 "Entries must be added in strictly ascending key order: last=%s, current=%s"
-                    .formatted(lastKey, mutation.key())
+                    .formatted(lastKey, entry.key())
             );
         }
 
-        lastKey = mutation.key();
+        lastKey = entry.key();
         if (firstKey == null) {
-            firstKey = mutation.key();
+            firstKey = entry.key();
         }
 
-        if (!hasRevision || mutation.revision() < smallestRevision) {
-            smallestRevision = mutation.revision();
+        if (!hasRevision || entry.revision() < smallestRevision) {
+            smallestRevision = entry.revision();
         }
-        if (!hasRevision || mutation.revision() > largestRevision) {
-            largestRevision = mutation.revision();
+        if (!hasRevision || entry.revision() > largestRevision) {
+            largestRevision = entry.revision();
         }
         hasRevision = true;
 
-        keys.add(mutation.key());
+        keys.add(entry.key());
         totalEntryCount++;
-        uncompressedBytes += mutation.sizeInBytes();
+        uncompressedBytes += entry.encodedSizeBytes();
 
         if (currentBlock.estimatedSize() > config.blockSize() && !currentBlock.isEmpty()) {
             flushCurrentBlock();
         }
 
-        currentBlock.add(mutation);
+        currentBlock.add(entry);
     }
 
     long uncompressedBytes() {

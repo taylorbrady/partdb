@@ -31,7 +31,7 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
                     executor.submit(() -> {
                         for (int i = 0; i < readsPerThread; i++) {
                             int keyIndex = i % 100;
-                            Optional<EngineEntry> result = tree.get(key(keyIndex));
+                            Optional<StoredEntry.Value> result = tree.get(key(keyIndex));
                             if (result.isEmpty() || !result.get().value().equals(value(keyIndex))) {
                                 failed.set(true);
                             }
@@ -72,7 +72,7 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
 
             tree.flush();
 
-            List<EngineEntry> entries = readAll(tree.scan(ScanBounds.all()));
+            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.all()));
             assertFalse(entries.isEmpty());
         }
     }
@@ -191,7 +191,7 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
                         try {
                             for (int round = 0; round < 50; round++) {
                                 for (int i = 0; i < 50; i++) {
-                                    Optional<EngineEntry> result = tree.get(key(String.format("key-%03d", i)));
+                                    Optional<StoredEntry.Value> result = tree.get(key(String.format("key-%03d", i)));
                                     if (result.isEmpty()) {
                                         failed.set(true);
                                     }
@@ -230,7 +230,7 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
                     try {
                         startLatch.await();
                         for (int round = 0; round < 10; round++) {
-                            try (EngineEntryCursor cursor = tree.scan(ScanBounds.all())) {
+                            try (StoredValueCursor cursor = tree.scan(ScanBounds.all())) {
                                 while (cursor.hasNext()) {
                                     cursor.next();
                                 }

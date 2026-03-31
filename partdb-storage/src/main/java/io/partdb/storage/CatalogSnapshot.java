@@ -1,24 +1,20 @@
 package io.partdb.storage;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
 final class CatalogSnapshot implements AutoCloseable {
 
-    private final SSTableSetRef ref;
+    private final CatalogGeneration.CatalogLease lease;
     private final SSTableManifest manifest;
     private final int maxLevel;
-    private final Map<Long, SSTableReader> readersById;
 
-    CatalogSnapshot(SSTableSetRef ref, SSTableManifest manifest) {
-        this.ref = ref;
-        this.manifest = manifest;
+    CatalogSnapshot(CatalogGeneration.CatalogLease lease) {
+        this.lease = lease;
+        this.manifest = lease.manifest();
         this.maxLevel = manifest.maxLevel();
-        this.readersById = indexReaders(ref.readers());
     }
 
     List<SSTableReader> level0() {
@@ -29,16 +25,16 @@ final class CatalogSnapshot implements AutoCloseable {
         return readersFor(manifest.level(level));
     }
 
-    Optional<Mutation> get(Slice key) {
+    Optional<StoredEntry> get(Slice key) {
         Objects.requireNonNull(key, "key");
 
-        Optional<Mutation> level0 = getFrom(manifest.level(0), key);
+        Optional<StoredEntry> level0 = getFrom(manifest.level(0), key);
         if (level0.isPresent()) {
             return level0;
         }
 
         for (int level = 1; level <= maxLevel; level++) {
-            Optional<Mutation> result = getFrom(manifest.level(level), key);
+            Optional<StoredEntry> result = getFrom(manifest.level(level), key);
             if (result.isPresent()) {
                 return result;
             }
@@ -81,16 +77,16 @@ final class CatalogSnapshot implements AutoCloseable {
 
     @Override
     public void close() {
-        ref.release();
+        lease.close();
     }
 
-    private Optional<Mutation> getFrom(List<SSTableMetadata> metadata, Slice key) {
+    private Optional<StoredEntry> getFrom(List<SSTableMetadata> metadata, Slice key) {
         for (SSTableMetadata table : metadata) {
             if (!table.mightContain(key)) {
                 continue;
             }
 
-            Optional<Mutation> result = readerFor(table).get(key);
+            Optional<StoredEntry> result = readerFor(table).get(key);
             if (result.isPresent()) {
                 return result;
             }
@@ -108,20 +104,6 @@ final class CatalogSnapshot implements AutoCloseable {
     }
 
     private SSTableReader readerFor(SSTableMetadata metadata) {
-        SSTableReader reader = readersById.get(metadata.id());
-        if (reader == null) {
-            throw new StorageException.Corruption(
-                "Missing SSTable reader for metadata id " + metadata.id()
-            );
-        }
-        return reader;
-    }
-
-    private static Map<Long, SSTableReader> indexReaders(List<SSTableReader> readers) {
-        Map<Long, SSTableReader> readersById = new HashMap<>(readers.size());
-        for (SSTableReader reader : readers) {
-            readersById.put(reader.id(), reader);
-        }
-        return Map.copyOf(readersById);
+        return lease.readerFor(metadata.id());
     }
 }
