@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
 
     @Test
-    void l0TriggersAtThreshold() throws Exception {
+    void l0TriggersAtThreshold() {
         LsmConfig config = smallMemtableConfig(1024);
 
         try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
@@ -23,7 +23,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
             }
 
             tree.flush();
-            Thread.sleep(500);
+            awaitCompaction(tree);
 
             SSTableManifest manifest = tree.manifest();
             List<SSTableMetadata> l0Files = manifest.level(0);
@@ -35,7 +35,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     }
 
     @Test
-    void mergesOverlappingKeys() throws Exception {
+    void mergesOverlappingKeys() {
         LsmConfig config = smallMemtableConfig(1024);
 
         try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
@@ -46,7 +46,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
                 tree.flush();
             }
 
-            Thread.sleep(1000);
+            awaitCompaction(tree);
 
             for (int i = 0; i < 20; i++) {
                 Optional<StoredEntry.Value> result = tree.get(key(String.format("key-%02d", i)));
@@ -57,7 +57,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     }
 
     @Test
-    void tombstonesResultInEmptyGet() throws Exception {
+    void tombstonesResultInEmptyGet() {
         LsmConfig config = smallMemtableConfig(1024);
 
         try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
@@ -71,7 +71,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
             }
             tree.flush();
 
-            Thread.sleep(500);
+            awaitCompaction(tree);
 
             for (int i = 0; i < 50; i++) {
                 assertTrue(tree.get(key(String.format("key-%03d", i))).isEmpty());
@@ -80,7 +80,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     }
 
     @Test
-    void levelSizeRespected() throws Exception {
+    void levelSizeRespected() {
         LsmConfig config = smallMemtableConfig(2048);
 
         try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
@@ -91,7 +91,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
                 tree.flush();
             }
 
-            Thread.sleep(2000);
+            awaitCompaction(tree);
 
             SSTableManifest manifest = tree.manifest();
 
@@ -105,7 +105,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     }
 
     @Test
-    void preservesNewestVersions() throws Exception {
+    void preservesNewestVersions() {
         LsmConfig config = smallMemtableConfig(1024);
 
         try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
@@ -121,7 +121,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
                 }
             }
 
-            Thread.sleep(1000);
+            awaitCompaction(tree);
 
             for (int i = 0; i < 30; i++) {
                 Optional<StoredEntry.Value> result = tree.get(key(String.format("key-%02d", i)));
@@ -132,7 +132,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     }
 
     @Test
-    void manifestConsistency() throws Exception {
+    void manifestConsistency() {
         LsmConfig config = smallMemtableConfig(1024);
 
         try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
@@ -141,7 +141,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
             }
             tree.flush();
 
-            Thread.sleep(500);
+            awaitCompaction(tree);
 
             SSTableManifest manifest = tree.manifest();
 
@@ -160,7 +160,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     }
 
     @Test
-    void reopenAfterCompaction() throws Exception {
+    void reopenAfterCompaction() {
         LsmConfig config = smallMemtableConfig(1024);
 
         List<Slice> keys = new ArrayList<>();
@@ -175,7 +175,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
                 tree.put(k, v, nextRevision());
             }
             tree.flush();
-            Thread.sleep(500);
+            awaitCompaction(tree);
         }
 
         try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
@@ -188,7 +188,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     }
 
     @Test
-    void scanAfterCompaction() throws Exception {
+    void scanAfterCompaction() {
         LsmConfig config = smallMemtableConfig(1024);
 
         try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
@@ -197,7 +197,7 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
             }
             tree.flush();
 
-            Thread.sleep(500);
+            awaitCompaction(tree);
 
             Slice startKey = key("key-020");
             Slice endKey = key("key-030");

@@ -3,6 +3,7 @@ package io.partdb.storage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -83,6 +84,10 @@ final class StoreRuntime implements AutoCloseable {
     LsmStats statsSnapshot() {
         refreshMemtableStats();
         return stats.snapshot();
+    }
+
+    void awaitCompactionIdle(Duration timeout) {
+        sstableCatalog.awaitCompactionIdle(timeout);
     }
 
     void flush() {

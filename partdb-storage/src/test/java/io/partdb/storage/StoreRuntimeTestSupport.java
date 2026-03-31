@@ -4,11 +4,14 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 abstract class StoreRuntimeTestSupport {
+
+    private static final Duration COMPACTION_TIMEOUT = Duration.ofSeconds(20);
 
     @TempDir
     Path tempDir;
@@ -51,5 +54,9 @@ abstract class StoreRuntimeTestSupport {
             }
             return entries;
         }
+    }
+
+    protected static void awaitCompaction(StoreRuntime store) {
+        store.awaitCompactionIdle(COMPACTION_TIMEOUT);
     }
 }

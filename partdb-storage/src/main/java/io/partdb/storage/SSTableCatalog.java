@@ -25,7 +25,7 @@ final class SSTableCatalog implements AutoCloseable {
     private final CatalogRestore restore;
     private final AtomicLong nextId;
     private final ReentrantLock stateLock;
-    private final CompactionService compactionService;
+    private final CompactionController compactionController;
     private final AtomicBoolean closed;
     private final StorageRuntimeStats stats;
     private final CatalogManager catalogManager;
@@ -47,7 +47,7 @@ final class SSTableCatalog implements AutoCloseable {
         this.catalogManager = new CatalogManager(initialState.toGeneration());
         this.stats.updateSstables(initialState.manifest());
 
-        this.compactionService = new CompactionService(
+        this.compactionController = new CompactionController(
             this,
             config,
             this.stats,
@@ -113,7 +113,7 @@ final class SSTableCatalog implements AutoCloseable {
                 throw new StorageException.IO("Failed to stage checkpoint files", e);
             }
 
-            try (CompactionScheduler.Pause ignored = compactionService.pauseAndAwaitQuiescence(SHUTDOWN_DRAIN_TIMEOUT)) {
+            try (CompactionController.Pause ignored = compactionController.pauseAndAwaitIdle(SHUTDOWN_DRAIN_TIMEOUT)) {
                 stateLock.lock();
                 try {
                     SSTableManifest previousManifest = manifest();
@@ -189,7 +189,7 @@ final class SSTableCatalog implements AutoCloseable {
             return;
         }
 
-        compactionService.close();
+        compactionController.close();
 
         CatalogGeneration finalGeneration = catalogManager.close();
         finalGeneration.retire(closeReadersCleanup(finalGeneration.readers()));
@@ -269,7 +269,7 @@ final class SSTableCatalog implements AutoCloseable {
         if (closed.get()) {
             return;
         }
-        compactionService.schedule();
+        compactionController.requestCompaction();
     }
 
     private void handleCompactionResult(CompactionResult result) {
@@ -342,6 +342,10 @@ final class SSTableCatalog implements AutoCloseable {
 
     LsmStats statsSnapshot() {
         return stats.snapshot();
+    }
+
+    void awaitCompactionIdle(Duration timeout) {
+        compactionController.awaitIdle(timeout);
     }
 
     private void installCatalogState(LoadedCatalog state) {
