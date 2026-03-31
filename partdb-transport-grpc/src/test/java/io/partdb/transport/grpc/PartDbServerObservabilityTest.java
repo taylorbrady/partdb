@@ -25,12 +25,14 @@ class PartDbServerObservabilityTest {
     void startRegistersNodeAndStorageMxBeans() throws Exception {
         int raftPort = freePort();
         int grpcPort = freePort();
+        int adminPort = freePort();
         var config = PartDbServerConfig.create(
             "node1",
             Map.of(),
             tempDir.resolve("node1"),
             raftPort,
-            grpcPort
+            grpcPort,
+            adminPort
         );
 
         MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();

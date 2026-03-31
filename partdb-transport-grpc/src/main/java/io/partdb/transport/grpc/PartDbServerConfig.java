@@ -13,13 +13,15 @@ public final class PartDbServerConfig {
     private final PeerEndpoint selfRaftEndpoint;
     private final int raftPort;
     private final GrpcServerConfig grpcServerConfig;
+    private final int adminPort;
 
     PartDbServerConfig(
         PartDbNodeConfig nodeConfig,
         Map<String, String> raftPeerAddresses,
         PeerEndpoint selfRaftEndpoint,
         int raftPort,
-        GrpcServerConfig grpcServerConfig
+        GrpcServerConfig grpcServerConfig,
+        int adminPort
     ) {
         Objects.requireNonNull(nodeConfig, "nodeConfig must not be null");
         Objects.requireNonNull(raftPeerAddresses, "raftPeerAddresses must not be null");
@@ -28,11 +30,16 @@ public final class PartDbServerConfig {
         if (raftPort <= 0 || raftPort > 65535) {
             throw new IllegalArgumentException("raftPort must be between 1 and 65535");
         }
+        if (adminPort <= 0 || adminPort > 65535) {
+            throw new IllegalArgumentException("adminPort must be between 1 and 65535");
+        }
+        validateDistinctPorts(raftPort, grpcServerConfig.port(), adminPort);
         this.nodeConfig = nodeConfig;
         this.raftPeerAddresses = Map.copyOf(raftPeerAddresses);
         this.selfRaftEndpoint = selfRaftEndpoint;
         this.raftPort = raftPort;
         this.grpcServerConfig = grpcServerConfig;
+        this.adminPort = adminPort;
     }
 
     PartDbNodeConfig nodeConfig() {
@@ -59,6 +66,10 @@ public final class PartDbServerConfig {
         return grpcServerConfig.port();
     }
 
+    public int adminPort() {
+        return adminPort;
+    }
+
     GrpcServerConfig grpcServerConfig() {
         return grpcServerConfig;
     }
@@ -68,7 +79,8 @@ public final class PartDbServerConfig {
         Map<String, String> raftPeerAddresses,
         Path dataDirectory,
         int raftPort,
-        int grpcPort
+        int grpcPort,
+        int adminPort
     ) {
         var normalizedRaftPeerAddresses = normalizeRaftPeerAddresses(nodeId, raftPeerAddresses);
         var nodeConfigBuilder = PartDbNodeConfig.builder(nodeId, dataDirectory);
@@ -80,8 +92,15 @@ public final class PartDbServerConfig {
             normalizedRaftPeerAddresses,
             resolveSelfRaftEndpoint(nodeId, normalizedRaftPeerAddresses, raftPort),
             raftPort,
-            GrpcServerConfig.defaultConfig(grpcPort)
+            GrpcServerConfig.defaultConfig(grpcPort),
+            adminPort
         );
+    }
+
+    private static void validateDistinctPorts(int raftPort, int grpcPort, int adminPort) {
+        if (raftPort == grpcPort || raftPort == adminPort || grpcPort == adminPort) {
+            throw new IllegalArgumentException("raftPort, grpcPort, and adminPort must be distinct");
+        }
     }
 
     private static PeerEndpoint resolveSelfRaftEndpoint(

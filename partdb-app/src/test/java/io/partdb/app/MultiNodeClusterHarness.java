@@ -42,11 +42,11 @@ final class MultiNodeClusterHarness implements AutoCloseable {
             throw new IllegalArgumentException("nodeCount must be at least 3");
         }
 
-        record NodeSpec(String nodeId, int raftPort, int grpcPort) {}
+        record NodeSpec(String nodeId, int raftPort, int grpcPort, int adminPort) {}
 
         var specs = new ArrayList<NodeSpec>(nodeCount);
         for (int i = 1; i <= nodeCount; i++) {
-            specs.add(new NodeSpec("node" + i, freePort(), freePort()));
+            specs.add(new NodeSpec("node" + i, freePort(), freePort(), freePort()));
         }
 
         var raftPeerAddresses = new LinkedHashMap<String, String>();
@@ -61,7 +61,8 @@ final class MultiNodeClusterHarness implements AutoCloseable {
                 raftPeerAddresses,
                 rootDir.resolve(spec.nodeId()),
                 spec.raftPort(),
-                spec.grpcPort()
+                spec.grpcPort(),
+                spec.adminPort()
             );
             nodes.put(spec.nodeId(), new NodeHandle(spec.nodeId(), spec.raftPort(), spec.grpcPort(), config));
         }

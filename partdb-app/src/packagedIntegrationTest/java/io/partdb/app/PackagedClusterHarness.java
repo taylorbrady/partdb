@@ -39,11 +39,11 @@ final class PackagedClusterHarness implements AutoCloseable {
             throw new IllegalArgumentException("nodeCount must be at least 3");
         }
 
-        record NodeSpec(String nodeId, int raftPort, int grpcPort) {}
+        record NodeSpec(String nodeId, int raftPort, int grpcPort, int adminPort) {}
 
         var specs = new ArrayList<NodeSpec>(nodeCount);
         for (int i = 1; i <= nodeCount; i++) {
-            specs.add(new NodeSpec("node" + i, freePort(), freePort()));
+            specs.add(new NodeSpec("node" + i, freePort(), freePort(), freePort()));
         }
 
         var raftPeerAddresses = new LinkedHashMap<String, String>();
@@ -59,6 +59,7 @@ final class PackagedClusterHarness implements AutoCloseable {
                 rootDir.resolve(spec.nodeId()),
                 spec.raftPort(),
                 spec.grpcPort(),
+                spec.adminPort(),
                 raftPeerAddresses
             ));
         }
@@ -205,6 +206,7 @@ final class PackagedClusterHarness implements AutoCloseable {
         private final Path dataDir;
         private final int raftPort;
         private final int grpcPort;
+        private final int adminPort;
         private final LinkedHashMap<String, String> raftPeerAddresses;
         private final ByteArrayOutputStream stdoutBuffer = new ByteArrayOutputStream();
         private final ByteArrayOutputStream stderrBuffer = new ByteArrayOutputStream();
@@ -219,6 +221,7 @@ final class PackagedClusterHarness implements AutoCloseable {
             Path dataDir,
             int raftPort,
             int grpcPort,
+            int adminPort,
             LinkedHashMap<String, String> raftPeerAddresses
         ) {
             this.executable = executable;
@@ -226,6 +229,7 @@ final class PackagedClusterHarness implements AutoCloseable {
             this.dataDir = dataDir;
             this.raftPort = raftPort;
             this.grpcPort = grpcPort;
+            this.adminPort = adminPort;
             this.raftPeerAddresses = new LinkedHashMap<>(raftPeerAddresses);
         }
 
@@ -264,6 +268,8 @@ final class PackagedClusterHarness implements AutoCloseable {
             command.add(Integer.toString(raftPort));
             command.add("--grpc-port");
             command.add(Integer.toString(grpcPort));
+            command.add("--admin-port");
+            command.add(Integer.toString(adminPort));
 
             process = new ProcessBuilder(command).start();
             stdoutThread = startDrainer(process.getInputStream(), stdoutBuffer);

@@ -12,6 +12,7 @@ import java.util.concurrent.CountDownLatch;
 final class StartCommand {
     private static final int DEFAULT_RAFT_PORT = 8100;
     private static final int DEFAULT_GRPC_PORT = 8101;
+    private static final int DEFAULT_ADMIN_PORT = 8102;
 
     static int run(String[] args, PrintStream out, PrintStream err) {
         Options options;
@@ -44,7 +45,8 @@ final class StartCommand {
                 options.raftPeerAddresses,
                 options.dataDir,
                 options.raftPort,
-                options.grpcPort
+                options.grpcPort,
+                options.adminPort
             );
         } catch (IllegalArgumentException e) {
             err.println("Error: " + e.getMessage());
@@ -63,6 +65,7 @@ final class StartCommand {
             out.println("PartDB node '" + options.nodeId + "' started");
             out.println("  Raft port: " + options.raftPort);
             out.println("  gRPC port: " + options.grpcPort);
+            out.println("  Admin port: " + options.adminPort);
             out.println("  Data dir:  " + options.dataDir.toAbsolutePath());
             if (options.raftPeerAddresses.isEmpty()) {
                 out.println("  Mode:      single-node");
@@ -101,6 +104,7 @@ final class StartCommand {
                 case "--data-dir", "-d" -> options.dataDir = Path.of(CliSupport.requireValue(args, ++i, "--data-dir"));
                 case "--raft-port" -> options.raftPort = CliSupport.requireIntValue(args, ++i, "--raft-port");
                 case "--grpc-port" -> options.grpcPort = CliSupport.requireIntValue(args, ++i, "--grpc-port");
+                case "--admin-port" -> options.adminPort = CliSupport.requireIntValue(args, ++i, "--admin-port");
                 default -> throw new IllegalArgumentException("Unknown option: " + arg);
             }
         }
@@ -124,6 +128,7 @@ final class StartCommand {
         out.println("  -d, --data-dir <path>           Directory for data storage (required)");
         out.println("      --raft-port <port>          Port for Raft communication (default: " + DEFAULT_RAFT_PORT + ")");
         out.println("      --grpc-port <port>          Port for gRPC API traffic (default: " + DEFAULT_GRPC_PORT + ")");
+        out.println("      --admin-port <port>         Port for admin health checks (default: " + DEFAULT_ADMIN_PORT + ")");
         out.println("  -h, --help                      Show this help message");
         out.println();
         out.println("Examples:");
@@ -146,6 +151,7 @@ final class StartCommand {
         Path dataDir;
         int raftPort = DEFAULT_RAFT_PORT;
         int grpcPort = DEFAULT_GRPC_PORT;
+        int adminPort = DEFAULT_ADMIN_PORT;
 
         String validate() {
             if (nodeId == null || nodeId.isBlank()) {

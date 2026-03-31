@@ -14,6 +14,7 @@ public final class PartDbServer implements AutoCloseable {
     private final PartDbNode node;
     private final GrpcServer grpcServer;
     private final JmxRegistrations jmxRegistrations;
+    private AdminHttpServer adminHttpServer;
 
     public PartDbServer(PartDbServerConfig config) {
         this(config, null);
@@ -45,13 +46,43 @@ public final class PartDbServer implements AutoCloseable {
         log.atInfo()
             .addKeyValue("nodeId", config.nodeId())
             .log("Starting PartDB server");
-        grpcServer.start();
-        jmxRegistrations.register();
-        log.atInfo()
-            .addKeyValue("nodeId", config.nodeId())
-            .addKeyValue("grpcPort", config.grpcPort())
-            .addKeyValue("raftPort", config.raftPort())
-            .log("PartDB server started");
+        boolean grpcStarted = false;
+        boolean jmxRegistered = false;
+        try {
+            grpcServer.start();
+            grpcStarted = true;
+            adminHttpServer = new AdminHttpServer(node, config.adminPort());
+            adminHttpServer.start();
+            jmxRegistrations.register();
+            jmxRegistered = true;
+            log.atInfo()
+                .addKeyValue("nodeId", config.nodeId())
+                .addKeyValue("grpcPort", config.grpcPort())
+                .addKeyValue("raftPort", config.raftPort())
+                .addKeyValue("adminPort", config.adminPort())
+                .log("PartDB server started");
+        } catch (Exception e) {
+            if (jmxRegistered) {
+                jmxRegistrations.close();
+            }
+            if (adminHttpServer != null) {
+                try {
+                    adminHttpServer.close();
+                } finally {
+                    adminHttpServer = null;
+                }
+            }
+            if (grpcStarted) {
+                grpcServer.close();
+            }
+            if (e instanceof IOException ioException) {
+                throw ioException;
+            }
+            if (e instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new IOException("Failed to start PartDB server", e);
+        }
     }
 
     @Override
@@ -60,15 +91,25 @@ public final class PartDbServer implements AutoCloseable {
             .addKeyValue("nodeId", config.nodeId())
             .log("Shutting down PartDB server");
         try {
-            grpcServer.close();
+            if (adminHttpServer != null) {
+                try {
+                    adminHttpServer.close();
+                } finally {
+                    adminHttpServer = null;
+                }
+            }
         } finally {
             try {
-                jmxRegistrations.close();
+                grpcServer.close();
             } finally {
-                node.close();
-                log.atInfo()
-                    .addKeyValue("nodeId", config.nodeId())
-                    .log("PartDB server shut down");
+                try {
+                    jmxRegistrations.close();
+                } finally {
+                    node.close();
+                    log.atInfo()
+                        .addKeyValue("nodeId", config.nodeId())
+                        .log("PartDB server shut down");
+                }
             }
         }
     }

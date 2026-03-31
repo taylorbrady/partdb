@@ -29,6 +29,7 @@ class LiveServerSmokeTest {
     void cliCommandsWorkAgainstLiveSingleNodeServer() throws Exception {
         int raftPort = freePort();
         int grpcPort = freePort();
+        int adminPort = freePort();
         var endpoint = "localhost:" + grpcPort;
 
         var config = PartDbServerConfig.create(
@@ -36,7 +37,8 @@ class LiveServerSmokeTest {
             Map.of(),
             tempDir.resolve("node1"),
             raftPort,
-            grpcPort
+            grpcPort,
+            adminPort
         );
 
         try (var server = new PartDbServer(config)) {
