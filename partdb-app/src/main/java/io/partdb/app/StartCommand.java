@@ -3,164 +3,164 @@ package io.partdb.app;
 import io.partdb.transport.grpc.PartDbServer;
 import io.partdb.transport.grpc.PartDbServerConfig;
 
-import java.io.PrintStream;
 import java.nio.file.Path;
-import java.util.HashMap;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 
-final class StartCommand {
+record StartCommand(
+    String nodeId,
+    Map<String, String> raftPeerAddresses,
+    Path dataDir,
+    int raftPort,
+    int grpcPort,
+    int adminPort
+) implements AppCommand {
     private static final int DEFAULT_RAFT_PORT = 8100;
     private static final int DEFAULT_GRPC_PORT = 8101;
     private static final int DEFAULT_ADMIN_PORT = 8102;
 
-    static int run(String[] args, PrintStream out, PrintStream err) {
-        Options options;
-        try {
-            options = parseArgs(args);
-        } catch (IllegalArgumentException e) {
-            err.println("Error: " + e.getMessage());
-            err.println();
-            printUsage(err);
-            return 1;
-        }
+    private static final String USAGE = """
+        Usage: partdb start [options]
 
-        if (options.help) {
-            printUsage(out);
-            return 0;
-        }
+        Start a PartDB server node.
 
-        String validationError = options.validate();
-        if (validationError != null) {
-            err.println("Error: " + validationError);
-            err.println();
-            printUsage(err);
-            return 1;
-        }
+        Options:
+          -n, --node-id <id>              Node identifier (required)
+          -r, --raft-peer <id=endpoint>   Raft peer endpoint (repeatable, omit for single-node)
+          -d, --data-dir <path>           Directory for data storage (required)
+              --raft-port <port>          Port for Raft communication (default: 8100)
+              --grpc-port <port>          Port for gRPC API traffic (default: 8101)
+              --admin-port <port>         Port for admin health checks (default: 8102)
+          -h, --help                      Show this help message
 
-        PartDbServerConfig config;
-        try {
-            config = PartDbServerConfig.create(
-                options.nodeId,
-                options.raftPeerAddresses,
-                options.dataDir,
-                options.raftPort,
-                options.grpcPort,
-                options.adminPort
-            );
-        } catch (IllegalArgumentException e) {
-            err.println("Error: " + e.getMessage());
-            return 1;
-        }
+        Examples:
+          partdb start --node-id node1 --data-dir ./data
 
-        CountDownLatch shutdownLatch = new CountDownLatch(1);
+          partdb start --node-id node1 \\
+                       --raft-peer node1=192.168.1.1:8100 \\
+                       --raft-peer node2=192.168.1.2:8100 \\
+                       --raft-peer node3=192.168.1.3:8100 \\
+                       --data-dir ./data/node1
+        """;
 
-        try (var server = new PartDbServer(config)) {
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                out.println("Received shutdown signal");
-                shutdownLatch.countDown();
-            }, "shutdown-hook"));
-
-            server.start();
-            out.println("PartDB node '" + options.nodeId + "' started");
-            out.println("  Raft port: " + options.raftPort);
-            out.println("  gRPC port: " + options.grpcPort);
-            out.println("  Admin port: " + options.adminPort);
-            out.println("  Data dir:  " + options.dataDir.toAbsolutePath());
-            if (options.raftPeerAddresses.isEmpty()) {
-                out.println("  Mode:      single-node");
-            } else {
-                out.println("  Raft peers: " + options.raftPeerAddresses.size());
-            }
-            out.println();
-            out.println("Press Ctrl+C to stop");
-
-            shutdownLatch.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (Exception e) {
-            err.println("Failed to start server: " + e.getMessage());
-            e.printStackTrace(err);
-            return 1;
-        }
-
-        out.println("Server stopped");
-        return 0;
+    StartCommand {
+        nodeId = CliParsing.requireNonBlank(nodeId, "nodeId");
+        raftPeerAddresses = Collections.unmodifiableMap(new LinkedHashMap<>(
+            Objects.requireNonNull(raftPeerAddresses, "raftPeerAddresses must not be null")
+        ));
+        dataDir = Objects.requireNonNull(dataDir, "dataDir must not be null");
+        validatePort(raftPort, "raftPort");
+        validatePort(grpcPort, "grpcPort");
+        validatePort(adminPort, "adminPort");
     }
 
-    private static Options parseArgs(String[] args) {
-        Options options = new Options();
-
-        for (int i = 0; i < args.length; i++) {
-            String arg = args[i];
-
-            switch (arg) {
-                case "--help", "-h" -> options.help = true;
-                case "--node-id", "-n" -> options.nodeId = CliSupport.requireValue(args, ++i, "--node-id");
-                case "--raft-peer", "-r" -> {
-                    String peerSpec = CliSupport.requireValue(args, ++i, "--raft-peer");
-                    parseRaftPeer(peerSpec, options.raftPeerAddresses);
-                }
-                case "--data-dir", "-d" -> options.dataDir = Path.of(CliSupport.requireValue(args, ++i, "--data-dir"));
-                case "--raft-port" -> options.raftPort = CliSupport.requireIntValue(args, ++i, "--raft-port");
-                case "--grpc-port" -> options.grpcPort = CliSupport.requireIntValue(args, ++i, "--grpc-port");
-                case "--admin-port" -> options.adminPort = CliSupport.requireIntValue(args, ++i, "--admin-port");
-                default -> throw new IllegalArgumentException("Unknown option: " + arg);
-            }
-        }
-
-        return options;
-    }
-
-    private static void parseRaftPeer(String peerSpec, Map<String, String> raftPeerAddresses) {
-        CliSupport.NodeEndpoint peer = CliSupport.parseNodeEndpointSpec(peerSpec, "--raft-peer");
-        raftPeerAddresses.put(peer.nodeId(), peer.endpoint());
-    }
-
-    private static void printUsage(PrintStream out) {
-        out.println("Usage: partdb start [options]");
-        out.println();
-        out.println("Start a PartDB server node.");
-        out.println();
-        out.println("Options:");
-        out.println("  -n, --node-id <id>              Node identifier (required)");
-        out.println("  -r, --raft-peer <id=endpoint>   Raft peer endpoint (repeatable, omit for single-node)");
-        out.println("  -d, --data-dir <path>           Directory for data storage (required)");
-        out.println("      --raft-port <port>          Port for Raft communication (default: " + DEFAULT_RAFT_PORT + ")");
-        out.println("      --grpc-port <port>          Port for gRPC API traffic (default: " + DEFAULT_GRPC_PORT + ")");
-        out.println("      --admin-port <port>         Port for admin health checks (default: " + DEFAULT_ADMIN_PORT + ")");
-        out.println("  -h, --help                      Show this help message");
-        out.println();
-        out.println("Examples:");
-        out.println();
-        out.println("  Single-node cluster:");
-        out.println("    partdb start --node-id node1 --data-dir ./data");
-        out.println();
-        out.println("  Three-node cluster (run on node1):");
-        out.println("    partdb start --node-id node1 \\");
-        out.println("                 --raft-peer node1=192.168.1.1:8100 \\");
-        out.println("                 --raft-peer node2=192.168.1.2:8100 \\");
-        out.println("                 --raft-peer node3=192.168.1.3:8100 \\");
-        out.println("                 --data-dir ./data/node1");
-    }
-
-    private static final class Options {
-        boolean help;
-        String nodeId;
-        Map<String, String> raftPeerAddresses = new HashMap<>();
-        Path dataDir;
+    static AppCommand parse(Args args) {
+        String nodeId = null;
+        Path dataDir = null;
+        Map<String, String> raftPeerAddresses = new LinkedHashMap<>();
         int raftPort = DEFAULT_RAFT_PORT;
         int grpcPort = DEFAULT_GRPC_PORT;
         int adminPort = DEFAULT_ADMIN_PORT;
 
-        String validate() {
-            if (nodeId == null || nodeId.isBlank()) {
-                return "--node-id is required";
+        while (args.hasNext()) {
+            String arg = args.next();
+            try {
+                switch (arg) {
+                    case "--help", "-h" -> {
+                        return new HelpCommand(USAGE);
+                    }
+                    case "--node-id", "-n" -> nodeId = args.requireValue("--node-id");
+                    case "--raft-peer", "-r" -> {
+                        var peer = CliParsing.parseNodeEndpointSpec(args.requireValue("--raft-peer"), "--raft-peer");
+                        raftPeerAddresses.put(peer.nodeId(), peer.endpoint());
+                    }
+                    case "--data-dir", "-d" -> dataDir = Path.of(args.requireValue("--data-dir"));
+                    case "--raft-port" -> raftPort = args.requireIntValue("--raft-port");
+                    case "--grpc-port" -> grpcPort = args.requireIntValue("--grpc-port");
+                    case "--admin-port" -> adminPort = args.requireIntValue("--admin-port");
+                    default -> {
+                        return new ErrorCommand("unknown option: " + arg, USAGE);
+                    }
+                }
+            } catch (IllegalArgumentException e) {
+                return new ErrorCommand(e.getMessage(), USAGE);
             }
-            if (dataDir == null) {
-                return "--data-dir is required";
+        }
+
+        if (nodeId == null || nodeId.isBlank()) {
+            return new ErrorCommand("--node-id is required", USAGE);
+        }
+        if (dataDir == null) {
+            return new ErrorCommand("--data-dir is required", USAGE);
+        }
+
+        try {
+            return new StartCommand(nodeId, raftPeerAddresses, dataDir, raftPort, grpcPort, adminPort);
+        } catch (IllegalArgumentException e) {
+            return new ErrorCommand(e.getMessage(), USAGE);
+        }
+    }
+
+    @Override
+    public int execute(CliRuntime runtime) {
+        PartDbServerConfig config;
+        try {
+            config = PartDbServerConfig.create(nodeId, raftPeerAddresses, dataDir, raftPort, grpcPort, adminPort);
+        } catch (IllegalArgumentException e) {
+            return runtime.error(e.getMessage());
+        }
+
+        CountDownLatch shutdownLatch = new CountDownLatch(1);
+        Thread shutdownHook = Thread.ofPlatform()
+            .name("shutdown-hook")
+            .unstarted(() -> {
+                runtime.out().println("Received shutdown signal");
+                shutdownLatch.countDown();
+            });
+
+        try (var server = new PartDbServer(config)) {
+            Runtime.getRuntime().addShutdownHook(shutdownHook);
+            try {
+                server.start();
+                runtime.out().println("PartDB node '" + nodeId + "' started");
+                runtime.out().println("  Raft port: " + raftPort);
+                runtime.out().println("  gRPC port: " + grpcPort);
+                runtime.out().println("  Admin port: " + adminPort);
+                runtime.out().println("  Data dir:  " + dataDir.toAbsolutePath());
+                if (raftPeerAddresses.isEmpty()) {
+                    runtime.out().println("  Mode:      single-node");
+                } else {
+                    runtime.out().println("  Raft peers: " + raftPeerAddresses.size());
+                }
+                runtime.out().println();
+                runtime.out().println("Press Ctrl+C to stop");
+
+                shutdownLatch.await();
+            } finally {
+                try {
+                    Runtime.getRuntime().removeShutdownHook(shutdownHook);
+                } catch (IllegalStateException ignored) {
+                    // JVM shutdown is already in progress.
+                }
             }
-            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            runtime.err().println("Failed to start server: " + e.getMessage());
+            e.printStackTrace(runtime.err());
+            return 1;
+        }
+
+        runtime.out().println("Server stopped");
+        return 0;
+    }
+
+    private static void validatePort(int value, String name) {
+        if (value <= 0 || value > 65535) {
+            throw new IllegalArgumentException(name + " must be between 1 and 65535");
         }
     }
 }

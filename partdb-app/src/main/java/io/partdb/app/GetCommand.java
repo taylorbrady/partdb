@@ -1,81 +1,79 @@
 package io.partdb.app;
 
 import io.partdb.client.KvClient;
+import io.partdb.client.ServerEndpoint;
 
-import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-final class GetCommand {
+record GetCommand(ServerEndpoint endpoint, String key) implements AppCommand {
+    private static final String USAGE = """
+        Usage: partdb get <key> [options]
 
-    static int run(String[] args, PrintStream out, PrintStream err) {
+        Get a value by key.
+
+        Options:
+          -e, --endpoint <endpoint>   Server endpoint (default: localhost:8101)
+          -h, --help                  Show this help message
+        """;
+
+    GetCommand {
+        endpoint = Objects.requireNonNull(endpoint, "endpoint must not be null");
+        key = Objects.requireNonNull(key, "key must not be null");
+    }
+
+    static AppCommand parse(Args args) {
+        ServerEndpoint endpoint = CliParsing.DEFAULT_ENDPOINT;
         String key = null;
-        String endpoint = CliSupport.DEFAULT_ENDPOINT_TEXT;
 
-        for (int i = 0; i < args.length; i++) {
-            String arg = args[i];
-            if (arg.equals("--endpoint") || arg.equals("-e")) {
-                endpoint = CliSupport.requireValue(args, ++i, "--endpoint");
-            } else if (arg.equals("--help") || arg.equals("-h")) {
-                printUsage(out);
-                return 0;
-            } else if (!arg.startsWith("-")) {
-                if (key == null) {
-                    key = arg;
-                } else {
-                    err.println("Error: unexpected argument: " + arg);
-                    return 1;
+        while (args.hasNext()) {
+            String arg = args.next();
+            switch (arg) {
+                case "--endpoint", "-e" -> endpoint = CliParsing.parseServerEndpoint(args.requireValue("--endpoint"));
+                case "--help", "-h" -> {
+                    return new HelpCommand(USAGE);
                 }
-            } else {
-                err.println("Error: unknown option: " + arg);
-                return 1;
+                default -> {
+                    if (arg.startsWith("-")) {
+                        return new ErrorCommand("unknown option: " + arg, USAGE);
+                    }
+                    if (key == null) {
+                        key = arg;
+                    } else {
+                        return new ErrorCommand("unexpected argument: " + arg, USAGE);
+                    }
+                }
             }
         }
 
         if (key == null) {
-            err.println("Error: key is required");
-            err.println();
-            printUsage(err);
-            return 1;
+            return new ErrorCommand("key is required", USAGE);
         }
-
-        try (var client = new KvClient(CliSupport.defaultKvClientConfig(endpoint))) {
-            byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
-            Optional<byte[]> result = client.get(keyBytes).get(CliSupport.REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-
-            if (result.isPresent()) {
-                String value = new String(result.get(), StandardCharsets.UTF_8);
-                out.println(value);
-                return 0;
-            }
-            err.println("(not found)");
-            return 1;
-        } catch (TimeoutException e) {
-            err.println("Error: request timed out after " + CliSupport.REQUEST_TIMEOUT_SECONDS + " seconds");
-            return 1;
-        } catch (ExecutionException e) {
-            err.println("Error: " + CliSupport.rootCauseMessage(e));
-            return 1;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            err.println("Error: operation interrupted");
-            return 1;
-        } catch (Exception e) {
-            err.println("Error: " + e.getMessage());
-            return 1;
-        }
+        return new GetCommand(endpoint, key);
     }
 
-    private static void printUsage(PrintStream out) {
-        out.println("Usage: partdb get <key> [options]");
-        out.println();
-        out.println("Get a value by key.");
-        out.println();
-        out.println("Options:");
-        out.println("  -e, --endpoint <endpoint>   Server endpoint (default: localhost:8101)");
-        out.println("  -h, --help                  Show this help message");
+    @Override
+    public int execute(CliRuntime runtime) {
+        try (var client = new KvClient(runtime.kvClientConfig(endpoint))) {
+            Optional<byte[]> result = runtime.await(client.get(key.getBytes(StandardCharsets.UTF_8)));
+            if (result.isPresent()) {
+                runtime.out().println(new String(result.get(), StandardCharsets.UTF_8));
+                return 0;
+            }
+            runtime.err().println("(not found)");
+            return 1;
+        } catch (TimeoutException e) {
+            return runtime.timeout();
+        } catch (ExecutionException e) {
+            return runtime.error(CliRuntime.rootCauseMessage(e));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return runtime.error("operation interrupted");
+        } catch (Exception e) {
+            return runtime.error(e.getMessage());
+        }
     }
 }

@@ -3,96 +3,105 @@ package io.partdb.app;
 import io.partdb.client.ClusterClient;
 import io.partdb.client.ClusterMember;
 import io.partdb.client.ClusterMembership;
+import io.partdb.client.ServerEndpoint;
 
-import java.io.PrintStream;
 import java.util.Locale;
-import java.util.Arrays;
+import java.util.Objects;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-final class MemberCommand {
+record MemberCommand(ServerEndpoint endpoint, OutputFormat format) implements AppCommand {
+    private static final String USAGE = """
+        Usage: partdb member <subcommand>
 
-    static int run(String[] args, PrintStream out, PrintStream err) {
-        if (args.length == 0) {
-            err.println("Error: subcommand required");
-            err.println();
-            printUsage(err);
-            return 1;
+        Manage cluster members.
+
+        Subcommands:
+          list    List cluster members
+          help    Show this help message
+        """;
+
+    private static final String LIST_USAGE = """
+        Usage: partdb member list [options]
+
+        List cluster members.
+
+        Options:
+          -e, --endpoint <endpoint>   Server endpoint (default: localhost:8101)
+          -o, --output <format>       Output format: text, json (default: text)
+          -h, --help                  Show this help message
+        """;
+
+    MemberCommand {
+        endpoint = Objects.requireNonNull(endpoint, "endpoint must not be null");
+        format = Objects.requireNonNull(format, "format must not be null");
+    }
+
+    static AppCommand parse(Args args) {
+        if (!args.hasNext()) {
+            return new ErrorCommand("subcommand required", USAGE);
         }
 
-        String subcommand = args[0];
-        String[] subArgs = Arrays.copyOfRange(args, 1, args.length);
-
+        String subcommand = args.next();
         return switch (subcommand) {
-            case "list" -> runList(subArgs, out, err);
-            case "help", "--help", "-h" -> {
-                printUsage(out);
-                yield 0;
-            }
-            default -> {
-                err.println("Error: unknown subcommand: " + subcommand);
-                err.println();
-                printUsage(err);
-                yield 1;
-            }
+            case "list" -> parseList(args);
+            case "help", "--help", "-h" -> new HelpCommand(USAGE);
+            default -> new ErrorCommand("unknown subcommand: " + subcommand, USAGE);
         };
     }
 
-    private static int runList(String[] args, PrintStream out, PrintStream err) {
-        String endpoint = CliSupport.DEFAULT_ENDPOINT_TEXT;
+    private static AppCommand parseList(Args args) {
+        ServerEndpoint endpoint = CliParsing.DEFAULT_ENDPOINT;
         OutputFormat format = OutputFormat.TEXT;
 
-        for (int i = 0; i < args.length; i++) {
-            String arg = args[i];
-            if (arg.equals("--endpoint") || arg.equals("-e")) {
-                endpoint = CliSupport.requireValue(args, ++i, "--endpoint");
-            } else if (arg.equals("-o") || arg.equals("--output")) {
-                try {
-                    format = CliSupport.parseOutputFormat(CliSupport.requireValue(args, ++i, "--output"));
-                } catch (IllegalArgumentException e) {
-                    err.println("Error: " + e.getMessage());
-                    return 1;
+        while (args.hasNext()) {
+            String arg = args.next();
+            try {
+                switch (arg) {
+                    case "--endpoint", "-e" -> endpoint = CliParsing.parseServerEndpoint(args.requireValue("--endpoint"));
+                    case "--output", "-o" -> format = CliParsing.parseOutputFormat(args.requireValue("--output"));
+                    case "--help", "-h" -> {
+                        return new HelpCommand(LIST_USAGE);
+                    }
+                    default -> {
+                        return new ErrorCommand("unknown option: " + arg, LIST_USAGE);
+                    }
                 }
-            } else if (arg.equals("--help") || arg.equals("-h")) {
-                printListUsage(out);
-                return 0;
-            } else {
-                err.println("Error: unknown option: " + arg);
-                return 1;
+            } catch (IllegalArgumentException e) {
+                return new ErrorCommand(e.getMessage(), LIST_USAGE);
             }
         }
 
-        try (var client = new ClusterClient(CliSupport.defaultClusterClientConfig(endpoint))) {
-            ClusterMembership response = client.membership().get(CliSupport.REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        return new MemberCommand(endpoint, format);
+    }
 
+    @Override
+    public int execute(CliRuntime runtime) {
+        try (var client = new ClusterClient(runtime.clusterClientConfig(endpoint))) {
+            ClusterMembership response = runtime.await(client.membership());
             if (format == OutputFormat.JSON) {
-                printJson(response, out);
+                runtime.out().println(toJson(response));
             } else {
-                printText(response, out);
+                printText(response, runtime);
             }
             return 0;
         } catch (TimeoutException e) {
-            err.println("Error: request timed out after " + CliSupport.REQUEST_TIMEOUT_SECONDS + " seconds");
-            return 1;
+            return runtime.timeout();
         } catch (ExecutionException e) {
-            err.println("Error: " + CliSupport.rootCauseMessage(e));
-            return 1;
+            return runtime.error(CliRuntime.rootCauseMessage(e));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            err.println("Error: operation interrupted");
-            return 1;
+            return runtime.error("operation interrupted");
         } catch (Exception e) {
-            err.println("Error: " + e.getMessage());
-            return 1;
+            return runtime.error(e.getMessage());
         }
     }
 
-    private static void printText(ClusterMembership response, PrintStream out) {
-        out.printf("%-12s %-24s %-8s %-8s%n", "NODE ID", "RAFT ADDRESS", "ROLE", "STATUS");
+    private static void printText(ClusterMembership response, CliRuntime runtime) {
+        runtime.out().printf("%-12s %-24s %-8s %-8s%n", "NODE ID", "RAFT ADDRESS", "ROLE", "STATUS");
         for (ClusterMember member : response.members()) {
             String status = member.leader() ? "leader" : (member.self() ? "self" : "");
-            out.printf("%-12s %-24s %-8s %-8s%n",
+            runtime.out().printf("%-12s %-24s %-8s %-8s%n",
                 member.nodeId(),
                 member.raftEndpoint().map(Object::toString).orElse("(unknown)"),
                 member.role().name().toLowerCase(Locale.ROOT),
@@ -100,52 +109,20 @@ final class MemberCommand {
         }
     }
 
-    private static void printJson(ClusterMembership response, PrintStream out) {
-        out.println(toJson(response));
-    }
-
     static String toJson(ClusterMembership response) {
-        StringBuilder builder = new StringBuilder();
-        builder.append("{\"leaderId\":");
-        builder.append(response.leaderId().map(JsonOutput::quote).orElse("null"));
-        builder.append(",\"members\":[");
-
-        var members = response.members();
-        for (int i = 0; i < members.size(); i++) {
-            ClusterMember member = members.get(i);
-            if (i > 0) {
-                builder.append(',');
-            }
-            builder.append("{\"nodeId\":").append(JsonOutput.quote(member.nodeId()));
-            builder.append(",\"raftAddress\":")
-                .append(member.raftEndpoint().map(endpoint -> JsonOutput.quote(endpoint.toString())).orElse("null"));
-            builder.append(",\"role\":")
-                .append(JsonOutput.quote(member.role().name().toLowerCase(Locale.ROOT)));
-            builder.append(",\"isLeader\":").append(member.leader());
-            builder.append(",\"isSelf\":").append(member.self()).append('}');
-        }
-        builder.append("]}");
-        return builder.toString();
-    }
-
-    private static void printUsage(PrintStream out) {
-        out.println("Usage: partdb member <subcommand> [options]");
-        out.println();
-        out.println("Manage cluster members.");
-        out.println();
-        out.println("Subcommands:");
-        out.println("  list    List cluster members");
-        out.println("  help    Show this help message");
-    }
-
-    private static void printListUsage(PrintStream out) {
-        out.println("Usage: partdb member list [options]");
-        out.println();
-        out.println("List cluster members.");
-        out.println();
-        out.println("Options:");
-        out.println("  -e, --endpoint <endpoint>   Server endpoint (default: localhost:8101)");
-        out.println("  -o, --output <format>       Output format: text, json (default: text)");
-        out.println("  -h, --help                  Show this help message");
+        return JsonWriter.object(json -> {
+            json.field("leaderId", response.leaderId());
+            json.array("members", response.members(), (array, member) -> array.object(memberJson -> {
+                memberJson.field("nodeId", member.nodeId());
+                if (member.raftEndpoint().isPresent()) {
+                    memberJson.field("raftAddress", member.raftEndpoint().get().toString());
+                } else {
+                    memberJson.nullField("raftAddress");
+                }
+                memberJson.field("role", member.role().name().toLowerCase(Locale.ROOT));
+                memberJson.field("isLeader", member.leader());
+                memberJson.field("isSelf", member.self());
+            }));
+        });
     }
 }

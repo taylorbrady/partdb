@@ -7,6 +7,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PartDbAppTest {
@@ -33,5 +34,15 @@ class PartDbAppTest {
 
         assertEquals(0, exitCode);
         assertTrue(outBytes.toString(StandardCharsets.UTF_8).contains("Usage: partdb <command> [options]"));
+    }
+
+    @Test
+    void parseGetBuildsImmutableCommandRecord() {
+        AppCommand command = PartDbApp.parse(new String[] {"get", "hello", "--endpoint", "[::1]:8101"});
+
+        var get = assertInstanceOf(GetCommand.class, command);
+        assertEquals("hello", get.key());
+        assertEquals("::1", get.endpoint().host());
+        assertEquals(8101, get.endpoint().port());
     }
 }

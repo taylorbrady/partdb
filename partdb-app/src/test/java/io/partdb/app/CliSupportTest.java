@@ -10,27 +10,25 @@ class CliSupportTest {
 
     @Test
     void parseOutputFormatAcceptsKnownFormats() {
-        assertEquals(OutputFormat.TEXT, CliSupport.parseOutputFormat("text"));
-        assertEquals(OutputFormat.JSON, CliSupport.parseOutputFormat("json"));
+        assertEquals(OutputFormat.TEXT, CliParsing.parseOutputFormat("text"));
+        assertEquals(OutputFormat.JSON, CliParsing.parseOutputFormat("json"));
     }
 
     @Test
     void parseOutputFormatRejectsUnknownFormats() {
-        assertThrows(IllegalArgumentException.class, () -> CliSupport.parseOutputFormat("yaml"));
+        assertThrows(IllegalArgumentException.class, () -> CliParsing.parseOutputFormat("yaml"));
     }
 
     @Test
     void parseNodeEndpointSpecAcceptsBracketedIpv6() {
-        var peer = CliSupport.parseNodeEndpointSpec("node1=[::1]:8100", "--raft-peer");
+        var peer = CliParsing.parseNodeEndpointSpec("node1=[::1]:8100", "--raft-peer");
 
         assertEquals("node1", peer.nodeId());
         assertEquals("[::1]:8100", peer.endpoint());
     }
 
     @Test
-    void defaultClusterClientConfigUsesTypedEndpointParsing() {
-        var config = CliSupport.defaultClusterClientConfig("[::1]:8101");
-
-        assertEquals(new ServerEndpoint("::1", 8101), config.endpoint());
+    void parseServerEndpointUsesTypedEndpointParsing() {
+        assertEquals(new ServerEndpoint("::1", 8101), CliParsing.parseServerEndpoint("[::1]:8101"));
     }
 }

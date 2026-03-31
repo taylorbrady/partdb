@@ -10,7 +10,7 @@ class JsonOutputTest {
     void quoteEscapesSpecialCharacters() {
         assertEquals(
             "\"node\\\"1\\\\line\\n\\t\"",
-            JsonOutput.quote("node\"1\\line\n\t")
+            JsonWriter.quote("node\"1\\line\n\t")
         );
     }
 }
