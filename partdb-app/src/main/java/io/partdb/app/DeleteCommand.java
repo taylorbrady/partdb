@@ -10,7 +10,7 @@ import java.util.concurrent.TimeoutException;
 
 record DeleteCommand(ServerEndpoint endpoint, String key) implements AppCommand {
     private static final String USAGE = """
-        Usage: partdb delete <key> [options]
+        Usage: partdb kv delete <key> [options]
 
         Delete a key.
 

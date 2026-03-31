@@ -23,7 +23,7 @@ record StartCommand(
     private static final int DEFAULT_ADMIN_PORT = 8102;
 
     private static final String USAGE = """
-        Usage: partdb start [options]
+        Usage: partdb server start [options]
 
         Start a PartDB server node.
 
@@ -37,9 +37,9 @@ record StartCommand(
           -h, --help                      Show this help message
 
         Examples:
-          partdb start --node-id node1 --data-dir ./data
+          partdb server start --node-id node1 --data-dir ./data
 
-          partdb start --node-id node1 \\
+          partdb server start --node-id node1 \\
                        --raft-peer node1=192.168.1.1:8100 \\
                        --raft-peer node2=192.168.1.2:8100 \\
                        --raft-peer node3=192.168.1.3:8100 \\

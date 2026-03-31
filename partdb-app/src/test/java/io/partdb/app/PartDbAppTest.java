@@ -33,12 +33,12 @@ class PartDbAppTest {
         int exitCode = PartDbApp.run(new String[0], out, err);
 
         assertEquals(0, exitCode);
-        assertTrue(outBytes.toString(StandardCharsets.UTF_8).contains("Usage: partdb <command> [options]"));
+        assertTrue(outBytes.toString(StandardCharsets.UTF_8).contains("Usage: partdb <namespace> <command> [options]"));
     }
 
     @Test
     void parseGetBuildsImmutableCommandRecord() {
-        AppCommand command = PartDbApp.parse(new String[] {"get", "hello", "--endpoint", "[::1]:8101"});
+        AppCommand command = PartDbApp.parse(new String[] {"kv", "get", "hello", "--endpoint", "[::1]:8101"});
 
         var get = assertInstanceOf(GetCommand.class, command);
         assertEquals("hello", get.key());

@@ -75,15 +75,15 @@ class ClusterAdminIntegrationTest {
             cluster.awaitStatusLeader(observerId, newLeader.nodeId(), CLUSTER_TIMEOUT);
             cluster.awaitMembershipLeader(observerId, newLeader.nodeId(), CLUSTER_TIMEOUT);
 
-            var statusResult = cluster.runCommand("status", "--endpoint", cluster.grpcAddress(observerId));
+            var statusResult = cluster.runCommand("cluster", "status", "--endpoint", cluster.grpcAddress(observerId));
             assertEquals(0, statusResult.exitCode());
             assertEquals("", statusResult.stderr());
             assertTrue(statusResult.stdout().contains("Node ID:        " + observerId));
             assertTrue(statusResult.stdout().contains("Leader:         " + newLeader.nodeId()));
 
             var membersResult = cluster.runCommand(
-                "member",
-                "list",
+                "cluster",
+                "members",
                 "--endpoint",
                 cluster.grpcAddress(observerId),
                 "--output",

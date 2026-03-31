@@ -45,15 +45,15 @@ class LiveServerSmokeTest {
             server.start();
             awaitLeader(grpcPort);
 
-            assertCommand(new String[] {"put", "hello", "world", "--endpoint", endpoint}, 0, "OK\n");
-            assertCommand(new String[] {"get", "hello", "--endpoint", endpoint}, 0, "world\n");
+            assertCommand(new String[] {"kv", "put", "hello", "world", "--endpoint", endpoint}, 0, "OK\n");
+            assertCommand(new String[] {"kv", "get", "hello", "--endpoint", endpoint}, 0, "world\n");
 
-            var statusResult = runCommand("status", "--endpoint", endpoint);
+            var statusResult = runCommand("cluster", "status", "--endpoint", endpoint);
             assertEquals(0, statusResult.exitCode());
             assertTrue(statusResult.stdout().contains("Node ID:        node1"));
             assertTrue(statusResult.stdout().contains("Role:           LEADER"));
 
-            var memberResult = runCommand("member", "list", "--endpoint", endpoint);
+            var memberResult = runCommand("cluster", "members", "--endpoint", endpoint);
             assertEquals(0, memberResult.exitCode());
             assertTrue(memberResult.stdout().contains("node1"));
             assertTrue(memberResult.stdout().contains("localhost:" + raftPort));

@@ -255,6 +255,7 @@ final class PackagedClusterHarness implements AutoCloseable {
 
             var command = new ArrayList<String>();
             command.add(executable.toString());
+            command.add("server");
             command.add("start");
             command.add("--node-id");
             command.add(nodeId);

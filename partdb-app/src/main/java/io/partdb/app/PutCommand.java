@@ -10,7 +10,7 @@ import java.util.concurrent.TimeoutException;
 
 record PutCommand(ServerEndpoint endpoint, String key, String value) implements AppCommand {
     private static final String USAGE = """
-        Usage: partdb put <key> <value> [options]
+        Usage: partdb kv put <key> <value> [options]
 
         Put a key-value pair.
 

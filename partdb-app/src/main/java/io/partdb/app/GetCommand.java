@@ -11,7 +11,7 @@ import java.util.concurrent.TimeoutException;
 
 record GetCommand(ServerEndpoint endpoint, String key) implements AppCommand {
     private static final String USAGE = """
-        Usage: partdb get <key> [options]
+        Usage: partdb kv get <key> [options]
 
         Get a value by key.
 

@@ -47,11 +47,11 @@ partdb-client
 ## CLI
 
 ```bash
-partdb start --node-id node1 --data-dir ./data/node1
-partdb status --endpoint localhost:8101
-partdb member list --endpoint localhost:8101
-partdb put hello world --endpoint localhost:8101
-partdb get hello --endpoint localhost:8101
+partdb server start --node-id node1 --data-dir ./data/node1
+partdb cluster status --endpoint localhost:8101
+partdb cluster members --endpoint localhost:8101
+partdb kv put hello world --endpoint localhost:8101
+partdb kv get hello --endpoint localhost:8101
 ```
 
 Raft peers are configured from the app with repeatable `--raft-peer nodeId=endpoint` arguments.

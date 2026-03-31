@@ -10,7 +10,7 @@ import java.util.concurrent.TimeoutException;
 
 record StatusCommand(ServerEndpoint endpoint, OutputFormat format) implements AppCommand {
     private static final String USAGE = """
-        Usage: partdb status [options]
+        Usage: partdb cluster status [options]
 
         Show node status.
 

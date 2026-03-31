@@ -26,6 +26,7 @@ class PackagedClusterSmokeTest {
             var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
 
             var putResult = cluster.runCommand(
+                "kv",
                 "put",
                 "smoke-key",
                 "smoke-value",
@@ -37,6 +38,7 @@ class PackagedClusterSmokeTest {
             assertEquals("", putResult.stderr());
 
             var getResult = cluster.runCommand(
+                "kv",
                 "get",
                 "smoke-key",
                 "--endpoint",
@@ -51,6 +53,7 @@ class PackagedClusterSmokeTest {
             var newLeader = cluster.awaitStableLeaderExcluding(leader.nodeId(), CLUSTER_TIMEOUT);
 
             var statusResult = cluster.runCommand(
+                "cluster",
                 "status",
                 "--endpoint",
                 cluster.grpcAddress(newLeader.nodeId())
@@ -61,8 +64,8 @@ class PackagedClusterSmokeTest {
             assertTrue(statusResult.stdout().contains("Role:           LEADER"));
 
             var memberListResult = cluster.runCommand(
-                "member",
-                "list",
+                "cluster",
+                "members",
                 "--endpoint",
                 cluster.grpcAddress(newLeader.nodeId())
             );
@@ -74,6 +77,7 @@ class PackagedClusterSmokeTest {
             assertTrue(memberListResult.stdout().contains("leader"));
 
             var postFailoverPut = cluster.runCommand(
+                "kv",
                 "put",
                 "failover-key",
                 "failover-value",
@@ -89,6 +93,7 @@ class PackagedClusterSmokeTest {
             assertEquals("", postFailoverPut.stderr(), "stdout:\n" + postFailoverPut.stdout());
 
             var postFailoverGet = cluster.runCommand(
+                "kv",
                 "get",
                 "failover-key",
                 "--endpoint",

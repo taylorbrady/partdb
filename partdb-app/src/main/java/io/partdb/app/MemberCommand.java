@@ -12,17 +12,7 @@ import java.util.concurrent.TimeoutException;
 
 record MemberCommand(ServerEndpoint endpoint, OutputFormat format) implements AppCommand {
     private static final String USAGE = """
-        Usage: partdb member <subcommand>
-
-        Manage cluster members.
-
-        Subcommands:
-          list    List cluster members
-          help    Show this help message
-        """;
-
-    private static final String LIST_USAGE = """
-        Usage: partdb member list [options]
+        Usage: partdb cluster members [options]
 
         List cluster members.
 
@@ -38,19 +28,6 @@ record MemberCommand(ServerEndpoint endpoint, OutputFormat format) implements Ap
     }
 
     static AppCommand parse(Args args) {
-        if (!args.hasNext()) {
-            return new ErrorCommand("subcommand required", USAGE);
-        }
-
-        String subcommand = args.next();
-        return switch (subcommand) {
-            case "list" -> parseList(args);
-            case "help", "--help", "-h" -> new HelpCommand(USAGE);
-            default -> new ErrorCommand("unknown subcommand: " + subcommand, USAGE);
-        };
-    }
-
-    private static AppCommand parseList(Args args) {
         ServerEndpoint endpoint = CliParsing.DEFAULT_ENDPOINT;
         OutputFormat format = OutputFormat.TEXT;
 
@@ -61,14 +38,14 @@ record MemberCommand(ServerEndpoint endpoint, OutputFormat format) implements Ap
                     case "--endpoint", "-e" -> endpoint = CliParsing.parseServerEndpoint(args.requireValue("--endpoint"));
                     case "--output", "-o" -> format = CliParsing.parseOutputFormat(args.requireValue("--output"));
                     case "--help", "-h" -> {
-                        return new HelpCommand(LIST_USAGE);
+                        return new HelpCommand(USAGE);
                     }
                     default -> {
-                        return new ErrorCommand("unknown option: " + arg, LIST_USAGE);
+                        return new ErrorCommand("unknown option: " + arg, USAGE);
                     }
                 }
             } catch (IllegalArgumentException e) {
-                return new ErrorCommand(e.getMessage(), LIST_USAGE);
+                return new ErrorCommand(e.getMessage(), USAGE);
             }
         }
 
