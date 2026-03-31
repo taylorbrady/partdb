@@ -29,7 +29,7 @@ import io.partdb.grpc.kv.proto.KvProto.ScanResponse;
 import io.partdb.grpc.kv.proto.KvServiceGrpc;
 import io.partdb.node.KeyValueEntry;
 import io.partdb.node.PartDbNode;
-import io.partdb.raft.RaftException;
+import io.partdb.node.raft.RaftException;
 
 import java.time.Duration;
 import java.util.ArrayList;

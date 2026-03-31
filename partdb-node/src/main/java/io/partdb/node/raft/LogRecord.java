@@ -1,6 +1,6 @@
 package io.partdb.node.raft;
 
-import io.partdb.raft.HardState;
+import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.LogEntry;
 
 public sealed interface LogRecord {
@@ -11,7 +11,7 @@ public sealed interface LogRecord {
 
     record Entry(LogEntry entry) implements LogRecord {}
 
-    record State(HardState hardState) implements LogRecord {}
+    record State(RaftPersistentState hardState) implements LogRecord {}
 
     record SnapshotMarker(long index, long term) implements LogRecord {}
 }

@@ -68,7 +68,7 @@ public sealed interface RaftMessage {
         String leaderId,
         long lastIncludedIndex,
         long lastIncludedTerm,
-        Membership membership,
+        RaftMembership membership,
         byte[] data
     ) implements Request {
         public InstallSnapshot {

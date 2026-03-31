@@ -4,23 +4,18 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-final class InMemoryStorage implements RaftStorage {
-    private volatile HardState hardState = HardState.INITIAL;
+final class InMemoryStorage implements RaftLogView {
+    private volatile RaftPersistentState hardState = RaftPersistentState.INITIAL;
     private final List<LogEntry> entries = new ArrayList<>();
-    private volatile Snapshot snapshot;
-    private volatile Membership membership;
+    private volatile RaftSnapshot snapshot;
+    private volatile RaftMembership membership;
 
     InMemoryStorage() {
         this(null);
     }
 
-    InMemoryStorage(Membership initialMembership) {
+    InMemoryStorage(RaftMembership initialMembership) {
         this.membership = initialMembership;
-    }
-
-    @Override
-    public InitialState initialState() {
-        return new InitialState(hardState, membership);
     }
 
     @Override
@@ -71,8 +66,7 @@ final class InMemoryStorage implements RaftStorage {
         return entries.getLast().index();
     }
 
-    @Override
-    public void append(HardState hardState, List<LogEntry> newEntries) {
+    public void append(RaftPersistentState hardState, List<LogEntry> newEntries) {
         if (hardState != null) {
             this.hardState = hardState;
         }
@@ -93,28 +87,23 @@ final class InMemoryStorage implements RaftStorage {
         }
     }
 
-    @Override
     public void sync() {
     }
 
-    @Override
-    public Optional<Snapshot> snapshot() {
+    public Optional<RaftSnapshot> snapshot() {
         return Optional.ofNullable(snapshot);
     }
 
-    @Override
-    public void saveSnapshot(Snapshot snapshot) {
+    public void saveSnapshot(RaftSnapshot snapshot) {
         this.snapshot = snapshot;
         this.membership = snapshot.membership();
         entries.removeIf(e -> e.index() <= snapshot.index());
     }
 
-    @Override
     public void compact(long index) {
         entries.removeIf(e -> e.index() <= index);
     }
 
-    @Override
     public void close() {
     }
 }

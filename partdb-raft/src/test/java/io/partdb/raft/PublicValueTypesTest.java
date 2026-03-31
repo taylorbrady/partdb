@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
@@ -27,7 +28,7 @@ class PublicValueTypesTest {
     @Test
     void snapshotDefensivelyCopiesPayload() {
         byte[] data = "snapshot".getBytes(StandardCharsets.UTF_8);
-        var snapshot = new Snapshot(3, 2, Membership.ofVoters("n1"), data);
+        var snapshot = new RaftSnapshot(3, 2, RaftMembership.ofVoters("n1"), data);
 
         data[0] = 'S';
         assertArrayEquals("snapshot".getBytes(StandardCharsets.UTF_8), snapshot.data());
@@ -53,19 +54,19 @@ class PublicValueTypesTest {
     @Test
     void readyDefensivelyCopiesApplyPayloadsAndLists() {
         byte[] data = "apply".getBytes(StandardCharsets.UTF_8);
-        var applyEntry = new Ready.ApplyEntry(2, 1, data);
-        var ready = new Ready(
-            Ready.Persist.EMPTY,
+        var applyEntry = new RaftReady.ApplyEntry(2, 1, data);
+        var ready = new RaftReady(
+            RaftReady.Persistence.EMPTY,
             List.of(),
-            new Ready.Apply(List.of(applyEntry), List.of(), List.of()),
-            null
+            new RaftReady.Application(List.of(applyEntry), List.of(), List.of()),
+            Optional.empty()
         );
 
         data[0] = 'A';
-        assertArrayEquals("apply".getBytes(StandardCharsets.UTF_8), ready.apply().entries().getFirst().data());
+        assertArrayEquals("apply".getBytes(StandardCharsets.UTF_8), ready.application().entries().getFirst().data());
 
-        byte[] returned = ready.apply().entries().getFirst().data();
+        byte[] returned = ready.application().entries().getFirst().data();
         returned[0] = 'X';
-        assertArrayEquals("apply".getBytes(StandardCharsets.UTF_8), ready.apply().entries().getFirst().data());
+        assertArrayEquals("apply".getBytes(StandardCharsets.UTF_8), ready.application().entries().getFirst().data());
     }
 }

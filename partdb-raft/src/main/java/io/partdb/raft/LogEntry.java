@@ -35,7 +35,7 @@ public sealed interface LogEntry {
         }
     }
 
-    record Config(long index, long term, Membership membership) implements LogEntry {
+    record Config(long index, long term, RaftMembership membership) implements LogEntry {
         public Config {
             if (index < 1) {
                 throw new IllegalArgumentException("index must be positive");

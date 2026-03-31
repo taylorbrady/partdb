@@ -1,8 +1,8 @@
 package io.partdb.node.raft;
 
-import io.partdb.raft.HardState;
+import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.LogEntry;
-import io.partdb.raft.Membership;
+import io.partdb.raft.RaftMembership;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -34,7 +34,7 @@ public final class LogCodec {
                 buf.putLong(index);
                 buf.putLong(term);
             }
-            case LogEntry.Config(long index, long term, Membership membership) -> {
+            case LogEntry.Config(long index, long term, RaftMembership membership) -> {
                 buf.put(ENTRY_TYPE_CONFIG);
                 buf.putLong(index);
                 buf.putLong(term);
@@ -57,7 +57,7 @@ public final class LogCodec {
             }
             case ENTRY_TYPE_NOOP -> new LogEntry.NoOp(index, term);
             case ENTRY_TYPE_CONFIG -> {
-                Membership membership = readMembership(buf);
+                RaftMembership membership = readMembership(buf);
                 yield new LogEntry.Config(index, term, membership);
             }
             default -> throw new IllegalArgumentException("Unknown entry type: " + type);
@@ -68,11 +68,11 @@ public final class LogCodec {
         return switch (entry) {
             case LogEntry.Data(long index, long term, byte[] data) -> 1 + 8 + 8 + 4 + data.length;
             case LogEntry.NoOp(long index, long term) -> 1 + 8 + 8;
-            case LogEntry.Config(long index, long term, Membership membership) -> 1 + 8 + 8 + membershipSize(membership);
+            case LogEntry.Config(long index, long term, RaftMembership membership) -> 1 + 8 + 8 + membershipSize(membership);
         };
     }
 
-    public static void writeHardState(ByteBuffer buf, HardState state) {
+    public static void writeHardState(ByteBuffer buf, RaftPersistentState state) {
         buf.putLong(state.term());
         if (state.votedFor() == null) {
             buf.putShort((short) 0);
@@ -84,7 +84,7 @@ public final class LogCodec {
         buf.putLong(state.commit());
     }
 
-    public static HardState readHardState(ByteBuffer buf) {
+    public static RaftPersistentState readHardState(ByteBuffer buf) {
         long term = buf.getLong();
         short votedForLen = buf.getShort();
         String votedFor = null;
@@ -94,10 +94,10 @@ public final class LogCodec {
             votedFor = new String(votedForBytes, StandardCharsets.UTF_8);
         }
         long commit = buf.getLong();
-        return new HardState(term, votedFor, commit);
+        return new RaftPersistentState(term, votedFor, commit);
     }
 
-    public static int hardStateSize(HardState state) {
+    public static int hardStateSize(RaftPersistentState state) {
         int size = 8 + 2 + 8;
         if (state.votedFor() != null) {
             size += state.votedFor().getBytes(StandardCharsets.UTF_8).length;
@@ -105,18 +105,18 @@ public final class LogCodec {
         return size;
     }
 
-    public static void writeMembership(ByteBuffer buf, Membership membership) {
+    public static void writeMembership(ByteBuffer buf, RaftMembership membership) {
         writeStringSet(buf, membership.voters());
         writeStringSet(buf, membership.learners());
     }
 
-    public static Membership readMembership(ByteBuffer buf) {
+    public static RaftMembership readMembership(ByteBuffer buf) {
         Set<String> voters = readStringSet(buf);
         Set<String> learners = readStringSet(buf);
-        return new Membership(voters, learners);
+        return new RaftMembership(voters, learners);
     }
 
-    public static int membershipSize(Membership membership) {
+    public static int membershipSize(RaftMembership membership) {
         return stringSetSize(membership.voters()) + stringSetSize(membership.learners());
     }
 

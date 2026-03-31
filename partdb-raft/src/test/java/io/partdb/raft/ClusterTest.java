@@ -148,7 +148,7 @@ class ClusterTest {
                 network.deliverAll();
             }
 
-            assertEquals(Role.FOLLOWER, oldLeader.role());
+            assertEquals(RaftRole.FOLLOWER, oldLeader.role());
             assertTrue(oldLeader.term() > oldTerm);
         }
 
@@ -658,7 +658,7 @@ class ClusterTest {
 
             var learner = network.node(3);
             assertFalse(learner.isLeader());
-            assertEquals(Role.FOLLOWER, learner.role());
+            assertEquals(RaftRole.FOLLOWER, learner.role());
         }
 
         @Test
@@ -704,7 +704,7 @@ class ClusterTest {
             var leaderId = network.leader().orElseThrow();
             var leader = network.node(leaderId);
 
-            network.proposeConfigChange(leaderId, new ConfigChange.AddLearner("node-3"));
+            network.proposeConfigChange(leaderId, new MembershipChange.AddLearner("node-3"));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -728,7 +728,7 @@ class ClusterTest {
             var leaderId = network.leader().orElseThrow();
             var leader = network.node(leaderId);
 
-            network.proposeConfigChange(leaderId, new ConfigChange.PromoteVoter(ClusterHarness.nodeId(2)));
+            network.proposeConfigChange(leaderId, new MembershipChange.PromoteVoter(ClusterHarness.nodeId(2)));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -759,14 +759,14 @@ class ClusterTest {
             var leaderId = network.leader().orElseThrow();
             var leader = network.node(leaderId);
 
-            network.proposeConfigChange(leaderId, new ConfigChange.RemoveNode(leaderId));
+            network.proposeConfigChange(leaderId, new MembershipChange.RemoveNode(leaderId));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
                 network.deliverAll();
             }
 
-            assertEquals(Role.FOLLOWER, leader.role());
+            assertEquals(RaftRole.FOLLOWER, leader.role());
         }
 
         @Test
@@ -779,7 +779,7 @@ class ClusterTest {
             network.isolate(ClusterHarness.nodeId(2));
 
             long commitBefore = leader.commitIndex();
-            network.proposeConfigChange(leaderId, new ConfigChange.AddLearner("node-3"));
+            network.proposeConfigChange(leaderId, new MembershipChange.AddLearner("node-3"));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -799,7 +799,7 @@ class ClusterTest {
             var removedNodeId = ClusterHarness.nodeId(2);
             var removedNode = network.node(removedNodeId);
 
-            network.proposeConfigChange(leaderId, new ConfigChange.RemoveNode(removedNodeId));
+            network.proposeConfigChange(leaderId, new MembershipChange.RemoveNode(removedNodeId));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -828,7 +828,7 @@ class ClusterTest {
             var leaderId = network.leader().orElseThrow();
             var demotedNodeId = ClusterHarness.nodeId(2);
 
-            network.proposeConfigChange(leaderId, new ConfigChange.DemoteToLearner(demotedNodeId));
+            network.proposeConfigChange(leaderId, new MembershipChange.DemoteToLearner(demotedNodeId));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -868,7 +868,7 @@ class ClusterTest {
 
             long commitBeforeJoin = leader.commitIndex();
 
-            network.proposeConfigChange(leaderId, new ConfigChange.AddLearner("node-3"));
+            network.proposeConfigChange(leaderId, new MembershipChange.AddLearner("node-3"));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -896,7 +896,7 @@ class ClusterTest {
 
             var leaderId = network.leader().orElseThrow();
 
-            network.proposeConfigChange(leaderId, new ConfigChange.AddLearner("node-3"));
+            network.proposeConfigChange(leaderId, new MembershipChange.AddLearner("node-3"));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();

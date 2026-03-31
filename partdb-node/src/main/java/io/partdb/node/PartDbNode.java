@@ -4,8 +4,10 @@ import io.partdb.node.command.CommandProposer;
 import io.partdb.node.kv.KvStore;
 import io.partdb.node.lease.LeaseManager;
 import io.partdb.node.transport.ConsensusTransport;
-import io.partdb.node.raft.DurableRaftStorage;
+import io.partdb.node.raft.DurableRaftStore;
 import io.partdb.node.raft.RaftNode;
+import io.partdb.node.raft.RaftStore;
+import io.partdb.raft.RaftMembership;
 import io.partdb.storage.StorageEngineStats;
 
 import java.nio.file.Files;
@@ -35,14 +37,14 @@ public final class PartDbNode implements AutoCloseable {
         );
 
         var membership = config.raftMembership();
-        var raftStorage = createDefaultStorage(config.dataDirectory(), membership);
+        var raftStore = createDefaultRaftStore(config.dataDirectory(), membership);
 
         this.raftNode = RaftNode.builder()
             .nodeId(config.nodeId())
             .membership(membership)
             .config(config.raftConfig())
             .transport(new ConsensusTransportAdapter(transport))
-            .storage(raftStorage)
+            .store(raftStore)
             .stateMachine(kvStore)
             .tickInterval(config.tickInterval())
             .build();
@@ -200,12 +202,12 @@ public final class PartDbNode implements AutoCloseable {
         kvStore.close();
     }
 
-    private static io.partdb.raft.RaftStorage createDefaultStorage(Path dataDirectory, io.partdb.raft.Membership membership) {
+    private static RaftStore createDefaultRaftStore(Path dataDirectory, RaftMembership membership) {
         Path raftDir = dataDirectory.resolve("raft");
         if (Files.exists(raftDir.resolve("wal"))) {
-            return DurableRaftStorage.open(raftDir);
+            return DurableRaftStore.open(raftDir);
         }
-        return DurableRaftStorage.create(raftDir, membership);
+        return DurableRaftStore.create(raftDir, membership);
     }
 
     private CompletableFuture<Long> trackProposal(CompletableFuture<Long> future) {

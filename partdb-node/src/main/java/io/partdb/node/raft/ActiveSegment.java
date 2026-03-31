@@ -1,6 +1,6 @@
 package io.partdb.node.raft;
 
-import io.partdb.raft.HardState;
+import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.LogEntry;
 import io.partdb.storage.StorageException;
 
@@ -159,7 +159,7 @@ public final class ActiveSegment implements LogSegment {
                 LogCodec.writeEntry(buf, entry);
                 yield buf.array();
             }
-            case LogRecord.State(HardState state) -> {
+            case LogRecord.State(RaftPersistentState state) -> {
                 int size = LogCodec.hardStateSize(state);
                 ByteBuffer buf = ByteBuffer.allocate(size).order(BYTE_ORDER);
                 LogCodec.writeHardState(buf, state);

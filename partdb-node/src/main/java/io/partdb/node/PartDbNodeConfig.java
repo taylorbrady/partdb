@@ -1,6 +1,7 @@
 package io.partdb.node;
 
 import io.partdb.raft.RaftConfig;
+import io.partdb.raft.RaftMembership;
 import io.partdb.storage.StorageConfig;
 
 import java.nio.file.Path;
@@ -60,7 +61,7 @@ public final class PartDbNodeConfig {
         return raftConfig;
     }
 
-    io.partdb.raft.Membership raftMembership() {
+    RaftMembership raftMembership() {
         return membership.toRaftMembership();
     }
 

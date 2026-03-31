@@ -1,6 +1,6 @@
 package io.partdb.node;
 
-import io.partdb.raft.Role;
+import io.partdb.raft.RaftRole;
 
 public enum NodeRole {
     FOLLOWER,
@@ -8,7 +8,7 @@ public enum NodeRole {
     CANDIDATE,
     LEADER;
 
-    static NodeRole fromRaftRole(Role role) {
+    static NodeRole fromRaftRole(RaftRole role) {
         return switch (role) {
             case FOLLOWER -> FOLLOWER;
             case PRE_CANDIDATE -> PRE_CANDIDATE;

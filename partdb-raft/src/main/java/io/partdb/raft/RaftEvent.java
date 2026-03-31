@@ -27,5 +27,10 @@ public sealed interface RaftEvent {
             return context.clone();
         }
     }
-    record ChangeConfig(ConfigChange change) implements RaftEvent {}
+
+    record ChangeMembership(MembershipChange change) implements RaftEvent {
+        public ChangeMembership {
+            Objects.requireNonNull(change, "change must not be null");
+        }
+    }
 }

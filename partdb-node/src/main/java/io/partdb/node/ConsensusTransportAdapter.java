@@ -3,9 +3,9 @@ package io.partdb.node;
 import io.partdb.node.transport.ConsensusLogEntry;
 import io.partdb.node.transport.ConsensusMessage;
 import io.partdb.node.transport.ConsensusTransport;
+import io.partdb.node.raft.RaftTransport;
 import io.partdb.raft.LogEntry;
 import io.partdb.raft.RaftMessage;
-import io.partdb.raft.RaftTransport;
 
 import java.util.concurrent.CompletableFuture;
 

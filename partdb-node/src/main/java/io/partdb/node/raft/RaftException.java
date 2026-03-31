@@ -1,4 +1,4 @@
-package io.partdb.raft;
+package io.partdb.node.raft;
 
 import java.util.Optional;
 

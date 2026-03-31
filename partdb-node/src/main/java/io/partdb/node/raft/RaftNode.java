@@ -1,19 +1,14 @@
 package io.partdb.node.raft;
 
-import io.partdb.raft.HardState;
-import io.partdb.raft.Membership;
-import io.partdb.raft.ProposalResult;
+import io.partdb.raft.RaftPersistentState;
+import io.partdb.raft.RaftMembership;
 import io.partdb.raft.Raft;
 import io.partdb.raft.RaftConfig;
 import io.partdb.raft.RaftEvent;
-import io.partdb.raft.RaftException;
 import io.partdb.raft.RaftMessage;
-import io.partdb.raft.RaftStorage;
-import io.partdb.raft.RaftTransport;
-import io.partdb.raft.ReadResult;
-import io.partdb.raft.Ready;
-import io.partdb.raft.Role;
-import io.partdb.raft.Snapshot;
+import io.partdb.raft.RaftReady;
+import io.partdb.raft.RaftRole;
+import io.partdb.raft.RaftSnapshot;
 import io.partdb.storage.StorageException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,9 +48,9 @@ public final class RaftNode implements AutoCloseable {
     private final Raft raft;
     private final RaftConfig config;
     private final RaftTransport transport;
-    private final RaftStorage storage;
+    private final RaftStore store;
     private final StateMachine stateMachine;
-    private volatile Role lastKnownRole;
+    private volatile RaftRole lastKnownRole;
     private volatile String lastKnownLeaderId;
     private final AtomicLong lastLeaderChangeEpochMillis = new AtomicLong();
 
@@ -81,7 +76,7 @@ public final class RaftNode implements AutoCloseable {
         Raft raft,
         RaftConfig config,
         RaftTransport transport,
-        RaftStorage storage,
+        RaftStore store,
         StateMachine stateMachine,
         Duration tickInterval
     ) {
@@ -89,7 +84,7 @@ public final class RaftNode implements AutoCloseable {
         this.raft = raft;
         this.config = config;
         this.transport = transport;
-        this.storage = storage;
+        this.store = store;
         this.stateMachine = stateMachine;
         this.lastKnownRole = raft.role();
         this.lastKnownLeaderId = raft.leaderId().orElse(null);
@@ -183,7 +178,7 @@ public final class RaftNode implements AutoCloseable {
         return applyTracker.lastApplied();
     }
 
-    public Role role() {
+    public RaftRole role() {
         return lastKnownRole;
     }
 
@@ -191,7 +186,7 @@ public final class RaftNode implements AutoCloseable {
         return lastLeaderChangeEpochMillis.get();
     }
 
-    public Membership membership() {
+    public RaftMembership membership() {
         return raft.membership();
     }
 
@@ -203,7 +198,7 @@ public final class RaftNode implements AutoCloseable {
         tickScheduler.shutdown();
         ioExecutor.shutdown();
         transport.close();
-        storage.close();
+        store.close();
 
         try {
             tickScheduler.awaitTermination(5, TimeUnit.SECONDS);
@@ -303,8 +298,8 @@ public final class RaftNode implements AutoCloseable {
 
         var ready = raft.step(new RaftEvent.Propose(data));
 
-        if (!ready.persist().entries().isEmpty()) {
-            long index = ready.persist().entries().getLast().index();
+        if (!ready.persistence().entries().isEmpty()) {
+            long index = ready.persistence().entries().getLast().index();
             pendingCommits.put(index, future);
         } else {
             future.completeExceptionally(new RaftException.NotLeader(raft.leaderId().orElse(null)));
@@ -326,12 +321,12 @@ public final class RaftNode implements AutoCloseable {
         return responseFuture;
     }
 
-    private void processReady(Ready ready) {
+    private void processReady(RaftReady ready) {
         if (!ready.hasWork()) {
             return;
         }
 
-        Role currentRole = raft.role();
+        RaftRole currentRole = raft.role();
         String currentLeaderId = raft.leaderId().orElse(null);
         if (currentRole != lastKnownRole || !Objects.equals(currentLeaderId, lastKnownLeaderId)) {
             log.atInfo()
@@ -355,19 +350,25 @@ public final class RaftNode implements AutoCloseable {
             lastLeaderChangeEpochMillis.set(System.currentTimeMillis());
         }
 
-        var persist = ready.persist();
-        if (persist.hasWork()) {
-            storage.append(persist.hardState(), persist.entries());
+        var persistence = ready.persistence();
+        if (persistence.hasWork()) {
+            store.append(persistence.persistentState().orElse(null), persistence.entries());
 
-            if (persist.incomingSnapshot() != null) {
-                var snapshot = persist.incomingSnapshot();
-                storage.saveSnapshot(snapshot);
+            persistence.incomingSnapshot().ifPresent(snapshot -> {
+                store.saveSnapshot(snapshot);
                 stateMachine.restore(snapshot.index(), snapshot.data());
+                applyTracker.advance(snapshot.index());
+            });
+
+            if (persistence.requiresSync()) {
+                store.sync();
             }
 
-            if (persist.mustSync()) {
-                storage.sync();
+            if (!persistence.entries().isEmpty()) {
+                var lastPersisted = persistence.entries().getLast();
+                raft.acknowledgeEntryPersistence(lastPersisted.index(), lastPersisted.term());
             }
+            persistence.incomingSnapshot().ifPresent(_ -> raft.acknowledgeSnapshotPersistence());
         }
 
         for (var outbound : ready.messages()) {
@@ -383,7 +384,7 @@ public final class RaftNode implements AutoCloseable {
 
         long lastAppliedIndex = 0;
         long lastAppliedTerm = 0;
-        for (var entry : ready.apply().entries()) {
+        for (var entry : ready.application().entries()) {
             var commitFuture = pendingCommits.remove(entry.index());
             if (commitFuture != null) {
                 commitFuture.complete(new ProposalResult(entry.index(), entry.term()));
@@ -393,11 +394,11 @@ public final class RaftNode implements AutoCloseable {
             lastAppliedTerm = entry.term();
         }
         if (lastAppliedIndex > 0) {
-            raft.advance(lastAppliedIndex, lastAppliedTerm);
+            raft.acknowledgeApplication(lastAppliedIndex);
             applyTracker.advance(lastAppliedIndex);
         }
 
-        for (var readState : ready.apply().readStates()) {
+        for (var readState : ready.application().readStates()) {
             long id = bytesToLong(readState.context());
             var future = pendingReads.remove(id);
             if (future != null) {
@@ -409,17 +410,15 @@ public final class RaftNode implements AutoCloseable {
             }
         }
 
-        if (ready.snapshotToSend() != null) {
-            ioExecutor.execute(() -> sendSnapshot(ready.snapshotToSend()));
-        }
+        ready.snapshotTransfer().ifPresent(transfer -> ioExecutor.execute(() -> sendSnapshot(transfer)));
     }
 
-    private void sendSnapshot(Ready.SnapshotToSend request) {
-        var snapshot = storage.snapshot();
+    private void sendSnapshot(RaftReady.SnapshotTransfer request) {
+        var snapshot = store.snapshot();
         if (snapshot.isEmpty()) {
             byte[] data = stateMachine.snapshot();
-            var newSnapshot = new Snapshot(request.index(), request.term(), raft.membership(), data);
-            storage.saveSnapshot(newSnapshot);
+            var newSnapshot = new RaftSnapshot(request.index(), request.term(), raft.membership(), data);
+            store.saveSnapshot(newSnapshot);
             snapshot = Optional.of(newSnapshot);
         }
 
@@ -490,10 +489,10 @@ public final class RaftNode implements AutoCloseable {
 
     public static final class Builder {
         private String nodeId;
-        private Membership membership;
+        private RaftMembership membership;
         private RaftConfig config;
         private RaftTransport transport;
-        private RaftStorage storage;
+        private RaftStore store;
         private StateMachine stateMachine;
         private Duration tickInterval = Duration.ofMillis(10);
 
@@ -504,7 +503,7 @@ public final class RaftNode implements AutoCloseable {
             return this;
         }
 
-        public Builder membership(Membership membership) {
+        public Builder membership(RaftMembership membership) {
             this.membership = membership;
             return this;
         }
@@ -519,8 +518,8 @@ public final class RaftNode implements AutoCloseable {
             return this;
         }
 
-        public Builder storage(RaftStorage storage) {
-            this.storage = storage;
+        public Builder store(RaftStore store) {
+            this.store = store;
             return this;
         }
 
@@ -537,29 +536,29 @@ public final class RaftNode implements AutoCloseable {
         public RaftNode build() {
             if (nodeId == null) throw new IllegalStateException("nodeId is required");
             if (transport == null) throw new IllegalStateException("transport is required");
-            if (storage == null) throw new IllegalStateException("storage is required");
+            if (store == null) throw new IllegalStateException("store is required");
             if (stateMachine == null) throw new IllegalStateException("stateMachine is required");
             if (config == null) config = RaftConfig.defaults();
 
-            var initialState = storage.initialState();
-            var effectiveMembership = initialState.membership() != null
-                ? initialState.membership()
-                : membership;
+            var bootstrap = store.bootstrap();
+            var effectiveMembership = bootstrap.membership().orElse(membership);
 
             if (effectiveMembership == null) {
-                throw new IllegalStateException("membership is required (either from storage or builder)");
+                throw new IllegalStateException("membership is required (either from store or builder)");
             }
 
-            var raft = Raft.builder(nodeId, effectiveMembership, config, storage).build();
+            var raft = Raft.builder(nodeId, effectiveMembership, config, store).build();
 
-            var hardState = initialState.hardState() != null ? initialState.hardState() : HardState.INITIAL;
-            long snapIndex = storage.firstIndex() > 1 ? storage.firstIndex() - 1 : 0;
-            raft.restore(hardState, snapIndex);
+            var persistentState = bootstrap.persistentState().orElse(RaftPersistentState.INITIAL);
+            long snapshotIndex = store.firstIndex() > 1 ? store.firstIndex() - 1 : 0;
+            raft.restore(persistentState, snapshotIndex);
 
-            var snapshot = storage.snapshot();
+            var snapshot = store.snapshot();
             snapshot.ifPresent(s -> stateMachine.restore(s.index(), s.data()));
 
-            return new RaftNode(nodeId, raft, config, transport, storage, stateMachine, tickInterval);
+            var node = new RaftNode(nodeId, raft, config, transport, store, stateMachine, tickInterval);
+            snapshot.ifPresent(s -> node.applyTracker.advance(s.index()));
+            return node;
         }
     }
 }

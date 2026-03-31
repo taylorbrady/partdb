@@ -1,27 +1,26 @@
 package io.partdb.node.raft;
 
-import io.partdb.raft.HardState;
+import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.LogEntry;
-import io.partdb.raft.Membership;
-import io.partdb.raft.RaftStorage;
-import io.partdb.raft.Snapshot;
+import io.partdb.raft.RaftMembership;
+import io.partdb.raft.RaftSnapshot;
 
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-public final class DurableRaftStorage implements RaftStorage {
+public final class DurableRaftStore implements RaftStore {
 
     private final WriteAheadLog wal;
     private final SnapshotStore snapshots;
     private final ReentrantReadWriteLock lock;
 
-    private Snapshot currentSnapshot;
-    private Membership membership;
+    private RaftSnapshot currentSnapshot;
+    private RaftMembership membership;
 
-    private DurableRaftStorage(WriteAheadLog wal, SnapshotStore snapshots,
-                                Snapshot currentSnapshot, Membership membership) {
+    private DurableRaftStore(WriteAheadLog wal, SnapshotStore snapshots,
+                             RaftSnapshot currentSnapshot, RaftMembership membership) {
         this.wal = wal;
         this.snapshots = snapshots;
         this.lock = new ReentrantReadWriteLock();
@@ -29,44 +28,44 @@ public final class DurableRaftStorage implements RaftStorage {
         this.membership = membership;
     }
 
-    public static DurableRaftStorage create(Path directory, Membership initialMembership) {
+    public static DurableRaftStore create(Path directory, RaftMembership initialMembership) {
         Path walDir = directory.resolve("wal");
         Path snapDir = directory.resolve("snap");
 
         WriteAheadLog wal = WriteAheadLog.create(walDir);
         SnapshotStore snapshots = SnapshotStore.open(snapDir);
 
-        return new DurableRaftStorage(wal, snapshots, null, initialMembership);
+        return new DurableRaftStore(wal, snapshots, null, initialMembership);
     }
 
-    public static DurableRaftStorage open(Path directory) {
+    public static DurableRaftStore open(Path directory) {
         Path walDir = directory.resolve("wal");
         Path snapDir = directory.resolve("snap");
 
         SnapshotStore snapshots = SnapshotStore.open(snapDir);
-        Snapshot snapshot = snapshots.latest().orElse(null);
+        RaftSnapshot snapshot = snapshots.latest().orElse(null);
 
         WriteAheadLog wal = WriteAheadLog.open(walDir);
 
-        Membership membership = null;
+        RaftMembership membership = null;
         if (snapshot != null) {
             membership = snapshot.membership();
         }
 
         membership = recoverMembershipFromLog(wal, membership);
 
-        return new DurableRaftStorage(wal, snapshots, snapshot, membership);
+        return new DurableRaftStore(wal, snapshots, snapshot, membership);
     }
 
-    private static Membership recoverMembershipFromLog(WriteAheadLog wal, Membership initial) {
-        Membership membership = initial;
+    private static RaftMembership recoverMembershipFromLog(WriteAheadLog wal, RaftMembership initial) {
+        RaftMembership membership = initial;
         long from = wal.firstIndex();
         long to = wal.lastIndex() + 1;
 
         List<LogEntry> entries = wal.entries(from, to, Long.MAX_VALUE);
         for (LogEntry entry : entries) {
             switch (entry) {
-                case LogEntry.Config(long idx, long term, Membership m) -> membership = m;
+                case LogEntry.Config(long idx, long term, RaftMembership m) -> membership = m;
                 case LogEntry.Data _, LogEntry.NoOp _ -> {}
             }
         }
@@ -75,10 +74,10 @@ public final class DurableRaftStorage implements RaftStorage {
     }
 
     @Override
-    public InitialState initialState() {
+    public RaftStore.Bootstrap bootstrap() {
         lock.readLock().lock();
         try {
-            return new InitialState(wal.hardState(), membership);
+            return new RaftStore.Bootstrap(Optional.of(wal.hardState()), Optional.ofNullable(membership));
         } finally {
             lock.readLock().unlock();
         }
@@ -138,14 +137,14 @@ public final class DurableRaftStorage implements RaftStorage {
     }
 
     @Override
-    public void append(HardState hardState, List<LogEntry> entries) {
+    public void append(RaftPersistentState hardState, List<LogEntry> entries) {
         lock.writeLock().lock();
         try {
             wal.append(hardState, entries);
 
             for (LogEntry entry : entries) {
                 switch (entry) {
-                    case LogEntry.Config(long idx, long term, Membership m) -> membership = m;
+                    case LogEntry.Config(long idx, long term, RaftMembership m) -> membership = m;
                     case LogEntry.Data _, LogEntry.NoOp _ -> {}
                 }
             }
@@ -165,7 +164,7 @@ public final class DurableRaftStorage implements RaftStorage {
     }
 
     @Override
-    public Optional<Snapshot> snapshot() {
+    public Optional<RaftSnapshot> snapshot() {
         lock.readLock().lock();
         try {
             return Optional.ofNullable(currentSnapshot);
@@ -175,7 +174,7 @@ public final class DurableRaftStorage implements RaftStorage {
     }
 
     @Override
-    public void saveSnapshot(Snapshot snapshot) {
+    public void saveSnapshot(RaftSnapshot snapshot) {
         lock.writeLock().lock();
         try {
             snapshots.save(snapshot);

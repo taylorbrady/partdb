@@ -2,9 +2,9 @@ package io.partdb.raft;
 
 import java.util.Objects;
 
-public record Snapshot(long index, long term, Membership membership, byte[] data) {
+public record RaftSnapshot(long index, long term, RaftMembership membership, byte[] data) {
 
-    public Snapshot {
+    public RaftSnapshot {
         if (index < 0) {
             throw new IllegalArgumentException("index must be non-negative");
         }

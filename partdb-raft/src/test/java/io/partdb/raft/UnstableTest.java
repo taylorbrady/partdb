@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class UnstableTest {
 
-    private static final Membership MEMBERSHIP = Membership.ofVoters("n1", "n2", "n3");
+    private static final RaftMembership MEMBERSHIP = RaftMembership.ofVoters("n1", "n2", "n3");
 
     private LogEntry entry(long index, long term) {
         return new LogEntry.Data(index, term, new byte[0]);
@@ -20,7 +20,7 @@ class UnstableTest {
     class Append {
         @Test
         void addsEntryToEmpty() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
 
             unstable.append(entry(1, 1));
 
@@ -31,7 +31,7 @@ class UnstableTest {
 
         @Test
         void addsEntriesSequentially() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
 
             unstable.append(entry(1, 1));
             unstable.append(entry(2, 1));
@@ -43,7 +43,7 @@ class UnstableTest {
 
         @Test
         void ignoresEntriesBelowOffset() {
-            var unstable = new Unstable(5);
+            var unstable = new UnstableLog(5);
 
             unstable.append(entry(3, 1));
             unstable.append(entry(4, 1));
@@ -53,7 +53,7 @@ class UnstableTest {
 
         @Test
         void truncatesConflictingEntries() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
             unstable.append(entry(2, 1));
             unstable.append(entry(3, 1));
@@ -67,7 +67,7 @@ class UnstableTest {
 
         @Test
         void doesNotTruncateMatchingEntries() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
             unstable.append(entry(2, 1));
 
@@ -81,8 +81,8 @@ class UnstableTest {
     class AcceptSnapshot {
         @Test
         void setsSnapshot() {
-            var unstable = new Unstable(1);
-            var snapshot = new Snapshot(10, 2, MEMBERSHIP, new byte[0]);
+            var unstable = new UnstableLog(1);
+            var snapshot = new RaftSnapshot(10, 2, MEMBERSHIP, new byte[0]);
 
             unstable.acceptSnapshot(snapshot);
 
@@ -92,20 +92,20 @@ class UnstableTest {
 
         @Test
         void clearsEntries() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
             unstable.append(entry(2, 1));
 
-            unstable.acceptSnapshot(new Snapshot(10, 2, MEMBERSHIP, new byte[0]));
+            unstable.acceptSnapshot(new RaftSnapshot(10, 2, MEMBERSHIP, new byte[0]));
 
             assertFalse(unstable.hasEntries());
         }
 
         @Test
         void updatesOffset() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
 
-            unstable.acceptSnapshot(new Snapshot(10, 2, MEMBERSHIP, new byte[0]));
+            unstable.acceptSnapshot(new RaftSnapshot(10, 2, MEMBERSHIP, new byte[0]));
 
             assertEquals(11, unstable.offset());
         }
@@ -115,7 +115,7 @@ class UnstableTest {
     class StableTo {
         @Test
         void removesEntriesUpToIndex() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
             unstable.append(entry(2, 1));
             unstable.append(entry(3, 1));
@@ -131,7 +131,7 @@ class UnstableTest {
 
         @Test
         void removesAllEntriesWhenStableToLast() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
             unstable.append(entry(2, 1));
 
@@ -143,7 +143,7 @@ class UnstableTest {
 
         @Test
         void doesNothingIfIndexBelowOffset() {
-            var unstable = new Unstable(5);
+            var unstable = new UnstableLog(5);
             unstable.append(entry(5, 1));
 
             unstable.stableTo(3, 1);
@@ -154,7 +154,7 @@ class UnstableTest {
 
         @Test
         void doesNothingIfTermMismatch() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
             unstable.append(entry(2, 1));
 
@@ -166,7 +166,7 @@ class UnstableTest {
 
         @Test
         void doesNothingIfEntriesEmpty() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
 
             unstable.stableTo(1, 1);
 
@@ -175,7 +175,7 @@ class UnstableTest {
 
         @Test
         void doesNothingIfIndexBeyondEntries() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
 
             unstable.stableTo(5, 1);
@@ -188,8 +188,8 @@ class UnstableTest {
     class SnapshotStabilized {
         @Test
         void clearsSnapshot() {
-            var unstable = new Unstable(1);
-            unstable.acceptSnapshot(new Snapshot(10, 2, MEMBERSHIP, new byte[0]));
+            var unstable = new UnstableLog(1);
+            unstable.acceptSnapshot(new RaftSnapshot(10, 2, MEMBERSHIP, new byte[0]));
             assertTrue(unstable.hasSnapshot());
 
             unstable.snapshotStabilized();
@@ -203,7 +203,7 @@ class UnstableTest {
     class Get {
         @Test
         void returnsEntryAtIndex() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
             unstable.append(entry(2, 2));
 
@@ -216,7 +216,7 @@ class UnstableTest {
 
         @Test
         void returnsNullIfBelowOffset() {
-            var unstable = new Unstable(5);
+            var unstable = new UnstableLog(5);
             unstable.append(entry(5, 1));
 
             assertNull(unstable.get(3));
@@ -224,7 +224,7 @@ class UnstableTest {
 
         @Test
         void returnsNullIfBeyondEntries() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
 
             assertNull(unstable.get(5));
@@ -235,7 +235,7 @@ class UnstableTest {
     class Term {
         @Test
         void returnsTermFromEntry() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 3));
 
             assertEquals(3L, unstable.term(1));
@@ -243,15 +243,15 @@ class UnstableTest {
 
         @Test
         void returnsTermFromSnapshot() {
-            var unstable = new Unstable(1);
-            unstable.acceptSnapshot(new Snapshot(10, 5, MEMBERSHIP, new byte[0]));
+            var unstable = new UnstableLog(1);
+            unstable.acceptSnapshot(new RaftSnapshot(10, 5, MEMBERSHIP, new byte[0]));
 
             assertEquals(5L, unstable.term(10));
         }
 
         @Test
         void returnsNullIfNotFound() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
 
             assertNull(unstable.term(1));
         }
@@ -261,7 +261,7 @@ class UnstableTest {
     class Slice {
         @Test
         void returnsEntriesInRange() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
             unstable.append(entry(2, 1));
             unstable.append(entry(3, 1));
@@ -275,7 +275,7 @@ class UnstableTest {
 
         @Test
         void returnsEmptyIfFromAfterEntries() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
 
             var slice = unstable.slice(5, 10);
@@ -285,7 +285,7 @@ class UnstableTest {
 
         @Test
         void returnsEmptyIfToBeforeOffset() {
-            var unstable = new Unstable(5);
+            var unstable = new UnstableLog(5);
             unstable.append(entry(5, 1));
 
             var slice = unstable.slice(1, 3);
@@ -295,7 +295,7 @@ class UnstableTest {
 
         @Test
         void returnsEmptyIfFromEqualsTo() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 1));
 
             var slice = unstable.slice(1, 1);
@@ -305,7 +305,7 @@ class UnstableTest {
 
         @Test
         void clampsRangeToAvailableEntries() {
-            var unstable = new Unstable(3);
+            var unstable = new UnstableLog(3);
             unstable.append(entry(3, 1));
             unstable.append(entry(4, 1));
             unstable.append(entry(5, 1));
@@ -320,7 +320,7 @@ class UnstableTest {
     class LastIndexAndTerm {
         @Test
         void returnsFromEntriesWhenPresent() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             unstable.append(entry(1, 2));
             unstable.append(entry(2, 3));
 
@@ -330,8 +330,8 @@ class UnstableTest {
 
         @Test
         void returnsFromSnapshotWhenNoEntries() {
-            var unstable = new Unstable(1);
-            unstable.acceptSnapshot(new Snapshot(10, 5, MEMBERSHIP, new byte[0]));
+            var unstable = new UnstableLog(1);
+            unstable.acceptSnapshot(new RaftSnapshot(10, 5, MEMBERSHIP, new byte[0]));
 
             assertEquals(10, unstable.lastIndex());
             assertEquals(5, unstable.lastTerm());
@@ -339,7 +339,7 @@ class UnstableTest {
 
         @Test
         void returnsZeroWhenEmpty() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
 
             assertEquals(0, unstable.lastIndex());
             assertEquals(0, unstable.lastTerm());
@@ -347,8 +347,8 @@ class UnstableTest {
 
         @Test
         void prefersEntriesOverSnapshot() {
-            var unstable = new Unstable(1);
-            unstable.acceptSnapshot(new Snapshot(10, 5, MEMBERSHIP, new byte[0]));
+            var unstable = new UnstableLog(1);
+            unstable.acceptSnapshot(new RaftSnapshot(10, 5, MEMBERSHIP, new byte[0]));
             unstable.append(entry(11, 6));
 
             assertEquals(11, unstable.lastIndex());
@@ -360,7 +360,7 @@ class UnstableTest {
     class HasEntriesAndSnapshot {
         @Test
         void hasEntriesReturnsTrueWhenNotEmpty() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             assertFalse(unstable.hasEntries());
 
             unstable.append(entry(1, 1));
@@ -370,10 +370,10 @@ class UnstableTest {
 
         @Test
         void hasSnapshotReturnsTrueWhenSet() {
-            var unstable = new Unstable(1);
+            var unstable = new UnstableLog(1);
             assertFalse(unstable.hasSnapshot());
 
-            unstable.acceptSnapshot(new Snapshot(10, 2, MEMBERSHIP, new byte[0]));
+            unstable.acceptSnapshot(new RaftSnapshot(10, 2, MEMBERSHIP, new byte[0]));
 
             assertTrue(unstable.hasSnapshot());
         }

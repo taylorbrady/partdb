@@ -3,12 +3,12 @@ package io.partdb.raft;
 import java.util.ArrayList;
 import java.util.List;
 
-final class Unstable {
+final class UnstableLog {
     private final List<LogEntry> entries = new ArrayList<>();
     private long offset;
-    private Snapshot snapshot;
+    private RaftSnapshot snapshot;
 
-    Unstable(long offset) {
+    UnstableLog(long offset) {
         this.offset = offset;
     }
 
@@ -30,7 +30,7 @@ final class Unstable {
         }
     }
 
-    void acceptSnapshot(Snapshot snap) {
+    void acceptSnapshot(RaftSnapshot snap) {
         this.snapshot = snap;
         this.entries.clear();
         this.offset = snap.index() + 1;
@@ -89,7 +89,7 @@ final class Unstable {
         return List.copyOf(entries);
     }
 
-    Snapshot snapshot() {
+    RaftSnapshot snapshot() {
         return snapshot;
     }
 

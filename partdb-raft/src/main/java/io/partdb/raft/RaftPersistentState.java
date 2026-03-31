@@ -1,9 +1,9 @@
 package io.partdb.raft;
 
-public record HardState(long term, String votedFor, long commit) {
-    public static final HardState INITIAL = new HardState(0, null, 0);
+public record RaftPersistentState(long term, String votedFor, long commit) {
+    public static final RaftPersistentState INITIAL = new RaftPersistentState(0, null, 0);
 
-    public HardState {
+    public RaftPersistentState {
         if (term < 0) {
             throw new IllegalArgumentException("term must be non-negative: " + term);
         }

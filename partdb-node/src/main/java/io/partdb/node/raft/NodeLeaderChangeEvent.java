@@ -15,10 +15,10 @@ final class NodeLeaderChangeEvent extends Event {
     @Label("Term")
     long term;
 
-    @Label("Previous Role")
+    @Label("Previous RaftRole")
     String previousRole;
 
-    @Label("New Role")
+    @Label("New RaftRole")
     String newRole;
 
     @Label("Previous Leader ID")

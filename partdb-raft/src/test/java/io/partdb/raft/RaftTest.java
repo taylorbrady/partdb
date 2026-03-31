@@ -16,22 +16,22 @@ class RaftTest {
     private static final int DETERMINISTIC_JITTER = 0;
 
     private Raft createRaft(String id, String... allVoters) {
-        var membership = Membership.ofVoters(allVoters);
+        var membership = RaftMembership.ofVoters(allVoters);
         var storage = new InMemoryStorage(membership);
         return Raft.builder(id, membership, CONFIG, storage)
             .random(_ -> DETERMINISTIC_JITTER)
             .build();
     }
 
-    private Raft createRaft(String id, Membership membership, RaftConfig config) {
+    private Raft createRaft(String id, RaftMembership membership, RaftConfig config) {
         var storage = new InMemoryStorage(membership);
         return Raft.builder(id, membership, config, storage)
             .random(_ -> DETERMINISTIC_JITTER)
             .build();
     }
 
-    private Raft createRaftWithLog(String id, List<LogEntry> entries, HardState hardState, String... allVoters) {
-        var membership = Membership.ofVoters(allVoters);
+    private Raft createRaftWithLog(String id, List<LogEntry> entries, RaftPersistentState hardState, String... allVoters) {
+        var membership = RaftMembership.ofVoters(allVoters);
         var storage = new InMemoryStorage(membership);
         storage.append(null, entries);
         var raft = Raft.builder(id, membership, CONFIG, storage)
@@ -41,8 +41,8 @@ class RaftTest {
         return raft;
     }
 
-    private Raft createRaftWithSnapshot(String id, HardState hardState, long snapIndex, String... allVoters) {
-        var membership = Membership.ofVoters(allVoters);
+    private Raft createRaftWithSnapshot(String id, RaftPersistentState hardState, long snapIndex, String... allVoters) {
+        var membership = RaftMembership.ofVoters(allVoters);
         var storage = new InMemoryStorage(membership);
         var raft = Raft.builder(id, membership, CONFIG, storage)
             .random(_ -> DETERMINISTIC_JITTER)
@@ -52,40 +52,40 @@ class RaftTest {
     }
 
     private Raft createRaftWithCompactedSnapshot(String id, long snapIndex, long snapTerm, String... allVoters) {
-        var membership = Membership.ofVoters(allVoters);
+        var membership = RaftMembership.ofVoters(allVoters);
         var storage = new InMemoryStorage(membership);
         for (int i = 1; i <= snapIndex; i++) {
             storage.append(null, List.of(new LogEntry.Data(i, snapTerm, new byte[0])));
         }
-        storage.saveSnapshot(new Snapshot(snapIndex, snapTerm, membership, new byte[0]));
+        storage.saveSnapshot(new RaftSnapshot(snapIndex, snapTerm, membership, new byte[0]));
         var raft = Raft.builder(id, membership, CONFIG, storage)
             .random(_ -> DETERMINISTIC_JITTER)
             .build();
-        raft.restore(HardState.INITIAL, snapIndex);
+        raft.restore(RaftPersistentState.INITIAL, snapIndex);
         return raft;
     }
 
-    private Ready tickUntilTimeout(Raft raft) {
-        Ready ready = null;
+    private RaftReady tickUntilTimeout(Raft raft) {
+        RaftReady ready = null;
         for (int i = 0; i < CONFIG.electionTimeoutMin(); i++) {
             ready = raft.step(new RaftEvent.Tick());
         }
         return ready;
     }
 
-    private Ready grantPreVotes(Raft raft, List<String> peers) {
+    private RaftReady grantPreVotes(Raft raft, List<String> peers) {
         long term = raft.term();
-        Ready ready = null;
+        RaftReady ready = null;
         for (String peer : peers) {
             ready = raft.step(new RaftEvent.Receive(peer, new RaftMessage.PreVoteResponse(term, true)));
-            if (raft.role() == Role.CANDIDATE) break;
+            if (raft.role() == RaftRole.CANDIDATE) break;
         }
         return ready;
     }
 
-    private Ready grantVotes(Raft raft, List<String> peers) {
+    private RaftReady grantVotes(Raft raft, List<String> peers) {
         long term = raft.term();
-        Ready ready = null;
+        RaftReady ready = null;
         for (String peer : peers) {
             ready = raft.step(new RaftEvent.Receive(peer, new RaftMessage.RequestVoteResponse(term, true)));
             if (raft.isLeader()) break;
@@ -93,65 +93,65 @@ class RaftTest {
         return ready;
     }
 
-    private Ready tickUntilCandidate(Raft raft, List<String> peers) {
+    private RaftReady tickUntilCandidate(Raft raft, List<String> peers) {
         tickUntilTimeout(raft);
         return grantPreVotes(raft, peers);
     }
 
-    private Ready becomeLeader(Raft raft, List<String> peers) {
+    private RaftReady becomeLeader(Raft raft, List<String> peers) {
         tickUntilCandidate(raft, peers);
         return grantVotes(raft, peers);
     }
 
-    private <T extends RaftMessage.Response> Optional<T> findResponse(Ready ready, Class<T> type) {
+    private <T extends RaftMessage.Response> Optional<T> findResponse(RaftReady ready, Class<T> type) {
         return ready.messages().stream()
-            .map(Ready.Outbound::message)
+            .map(RaftReady.Outbound::message)
             .filter(type::isInstance)
             .map(type::cast)
             .findFirst();
     }
 
-    private <T extends RaftMessage.Request> Optional<T> findRequest(Ready ready, Class<T> type) {
+    private <T extends RaftMessage.Request> Optional<T> findRequest(RaftReady ready, Class<T> type) {
         return ready.messages().stream()
-            .map(Ready.Outbound::message)
+            .map(RaftReady.Outbound::message)
             .filter(type::isInstance)
             .map(type::cast)
             .findFirst();
     }
 
-    private <T extends LogEntry> Optional<T> findEntry(Ready ready, Class<T> type) {
-        return ready.persist().entries().stream()
+    private <T extends LogEntry> Optional<T> findEntry(RaftReady ready, Class<T> type) {
+        return ready.persistence().entries().stream()
             .filter(type::isInstance)
             .map(type::cast)
             .findFirst();
     }
 
-    private List<RaftMessage.AppendEntries> getAppendEntries(Ready ready) {
+    private List<RaftMessage.AppendEntries> getAppendEntries(RaftReady ready) {
         return ready.messages().stream()
-            .map(Ready.Outbound::message)
+            .map(RaftReady.Outbound::message)
             .filter(RaftMessage.AppendEntries.class::isInstance)
             .map(RaftMessage.AppendEntries.class::cast)
             .toList();
     }
 
-    private List<RaftMessage.PreVote> getPreVotes(Ready ready) {
+    private List<RaftMessage.PreVote> getPreVotes(RaftReady ready) {
         return ready.messages().stream()
-            .map(Ready.Outbound::message)
+            .map(RaftReady.Outbound::message)
             .filter(RaftMessage.PreVote.class::isInstance)
             .map(RaftMessage.PreVote.class::cast)
             .toList();
     }
 
-    private List<RaftMessage.RequestVote> getRequestVotes(Ready ready) {
+    private List<RaftMessage.RequestVote> getRequestVotes(RaftReady ready) {
         return ready.messages().stream()
-            .map(Ready.Outbound::message)
+            .map(RaftReady.Outbound::message)
             .filter(RaftMessage.RequestVote.class::isInstance)
             .map(RaftMessage.RequestVote.class::cast)
             .toList();
     }
 
-    private Ready tickHeartbeat(Raft raft) {
-        Ready ready = null;
+    private RaftReady tickHeartbeat(Raft raft) {
+        RaftReady ready = null;
         for (int i = 0; i < CONFIG.heartbeatInterval(); i++) {
             ready = raft.step(new RaftEvent.Tick());
         }
@@ -163,7 +163,7 @@ class RaftTest {
         @Test
         void startsAsFollower() {
             var raft = createRaft("n1", "n1", "n2", "n3");
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
         }
 
         @Test
@@ -194,10 +194,10 @@ class RaftTest {
             for (int i = 0; i < 9; i++) {
                 raft.step(new RaftEvent.Tick());
             }
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
 
             raft.step(new RaftEvent.Tick());
-            assertEquals(Role.PRE_CANDIDATE, raft.role());
+            assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
             assertEquals(0, raft.term());
         }
 
@@ -206,11 +206,11 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             tickUntilCandidate(raft, List.of("n2", "n3"));
-            assertEquals(Role.CANDIDATE, raft.role());
+            assertEquals(RaftRole.CANDIDATE, raft.role());
             assertEquals(1, raft.term());
 
             tickUntilTimeout(raft);
-            assertEquals(Role.CANDIDATE, raft.role());
+            assertEquals(RaftRole.CANDIDATE, raft.role());
             assertEquals(2, raft.term());
         }
 
@@ -233,7 +233,7 @@ class RaftTest {
         @Test
         void electionTimeoutIsRandomized() {
             var counter = new AtomicInteger(0);
-            var membership = Membership.ofVoters("n1", "n2");
+            var membership = RaftMembership.ofVoters("n1", "n2");
             var storage = new InMemoryStorage(membership);
             var raft = Raft.builder("n1", membership, RaftConfig.defaults(), storage)
                 .random(_ -> counter.incrementAndGet())
@@ -313,9 +313,9 @@ class RaftTest {
             var request = new RaftMessage.RequestVote(1, "n2", 0, 0);
             var ready = raft.step(new RaftEvent.Receive("n2", request));
 
-            assertNotNull(ready.persist().hardState());
-            assertEquals(1, ready.persist().hardState().term());
-            assertEquals("n2", ready.persist().hardState().votedFor());
+            assertNotNull(ready.persistence().persistentState().orElse(null));
+            assertEquals(1, ready.persistence().persistentState().orElseThrow().term());
+            assertEquals("n2", ready.persistence().persistentState().orElseThrow().votedFor());
         }
     }
 
@@ -326,11 +326,25 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             tickUntilCandidate(raft, List.of("n2", "n3"));
-            assertEquals(Role.CANDIDATE, raft.role());
+            assertEquals(RaftRole.CANDIDATE, raft.role());
 
             raft.step(new RaftEvent.Receive("n2",
                 new RaftMessage.RequestVoteResponse(1, true)));
 
+            assertTrue(raft.isLeader());
+        }
+
+        @Test
+        void candidateIgnoresPositiveVoteFromNonMember() {
+            var raft = createRaft("n1", "n1", "n2", "n3");
+
+            tickUntilCandidate(raft, List.of("n2", "n3"));
+            assertEquals(RaftRole.CANDIDATE, raft.role());
+
+            raft.step(new RaftEvent.Receive("n4", new RaftMessage.RequestVoteResponse(1, true)));
+            assertEquals(RaftRole.CANDIDATE, raft.role());
+
+            raft.step(new RaftEvent.Receive("n2", new RaftMessage.RequestVoteResponse(1, true)));
             assertTrue(raft.isLeader());
         }
 
@@ -350,8 +364,8 @@ class RaftTest {
 
             var ready = becomeLeader(raft, List.of("n2", "n3"));
 
-            assertFalse(ready.persist().entries().isEmpty());
-            var noOp = ready.persist().entries().stream()
+            assertFalse(ready.persistence().entries().isEmpty());
+            var noOp = ready.persistence().entries().stream()
                 .filter(e -> e instanceof LogEntry.NoOp)
                 .findFirst();
             assertTrue(noOp.isPresent());
@@ -374,14 +388,14 @@ class RaftTest {
     class TermChanges {
         @Test
         void stepDownToFollowerOnHigherTermMessage() {
-            var raft = createRaft("n1", "n1");
-            tickUntilTimeout(raft);
+            var raft = createRaft("n1", "n1", "n2", "n3");
+            becomeLeader(raft, List.of("n2", "n3"));
             assertTrue(raft.isLeader());
 
             var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0);
             raft.step(new RaftEvent.Receive("n2", higherTermMsg));
 
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
             assertEquals(5, raft.term());
         }
 
@@ -402,15 +416,15 @@ class RaftTest {
 
         @Test
         void updateTermOnHigherTermResponse() {
-            var raft = createRaft("n1", "n1");
-            tickUntilTimeout(raft);
+            var raft = createRaft("n1", "n1", "n2", "n3");
+            becomeLeader(raft, List.of("n2", "n3"));
             assertEquals(1, raft.term());
 
             var higherTermResponse = new RaftMessage.AppendEntriesResponse(5, false, 0);
             raft.step(new RaftEvent.Receive("n2", higherTermResponse));
 
             assertEquals(5, raft.term());
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
         }
     }
 
@@ -474,7 +488,7 @@ class RaftTest {
                 raft.step(new RaftEvent.Tick());
             }
 
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
         }
 
         @Test
@@ -488,7 +502,7 @@ class RaftTest {
             );
             var ready = raft.step(new RaftEvent.Receive("n2", request));
 
-            assertEquals(1, ready.persist().entries().size());
+            assertEquals(1, ready.persistence().entries().size());
         }
     }
 
@@ -553,7 +567,7 @@ class RaftTest {
 
             var ready = raft.step(new RaftEvent.Propose("hello".getBytes()));
 
-            assertTrue(ready.persist().entries().isEmpty());
+            assertTrue(ready.persistence().entries().isEmpty());
             assertTrue(ready.messages().isEmpty());
         }
     }
@@ -563,7 +577,7 @@ class RaftTest {
         @Test
         void leaderSendsHeartbeatsAtInterval() {
             var config = new RaftConfig(10, 20, 3, 100);
-            var raft = createRaft("n1", Membership.ofVoters("n1", "n2", "n3"), config);
+            var raft = createRaft("n1", RaftMembership.ofVoters("n1", "n2", "n3"), config);
             becomeLeader(raft, List.of("n2"));
 
             for (int i = 0; i < 2; i++) {
@@ -597,12 +611,12 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 10, 1, Membership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
+                1, "n2", 10, 1, RaftMembership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
             );
             var ready = raft.step(new RaftEvent.Receive("n2", snapshot));
 
-            assertNotNull(ready.persist().incomingSnapshot());
-            assertEquals(10, ready.persist().incomingSnapshot().index());
+            assertNotNull(ready.persistence().incomingSnapshot().orElse(null));
+            assertEquals(10, ready.persistence().incomingSnapshot().orElseThrow().index());
         }
 
         @Test
@@ -618,11 +632,11 @@ class RaftTest {
             assertEquals(1, raft.commitIndex());
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 1, 1, Membership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
+                1, "n2", 1, 1, RaftMembership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
             );
             var ready = raft.step(new RaftEvent.Receive("n2", snapshot));
 
-            assertNull(ready.persist().incomingSnapshot());
+            assertNull(ready.persistence().incomingSnapshot().orElse(null));
         }
 
         @Test
@@ -633,8 +647,8 @@ class RaftTest {
             var reject = new RaftMessage.AppendEntriesResponse(1, false, 0);
             var ready = raft.step(new RaftEvent.Receive("n2", reject));
 
-            assertNotNull(ready.snapshotToSend());
-            assertEquals("n2", ready.snapshotToSend().peer());
+            assertNotNull(ready.snapshotTransfer().orElse(null));
+            assertEquals("n2", ready.snapshotTransfer().orElse(null).peer());
         }
 
         @Test
@@ -664,15 +678,15 @@ class RaftTest {
 
             var reject = new RaftMessage.AppendEntriesResponse(1, false, 0);
             var snapshotReady = raft.step(new RaftEvent.Receive("n2", reject));
-            assertNotNull(snapshotReady.snapshotToSend());
-            assertEquals("n2", snapshotReady.snapshotToSend().peer());
+            assertNotNull(snapshotReady.snapshotTransfer().orElse(null));
+            assertEquals("n2", snapshotReady.snapshotTransfer().orElse(null).peer());
 
             var oldTermResponse = new RaftMessage.InstallSnapshotResponse(0);
             raft.step(new RaftEvent.Receive("n2", oldTermResponse));
 
             var ready = tickHeartbeat(raft);
 
-            var snapshotToN2 = ready.snapshotToSend();
+            var snapshotToN2 = ready.snapshotTransfer().orElse(null);
             assertNotNull(snapshotToN2);
             assertEquals("n2", snapshotToN2.peer());
         }
@@ -684,7 +698,7 @@ class RaftTest {
 
             var higherTermMsg = new RaftMessage.AppendEntries(10, "n3", 0, 0, List.of(), 0);
             raft.step(new RaftEvent.Receive("n3", higherTermMsg));
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
 
             var response = new RaftMessage.InstallSnapshotResponse(1);
             var ready = raft.step(new RaftEvent.Receive("n2", response));
@@ -701,11 +715,11 @@ class RaftTest {
             assertEquals(5, raft.term());
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                3, "n3", 10, 3, Membership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
+                3, "n3", 10, 3, RaftMembership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
             );
             var ready = raft.step(new RaftEvent.Receive("n3", snapshot));
 
-            assertNull(ready.persist().incomingSnapshot());
+            assertNull(ready.persistence().incomingSnapshot().orElse(null));
 
             var response = findResponse(ready, RaftMessage.InstallSnapshotResponse.class).orElseThrow();
             assertEquals(5, response.term());
@@ -720,7 +734,7 @@ class RaftTest {
             }
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 10, 1, Membership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
+                1, "n2", 10, 1, RaftMembership.ofVoters("n1", "n2", "n3"), "snapshot-data".getBytes()
             );
             raft.step(new RaftEvent.Receive("n2", snapshot));
 
@@ -737,10 +751,10 @@ class RaftTest {
         @Test
         void leaderDoesNotCommitEntriesFromPreviousTerm() {
             var oldEntry = new LogEntry.Data(1, 1, "old".getBytes());
-            var raft = createRaftWithLog("n1", List.of(oldEntry), new HardState(1, null, 0), "n1", "n2", "n3");
+            var raft = createRaftWithLog("n1", List.of(oldEntry), new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
             tickUntilCandidate(raft, List.of("n2", "n3"));
-            assertEquals(Role.CANDIDATE, raft.role());
+            assertEquals(RaftRole.CANDIDATE, raft.role());
             assertEquals(2, raft.term());
 
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.RequestVoteResponse(2, true)));
@@ -755,7 +769,7 @@ class RaftTest {
         @Test
         void leaderCommitsCurrentTermEntryImplicitlyCommittingPrevious() {
             var oldEntry = new LogEntry.Data(1, 1, "old".getBytes());
-            var raft = createRaftWithLog("n1", List.of(oldEntry), new HardState(1, null, 0), "n1", "n2", "n3");
+            var raft = createRaftWithLog("n1", List.of(oldEntry), new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
             tickUntilCandidate(raft, List.of("n2", "n3"));
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.RequestVoteResponse(2, true)));
@@ -770,7 +784,7 @@ class RaftTest {
         @Test
         void leaderRequiresMajorityForCurrentTermEntry() {
             var oldEntry = new LogEntry.Data(1, 1, "old".getBytes());
-            var raft = createRaftWithLog("n1", List.of(oldEntry), new HardState(1, null, 0), "n1", "n2", "n3", "n4", "n5");
+            var raft = createRaftWithLog("n1", List.of(oldEntry), new RaftPersistentState(1, null, 0), "n1", "n2", "n3", "n4", "n5");
 
             tickUntilCandidate(raft, List.of("n2", "n3", "n4", "n5"));
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.RequestVoteResponse(2, true)));
@@ -789,14 +803,14 @@ class RaftTest {
     class PersistenceRecovery {
         @Test
         void restoresTermFromHardState() {
-            var raft = createRaftWithSnapshot("n1", new HardState(5, null, 0), 0, "n1", "n2", "n3");
+            var raft = createRaftWithSnapshot("n1", new RaftPersistentState(5, null, 0), 0, "n1", "n2", "n3");
 
             assertEquals(5, raft.term());
         }
 
         @Test
         void restoresVotedForFromHardState() {
-            var raft = createRaftWithSnapshot("n1", new HardState(3, "n2", 0), 0, "n1", "n2", "n3");
+            var raft = createRaftWithSnapshot("n1", new RaftPersistentState(3, "n2", 0), 0, "n1", "n2", "n3");
 
             var request = new RaftMessage.RequestVote(3, "n3", 0, 0);
             var ready = raft.step(new RaftEvent.Receive("n3", request));
@@ -811,14 +825,14 @@ class RaftTest {
                 new LogEntry.Data(1, 1, "first".getBytes()),
                 new LogEntry.Data(2, 1, "second".getBytes())
             );
-            var raft = createRaftWithLog("n1", entries, new HardState(1, null, 0), "n1", "n2", "n3");
+            var raft = createRaftWithLog("n1", entries, new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
             tickUntilCandidate(raft, List.of("n2", "n3"));
             var ready = raft.step(new RaftEvent.Receive("n2",
                 new RaftMessage.RequestVoteResponse(2, true)));
 
             var append = ready.messages().stream()
-                .map(Ready.Outbound::message)
+                .map(RaftReady.Outbound::message)
                 .filter(m -> m instanceof RaftMessage.AppendEntries)
                 .map(m -> (RaftMessage.AppendEntries) m)
                 .findFirst()
@@ -831,7 +845,7 @@ class RaftTest {
 
         @Test
         void restoresCommitIndexFromSnapshot() {
-            var raft = createRaftWithSnapshot("n1", new HardState(2, null, 0), 5, "n1", "n2", "n3");
+            var raft = createRaftWithSnapshot("n1", new RaftPersistentState(2, null, 0), 5, "n1", "n2", "n3");
 
             assertEquals(5, raft.commitIndex());
         }
@@ -839,7 +853,7 @@ class RaftTest {
         @Test
         void restoredNodeCanBecomeLeader() {
             List<LogEntry> entries = List.of(new LogEntry.Data(1, 1, "data".getBytes()));
-            var raft = createRaftWithLog("n1", entries, new HardState(1, null, 0), "n1");
+            var raft = createRaftWithLog("n1", entries, new RaftPersistentState(1, null, 0), "n1");
 
             tickUntilTimeout(raft);
 
@@ -852,7 +866,7 @@ class RaftTest {
 
         @Test
         void restoredNodeRejectsOldTermMessages() {
-            var raft = createRaftWithSnapshot("n1", new HardState(10, null, 0), 0, "n1", "n2", "n3");
+            var raft = createRaftWithSnapshot("n1", new RaftPersistentState(10, null, 0), 0, "n1", "n2", "n3");
 
             var oldAppend = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0);
             var ready = raft.step(new RaftEvent.Receive("n2", oldAppend));
@@ -872,7 +886,7 @@ class RaftTest {
                 new LogEntry.Data(2, 1, "b".getBytes()),
                 new LogEntry.Data(3, 1, "c".getBytes())
             );
-            var raft = createRaftWithLog("n1", entries, new HardState(1, null, 0), "n1", "n2", "n3");
+            var raft = createRaftWithLog("n1", entries, new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
             var appendEntries = new RaftMessage.AppendEntries(
                 2, "n2", 1, 1,
@@ -884,9 +898,9 @@ class RaftTest {
             );
             var ready = raft.step(new RaftEvent.Receive("n2", appendEntries));
 
-            assertEquals(2, ready.persist().entries().size());
-            assertEquals(2, ready.persist().entries().get(0).term());
-            assertEquals(2, ready.persist().entries().get(1).term());
+            assertEquals(2, ready.persistence().entries().size());
+            assertEquals(2, ready.persistence().entries().get(0).term());
+            assertEquals(2, ready.persistence().entries().get(1).term());
 
             var response = findResponse(ready, RaftMessage.AppendEntriesResponse.class).orElseThrow();
             assertTrue(response.success());
@@ -899,7 +913,7 @@ class RaftTest {
                 new LogEntry.Data(1, 1, "a".getBytes()),
                 new LogEntry.Data(2, 1, "b".getBytes())
             );
-            var raft = createRaftWithLog("n1", entries, new HardState(1, null, 0), "n1", "n2", "n3");
+            var raft = createRaftWithLog("n1", entries, new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
             var appendEntries = new RaftMessage.AppendEntries(
                 2, "n2", 1, 1,
@@ -912,7 +926,7 @@ class RaftTest {
             );
             var ready = raft.step(new RaftEvent.Receive("n2", appendEntries));
 
-            assertEquals(3, ready.persist().entries().size());
+            assertEquals(3, ready.persistence().entries().size());
 
             var response = findResponse(ready, RaftMessage.AppendEntriesResponse.class).orElseThrow();
             assertTrue(response.success());
@@ -925,7 +939,7 @@ class RaftTest {
                 new LogEntry.Data(1, 1, "a".getBytes()),
                 new LogEntry.Data(2, 1, "b".getBytes())
             );
-            var raft = createRaftWithLog("n1", entries, new HardState(1, null, 0), "n1", "n2", "n3");
+            var raft = createRaftWithLog("n1", entries, new RaftPersistentState(1, null, 0), "n1", "n2", "n3");
 
             var appendEntries = new RaftMessage.AppendEntries(
                 2, "n2", 2, 2,
@@ -934,7 +948,7 @@ class RaftTest {
             );
             var ready = raft.step(new RaftEvent.Receive("n2", appendEntries));
 
-            assertTrue(ready.persist().entries().isEmpty());
+            assertTrue(ready.persistence().entries().isEmpty());
 
             var response = findResponse(ready, RaftMessage.AppendEntriesResponse.class).orElseThrow();
             assertFalse(response.success());
@@ -977,13 +991,13 @@ class RaftTest {
             );
 
             var ready1 = raft.step(new RaftEvent.Receive("n2", appendEntries));
-            assertEquals(1, ready1.persist().entries().size());
+            assertEquals(1, ready1.persistence().entries().size());
             var response1 = findResponse(ready1, RaftMessage.AppendEntriesResponse.class).orElseThrow();
             assertTrue(response1.success());
             assertEquals(1, response1.matchIndex());
 
             var ready2 = raft.step(new RaftEvent.Receive("n2", appendEntries));
-            assertTrue(ready2.persist().entries().isEmpty());
+            assertTrue(ready2.persistence().entries().isEmpty());
             var response2 = findResponse(ready2, RaftMessage.AppendEntriesResponse.class).orElseThrow();
             assertTrue(response2.success());
             assertEquals(1, response2.matchIndex());
@@ -1029,14 +1043,14 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3", "n4", "n5");
 
             tickUntilCandidate(raft, List.of("n2", "n3", "n4", "n5"));
-            assertEquals(Role.CANDIDATE, raft.role());
+            assertEquals(RaftRole.CANDIDATE, raft.role());
             assertEquals(1, raft.term());
 
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.RequestVoteResponse(1, true)));
-            assertEquals(Role.CANDIDATE, raft.role());
+            assertEquals(RaftRole.CANDIDATE, raft.role());
 
             tickUntilTimeout(raft);
-            assertEquals(Role.CANDIDATE, raft.role());
+            assertEquals(RaftRole.CANDIDATE, raft.role());
             assertEquals(2, raft.term());
         }
 
@@ -1045,7 +1059,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             tickUntilCandidate(raft, List.of("n2", "n3"));
-            assertEquals(Role.CANDIDATE, raft.role());
+            assertEquals(RaftRole.CANDIDATE, raft.role());
 
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.RequestVoteResponse(1, true)));
             assertTrue(raft.isLeader());
@@ -1060,11 +1074,11 @@ class RaftTest {
 
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.RequestVoteResponse(1, false)));
             raft.step(new RaftEvent.Receive("n3", new RaftMessage.RequestVoteResponse(1, false)));
-            assertEquals(Role.CANDIDATE, raft.role());
+            assertEquals(RaftRole.CANDIDATE, raft.role());
 
             tickUntilTimeout(raft);
             assertEquals(2, raft.term());
-            assertEquals(Role.CANDIDATE, raft.role());
+            assertEquals(RaftRole.CANDIDATE, raft.role());
         }
     }
 
@@ -1077,10 +1091,10 @@ class RaftTest {
             for (int i = 0; i < 9; i++) {
                 raft.step(new RaftEvent.Tick());
             }
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
 
             raft.step(new RaftEvent.Tick());
-            assertEquals(Role.PRE_CANDIDATE, raft.role());
+            assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
         }
 
         @Test
@@ -1089,7 +1103,7 @@ class RaftTest {
 
             tickUntilTimeout(raft);
 
-            assertEquals(Role.PRE_CANDIDATE, raft.role());
+            assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
             assertEquals(0, raft.term());
         }
 
@@ -1102,8 +1116,8 @@ class RaftTest {
                 ready = raft.step(new RaftEvent.Tick());
             }
 
-            assertEquals(Role.PRE_CANDIDATE, raft.role());
-            assertNull(ready.persist().hardState());
+            assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
+            assertNull(ready.persistence().persistentState().orElse(null));
         }
 
         @Test
@@ -1127,12 +1141,12 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             tickUntilTimeout(raft);
-            assertEquals(Role.PRE_CANDIDATE, raft.role());
+            assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
 
             var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0);
             raft.step(new RaftEvent.Receive("n2", heartbeat));
 
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
             assertEquals("n2", raft.leaderId().orElseThrow());
         }
 
@@ -1141,13 +1155,13 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             tickUntilTimeout(raft);
-            assertEquals(Role.PRE_CANDIDATE, raft.role());
+            assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
             assertEquals(0, raft.term());
 
             var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0);
             raft.step(new RaftEvent.Receive("n2", higherTermMsg));
 
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
             assertEquals(5, raft.term());
         }
 
@@ -1156,12 +1170,12 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             tickUntilTimeout(raft);
-            assertEquals(Role.PRE_CANDIDATE, raft.role());
+            assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
             assertEquals(0, raft.term());
 
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.PreVoteResponse(0, true)));
 
-            assertEquals(Role.CANDIDATE, raft.role());
+            assertEquals(RaftRole.CANDIDATE, raft.role());
             assertEquals(1, raft.term());
         }
 
@@ -1227,11 +1241,11 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             tickUntilTimeout(raft);
-            assertEquals(Role.PRE_CANDIDATE, raft.role());
+            assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
             assertEquals(0, raft.term());
 
             tickUntilTimeout(raft);
-            assertEquals(Role.PRE_CANDIDATE, raft.role());
+            assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
             assertEquals(0, raft.term());
         }
 
@@ -1245,7 +1259,7 @@ class RaftTest {
             raft.step(new RaftEvent.Receive("n2", preVote));
 
             assertEquals(0, raft.term());
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
         }
 
         @Test
@@ -1253,7 +1267,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             tickUntilTimeout(raft);
-            assertEquals(Role.PRE_CANDIDATE, raft.role());
+            assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
             assertEquals(0, raft.term());
 
             var response = new RaftMessage.PreVoteResponse(10, false);
@@ -1273,8 +1287,8 @@ class RaftTest {
 
             var ready = raft.step(new RaftEvent.ReadIndex("req-1".getBytes()));
 
-            assertEquals(1, ready.apply().readStates().size());
-            var readState = ready.apply().readStates().get(0);
+            assertEquals(1, ready.application().readStates().size());
+            var readState = ready.application().readStates().get(0);
             assertEquals(raft.commitIndex(), readState.index());
             assertArrayEquals("req-1".getBytes(), readState.context());
         }
@@ -1286,7 +1300,7 @@ class RaftTest {
 
             var ready = raft.step(new RaftEvent.ReadIndex("req-1".getBytes()));
 
-            assertTrue(ready.apply().readStates().isEmpty());
+            assertTrue(ready.application().readStates().isEmpty());
             var appendEntries = getAppendEntries(ready);
             assertEquals(2, appendEntries.size());
         }
@@ -1301,8 +1315,8 @@ class RaftTest {
             var ackReady = raft.step(new RaftEvent.Receive("n2",
                 new RaftMessage.AppendEntriesResponse(raft.term(), true, 1)));
 
-            assertEquals(1, ackReady.apply().readStates().size());
-            assertArrayEquals("req-1".getBytes(), ackReady.apply().readStates().get(0).context());
+            assertEquals(1, ackReady.application().readStates().size());
+            assertArrayEquals("req-1".getBytes(), ackReady.application().readStates().get(0).context());
         }
 
         @Test
@@ -1332,12 +1346,12 @@ class RaftTest {
 
             var higherTermMsg = new RaftMessage.AppendEntries(10, "n2", 0, 0, List.of(), 0);
             raft.step(new RaftEvent.Receive("n2", higherTermMsg));
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
 
             var ackReady = raft.step(new RaftEvent.Receive("n3",
                 new RaftMessage.AppendEntriesResponse(1, true, 1)));
 
-            assertTrue(ackReady.apply().readStates().isEmpty());
+            assertTrue(ackReady.application().readStates().isEmpty());
         }
 
         @Test
@@ -1370,9 +1384,9 @@ class RaftTest {
             var response = new RaftMessage.ReadIndexResponse(1, 5, "req-1".getBytes());
             var ready = raft.step(new RaftEvent.Receive("n2", response));
 
-            assertEquals(1, ready.apply().readStates().size());
-            assertEquals(5, ready.apply().readStates().get(0).index());
-            assertArrayEquals("req-1".getBytes(), ready.apply().readStates().get(0).context());
+            assertEquals(1, ready.application().readStates().size());
+            assertEquals(5, ready.application().readStates().get(0).index());
+            assertArrayEquals("req-1".getBytes(), ready.application().readStates().get(0).context());
         }
 
         @Test
@@ -1383,7 +1397,7 @@ class RaftTest {
             var ready = raft.step(new RaftEvent.ReadIndex("req-1".getBytes()));
 
             assertTrue(ready.messages().isEmpty());
-            assertTrue(ready.apply().readStates().isEmpty());
+            assertTrue(ready.application().readStates().isEmpty());
         }
 
         @Test
@@ -1396,7 +1410,7 @@ class RaftTest {
             var response = new RaftMessage.ReadIndexResponse(1, 0, "req-1".getBytes());
             var ready = raft.step(new RaftEvent.Receive("n2", response));
 
-            assertTrue(ready.apply().readStates().isEmpty());
+            assertTrue(ready.application().readStates().isEmpty());
         }
 
         @Test
@@ -1421,7 +1435,7 @@ class RaftTest {
             var ackReady = raft.step(new RaftEvent.Receive("n2",
                 new RaftMessage.AppendEntriesResponse(raft.term(), true, 1)));
 
-            assertEquals(2, ackReady.apply().readStates().size());
+            assertEquals(2, ackReady.application().readStates().size());
         }
 
         @Test
@@ -1445,12 +1459,26 @@ class RaftTest {
 
             assertEquals(0, raft.term());
         }
+
+        @Test
+        void followerIgnoresReadIndexResponseFromUnexpectedSender() {
+            var raft = createRaft("n1", "n1", "n2", "n3");
+
+            var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0);
+            raft.step(new RaftEvent.Receive("n2", heartbeat));
+            assertEquals("n2", raft.leaderId().orElseThrow());
+
+            var response = new RaftMessage.ReadIndexResponse(1, 5, "req-1".getBytes());
+            var ready = raft.step(new RaftEvent.Receive("n3", response));
+
+            assertTrue(ready.application().readStates().isEmpty());
+        }
     }
 
     @Nested
     class Learners {
         private Raft createLearner(String id, Set<String> voters, Set<String> learners) {
-            var membership = new Membership(voters, learners);
+            var membership = new RaftMembership(voters, learners);
             var storage = new InMemoryStorage(membership);
             return Raft.builder(id, membership, CONFIG, storage)
                 .random(_ -> DETERMINISTIC_JITTER)
@@ -1465,7 +1493,7 @@ class RaftTest {
                 learner.step(new RaftEvent.Tick());
             }
 
-            assertEquals(Role.FOLLOWER, learner.role());
+            assertEquals(RaftRole.FOLLOWER, learner.role());
             assertEquals(0, learner.term());
         }
 
@@ -1501,7 +1529,7 @@ class RaftTest {
 
         @Test
         void learnerDoesNotCountInQuorum() {
-            var membership = new Membership(Set.of("n1", "n2", "n3"), Set.of("n4"));
+            var membership = new RaftMembership(Set.of("n1", "n2", "n3"), Set.of("n4"));
             var leader = createRaft("n1", membership, CONFIG);
             becomeLeader(leader, List.of("n2", "n3"));
 
@@ -1547,22 +1575,22 @@ class RaftTest {
             var response = new RaftMessage.ReadIndexResponse(1, 5, "req-1".getBytes());
             var ready = learner.step(new RaftEvent.Receive("n1", response));
 
-            assertEquals(1, ready.apply().readStates().size());
-            assertEquals(5, ready.apply().readStates().get(0).index());
-            assertArrayEquals("req-1".getBytes(), ready.apply().readStates().get(0).context());
+            assertEquals(1, ready.application().readStates().size());
+            assertEquals(5, ready.application().readStates().get(0).index());
+            assertArrayEquals("req-1".getBytes(), ready.application().readStates().get(0).context());
         }
 
         @Test
         void learnerDoesNotReceiveVoteRequests() {
-            var membership = new Membership(Set.of("n1", "n2"), Set.of("n3"));
+            var membership = new RaftMembership(Set.of("n1", "n2"), Set.of("n3"));
             var voter = createRaft("n1", membership, CONFIG);
 
             var ready = tickUntilTimeout(voter);
-            assertEquals(Role.PRE_CANDIDATE, voter.role());
+            assertEquals(RaftRole.PRE_CANDIDATE, voter.role());
 
             var preVoteTargets = ready.messages().stream()
                 .filter(m -> m.message() instanceof RaftMessage.PreVote)
-                .map(Ready.Outbound::to)
+                .map(RaftReady.Outbound::to)
                 .toList();
 
             assertFalse(preVoteTargets.contains("n3"));
@@ -1571,7 +1599,7 @@ class RaftTest {
 
         @Test
         void leaderReplicatesToLearner() {
-            var membership = new Membership(Set.of("n1", "n2"), Set.of("n3"));
+            var membership = new RaftMembership(Set.of("n1", "n2"), Set.of("n3"));
             var leader = createRaft("n1", membership, CONFIG);
             becomeLeader(leader, List.of("n2"));
 
@@ -1579,7 +1607,7 @@ class RaftTest {
 
             var targets = ready.messages().stream()
                 .filter(m -> m.message() instanceof RaftMessage.AppendEntries)
-                .map(Ready.Outbound::to)
+                .map(RaftReady.Outbound::to)
                 .toList();
 
             assertTrue(targets.contains("n2"));
@@ -1594,7 +1622,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.AddLearner("n4")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
 
             var configEntry = findEntry(ready, LogEntry.Config.class);
             assertTrue(configEntry.isPresent());
@@ -1603,11 +1631,11 @@ class RaftTest {
 
         @Test
         void leaderPromotesLearner() {
-            var membership = new Membership(Set.of("n1", "n2"), Set.of("n3"));
+            var membership = new RaftMembership(Set.of("n1", "n2"), Set.of("n3"));
             var raft = createRaft("n1", membership, CONFIG);
             becomeLeader(raft, List.of("n2"));
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.PromoteVoter("n3")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.PromoteVoter("n3")));
 
             var configEntry = findEntry(ready, LogEntry.Config.class);
             assertTrue(configEntry.isPresent());
@@ -1620,7 +1648,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.DemoteToLearner("n3")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.DemoteToLearner("n3")));
 
             var configEntry = findEntry(ready, LogEntry.Config.class);
             assertTrue(configEntry.isPresent());
@@ -1633,7 +1661,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.RemoveNode("n3")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.RemoveNode("n3")));
 
             var configEntry = findEntry(ready, LogEntry.Config.class);
             assertTrue(configEntry.isPresent());
@@ -1644,9 +1672,9 @@ class RaftTest {
         void nonLeaderIgnoresConfigChange() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.AddLearner("n4")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
 
-            assertTrue(ready.persist().entries().isEmpty());
+            assertTrue(ready.persistence().entries().isEmpty());
             assertTrue(ready.messages().isEmpty());
         }
 
@@ -1655,9 +1683,9 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeConfig(new ConfigChange.AddLearner("n4")));
+            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.AddLearner("n5")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n5")));
 
             assertTrue(findEntry(ready, LogEntry.Config.class).isEmpty());
         }
@@ -1668,10 +1696,10 @@ class RaftTest {
             tickUntilTimeout(raft);
             assertTrue(raft.isLeader());
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.AddLearner("n2")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n2")));
 
-            assertEquals(1, ready.apply().membershipChanges().size());
-            var change = ready.apply().membershipChanges().getFirst();
+            assertEquals(1, ready.application().membershipTransitions().size());
+            var change = ready.application().membershipTransitions().getFirst();
             assertFalse(change.previous().isMember("n2"));
             assertTrue(change.current().isLearner("n2"));
         }
@@ -1681,7 +1709,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeConfig(new ConfigChange.DemoteToLearner("n3")));
+            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.DemoteToLearner("n3")));
 
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
@@ -1693,11 +1721,11 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeConfig(new ConfigChange.RemoveNode("n1")));
+            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.RemoveNode("n1")));
 
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
         }
 
         @Test
@@ -1705,14 +1733,14 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeConfig(new ConfigChange.RemoveNode("n1")));
+            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.RemoveNode("n1")));
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
             for (int i = 0; i < CONFIG.electionTimeoutMax() * 2; i++) {
                 raft.step(new RaftEvent.Tick());
             }
 
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
         }
 
         @Test
@@ -1720,11 +1748,11 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeConfig(new ConfigChange.DemoteToLearner("n1")));
+            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.DemoteToLearner("n1")));
 
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
-            assertEquals(Role.FOLLOWER, raft.role());
+            assertEquals(RaftRole.FOLLOWER, raft.role());
         }
 
         @Test
@@ -1732,13 +1760,13 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeConfig(new ConfigChange.AddLearner("n4")));
+            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
             assertFalse(raft.membership().isLearner("n4"));
 
             var ready = raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
             assertTrue(raft.membership().isLearner("n4"));
-            assertEquals(1, ready.apply().membershipChanges().size());
+            assertEquals(1, ready.application().membershipTransitions().size());
         }
 
         @Test
@@ -1747,7 +1775,7 @@ class RaftTest {
             tickUntilTimeout(raft);
             assertTrue(raft.isLeader());
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.DemoteToLearner("n1")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.DemoteToLearner("n1")));
 
             assertTrue(findEntry(ready, LogEntry.Config.class).isEmpty());
         }
@@ -1758,7 +1786,7 @@ class RaftTest {
             tickUntilTimeout(raft);
             assertTrue(raft.isLeader());
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.RemoveNode("n1")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.RemoveNode("n1")));
 
             assertTrue(findEntry(ready, LogEntry.Config.class).isEmpty());
         }
@@ -1768,7 +1796,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.AddLearner("n2")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n2")));
 
             assertTrue(findEntry(ready, LogEntry.Config.class).isEmpty());
         }
@@ -1778,7 +1806,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.PromoteVoter("n4")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.PromoteVoter("n4")));
 
             assertTrue(findEntry(ready, LogEntry.Config.class).isEmpty());
         }
@@ -1788,10 +1816,10 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeConfig(new ConfigChange.AddLearner("n4")));
+            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
-            var ready = raft.step(new RaftEvent.ChangeConfig(new ConfigChange.AddLearner("n5")));
+            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n5")));
 
             var configEntry = findEntry(ready, LogEntry.Config.class);
             assertTrue(configEntry.isPresent());
@@ -1803,14 +1831,14 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeConfig(new ConfigChange.AddLearner("n4")));
+            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
             var ready = tickHeartbeat(raft);
 
             var targets = ready.messages().stream()
                 .filter(m -> m.message() instanceof RaftMessage.AppendEntries)
-                .map(Ready.Outbound::to)
+                .map(RaftReady.Outbound::to)
                 .toList();
             assertTrue(targets.contains("n4"));
         }
@@ -1820,14 +1848,14 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeConfig(new ConfigChange.RemoveNode("n3")));
+            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.RemoveNode("n3")));
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
             var ready = tickHeartbeat(raft);
 
             var targets = ready.messages().stream()
                 .filter(m -> m.message() instanceof RaftMessage.AppendEntries)
-                .map(Ready.Outbound::to)
+                .map(RaftReady.Outbound::to)
                 .toList();
             assertFalse(targets.contains("n3"));
         }

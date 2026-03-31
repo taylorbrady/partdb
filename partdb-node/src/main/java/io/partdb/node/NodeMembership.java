@@ -1,6 +1,6 @@
 package io.partdb.node;
 
-import io.partdb.raft.Membership;
+import io.partdb.raft.RaftMembership;
 
 import java.util.LinkedHashSet;
 import java.util.Objects;
@@ -55,12 +55,12 @@ public record NodeMembership(
         return new NodeMembership(voters, updatedLearners);
     }
 
-    static NodeMembership fromRaftMembership(Membership membership) {
+    static NodeMembership fromRaftMembership(RaftMembership membership) {
         return new NodeMembership(membership.voters(), membership.learners());
     }
 
-    Membership toRaftMembership() {
-        return new Membership(voters, learners);
+    RaftMembership toRaftMembership() {
+        return new RaftMembership(voters, learners);
     }
 
     private static Set<String> normalizeIds(Set<String> ids, String name) {

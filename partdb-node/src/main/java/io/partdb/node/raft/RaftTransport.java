@@ -1,4 +1,6 @@
-package io.partdb.raft;
+package io.partdb.node.raft;
+
+import io.partdb.raft.RaftMessage;
 
 import java.util.concurrent.CompletableFuture;
 

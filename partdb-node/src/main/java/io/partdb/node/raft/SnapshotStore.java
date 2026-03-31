@@ -1,7 +1,7 @@
 package io.partdb.node.raft;
 
-import io.partdb.raft.Membership;
-import io.partdb.raft.Snapshot;
+import io.partdb.raft.RaftMembership;
+import io.partdb.raft.RaftSnapshot;
 import io.partdb.storage.StorageException;
 
 import java.io.IOException;
@@ -40,7 +40,7 @@ public final class SnapshotStore implements AutoCloseable {
         return new SnapshotStore(directory);
     }
 
-    public void save(Snapshot snapshot) {
+    public void save(RaftSnapshot snapshot) {
         String fileName = formatFileName(snapshot.term(), snapshot.index());
         Path tempPath = directory.resolve(fileName + ".tmp");
         Path finalPath = directory.resolve(fileName);
@@ -89,7 +89,7 @@ public final class SnapshotStore implements AutoCloseable {
         }
     }
 
-    public Optional<Snapshot> latest() {
+    public Optional<RaftSnapshot> latest() {
         List<SnapshotInfo> snapshots = list();
         if (snapshots.isEmpty()) {
             return Optional.empty();
@@ -132,7 +132,7 @@ public final class SnapshotStore implements AutoCloseable {
     public void close() {
     }
 
-    private Snapshot load(Path path) {
+    private RaftSnapshot load(Path path) {
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
             long fileSize = channel.size();
 
@@ -157,7 +157,7 @@ public final class SnapshotStore implements AutoCloseable {
             ByteBuffer membershipBuf = ByteBuffer.allocate(membershipLen).order(BYTE_ORDER);
             channel.read(membershipBuf);
             membershipBuf.flip();
-            Membership membership = LogCodec.readMembership(membershipBuf);
+            RaftMembership membership = LogCodec.readMembership(membershipBuf);
 
             int dataLen = (int) (fileSize - HEADER_SIZE - 4 - membershipLen - 4);
             byte[] data = new byte[dataLen];
@@ -177,17 +177,17 @@ public final class SnapshotStore implements AutoCloseable {
             crc.update(data);
 
             if ((int) crc.getValue() != storedCrc) {
-                throw new StorageException.Corruption("Snapshot CRC mismatch: " + path);
+                throw new StorageException.Corruption("RaftSnapshot CRC mismatch: " + path);
             }
 
-            return new Snapshot(index, term, membership, data);
+            return new RaftSnapshot(index, term, membership, data);
 
         } catch (IOException e) {
             throw new StorageException.IO("Failed to load snapshot: " + path, e);
         }
     }
 
-    private byte[] encodeMembership(Membership membership) {
+    private byte[] encodeMembership(RaftMembership membership) {
         int size = LogCodec.membershipSize(membership);
         ByteBuffer buf = ByteBuffer.allocate(size).order(BYTE_ORDER);
         LogCodec.writeMembership(buf, membership);
