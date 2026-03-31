@@ -1,5 +1,6 @@
 package io.partdb.storage;
 
+import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -11,11 +12,10 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.TreeMap;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class StateStoreInvariantTest {
+class VersionedKeyValueStoreInvariantTest {
 
     @TempDir
     Path tempDir;
@@ -24,7 +24,7 @@ class StateStoreInvariantTest {
     void randomizedOperationsPreserveVisibleStateAcrossReopenAndRestore() {
         StorageConfig config = StorageConfig.builder()
             .writeBufferMaxBytes(256)
-            .advancedTuning(StorageConfig.AdvancedTuning.builder()
+            .lsmTuning(StorageConfig.LsmTuning.builder()
                 .targetTableSizeBytes(256)
                 .l0CompactionTrigger(2)
                 .maxBytesForLevelBase(512)
@@ -39,12 +39,12 @@ class StateStoreInvariantTest {
         long revision = 0;
         List<String> operations = new ArrayList<>();
 
-        try (StateStoreHolder holder = StateStoreHolder.open(currentDir, config)) {
+        try (StoreHolder holder = StoreHolder.open(currentDir, config)) {
             for (int step = 0; step < 300; step++) {
                 int op = random.nextInt(100);
                 if (op < 45) {
                     int key = random.nextInt(24);
-                    byte[] value = valueFor(step, key);
+                    Bytes value = valueFor(step, key);
                     revision++;
                     holder.store.put(key(key), value, revision);
                     expected.put(key, new ModelValue(value, revision));
@@ -68,9 +68,9 @@ class StateStoreInvariantTest {
                     holder.reopen();
                     operations.add("reopen step=%d".formatted(step));
                 } else {
-                    StorageSnapshot snapshot = holder.store.snapshot();
+                    StorageCheckpoint checkpoint = holder.store.checkpoint();
                     Path restoredDir = tempDir.resolve("store-" + nextStoreId++);
-                    holder.replaceWith(restoredDir, snapshot);
+                    holder.replaceWith(restoredDir, checkpoint);
                     operations.add("restore step=%d dir=%s".formatted(step, restoredDir.getFileName()));
                 }
             }
@@ -84,7 +84,7 @@ class StateStoreInvariantTest {
     void inPlaceRestoreRewindsVisibleStateAfterAggressiveCompaction() {
         StorageConfig config = StorageConfig.builder()
             .writeBufferMaxBytes(128)
-            .advancedTuning(StorageConfig.AdvancedTuning.builder()
+            .lsmTuning(StorageConfig.LsmTuning.builder()
                 .targetTableSizeBytes(128)
                 .l0CompactionTrigger(2)
                 .maxBytesForLevelBase(256)
@@ -96,10 +96,10 @@ class StateStoreInvariantTest {
         List<String> operations = new ArrayList<>();
         long revision = 0;
 
-        try (StateStoreHolder holder = StateStoreHolder.open(tempDir.resolve("store-in-place"), config)) {
+        try (StoreHolder holder = StoreHolder.open(tempDir.resolve("store-in-place"), config)) {
             for (int round = 0; round < 80; round++) {
                 int key = round % 16;
-                byte[] value = valueFor(round, key);
+                Bytes value = valueFor(round, key);
                 revision++;
                 holder.store.put(key(key), value, revision);
                 expected.put(key, new ModelValue(value, revision));
@@ -113,7 +113,7 @@ class StateStoreInvariantTest {
                 operations.add("seed-delete key=%d rev=%d".formatted(key, revision));
             }
 
-            StorageSnapshot snapshot = holder.store.snapshot();
+            StorageCheckpoint checkpoint = holder.store.checkpoint();
             NavigableMap<Integer, ModelValue> snapshotState = new TreeMap<>(expected);
             operations.add("snapshot");
 
@@ -125,7 +125,7 @@ class StateStoreInvariantTest {
                     expected.remove(key);
                     operations.add("mutate-delete round=%d key=%d rev=%d".formatted(round, key, revision));
                 } else {
-                    byte[] value = valueFor(200 + round, key);
+                    Bytes value = valueFor(200 + round, key);
                     revision++;
                     holder.store.put(key(key), value, revision);
                     expected.put(key, new ModelValue(value, revision));
@@ -133,7 +133,7 @@ class StateStoreInvariantTest {
                 }
             }
 
-            holder.restoreInPlace(snapshot);
+            holder.restoreInPlace(checkpoint);
             operations.add("restore-in-place");
             assertScanMatches(snapshotState, holder.store, 0, 25, operations);
 
@@ -147,7 +147,7 @@ class StateStoreInvariantTest {
     void randomizedSnapshotsSupportInPlaceAndCrossDirectoryRestore() {
         StorageConfig config = StorageConfig.builder()
             .writeBufferMaxBytes(192)
-            .advancedTuning(StorageConfig.AdvancedTuning.builder()
+            .lsmTuning(StorageConfig.LsmTuning.builder()
                 .targetTableSizeBytes(192)
                 .l0CompactionTrigger(2)
                 .maxBytesForLevelBase(384)
@@ -162,15 +162,15 @@ class StateStoreInvariantTest {
         int nextStoreId = 1;
         long revision = 0;
 
-        try (StateStoreHolder holder = StateStoreHolder.open(tempDir.resolve("mixed-store-0"), config)) {
-            snapshots.add(new SnapshotState(holder.store.snapshot(), copyState(expected)));
+        try (StoreHolder holder = StoreHolder.open(tempDir.resolve("mixed-store-0"), config)) {
+            snapshots.add(new SnapshotState(holder.store.checkpoint(), copyState(expected)));
             operations.add("snapshot-initial");
 
             for (int step = 0; step < 350; step++) {
                 int op = random.nextInt(100);
                 if (op < 38) {
                     int key = random.nextInt(24);
-                    byte[] value = valueFor(step, key);
+                    Bytes value = valueFor(step, key);
                     revision++;
                     holder.store.put(key(key), value, revision);
                     expected.put(key, new ModelValue(value, revision));
@@ -191,7 +191,7 @@ class StateStoreInvariantTest {
                     operations.add("scan step=%d start=%d end=%d".formatted(step, start, end));
                     assertScanMatches(expected, holder.store, start, end, operations);
                 } else if (op < 88) {
-                    snapshots.add(new SnapshotState(holder.store.snapshot(), copyState(expected)));
+                    snapshots.add(new SnapshotState(holder.store.checkpoint(), copyState(expected)));
                     operations.add("snapshot step=%d count=%d".formatted(step, snapshots.size()));
                 } else if (op < 92) {
                     holder.reopen();
@@ -220,11 +220,11 @@ class StateStoreInvariantTest {
 
     private static void assertGetMatches(
         NavigableMap<Integer, ModelValue> expected,
-        StateStore store,
+        VersionedKeyValueStore store,
         int key,
         List<String> operations
     ) {
-        Optional<VersionedEntry> actual = store.get(key(key));
+        Optional<VersionedValue> actual = store.get(key(key));
         ModelValue model = expected.get(key);
 
         if (model == null) {
@@ -232,15 +232,14 @@ class StateStoreInvariantTest {
             return;
         }
 
-        VersionedEntry entry = actual.orElseThrow();
-        assertArrayEquals(key(key), entry.key(), String.join("\n", operations));
-        assertArrayEquals(model.value(), entry.value(), String.join("\n", operations));
-        assertEquals(model.revision(), entry.revision(), String.join("\n", operations));
+        VersionedValue value = actual.orElseThrow();
+        assertEquals(model.value(), value.value(), String.join("\n", operations));
+        assertEquals(model.revision(), value.revision(), String.join("\n", operations));
     }
 
     private static void assertScanMatches(
         NavigableMap<Integer, ModelValue> expected,
-        StateStore store,
+        VersionedKeyValueStore store,
         int startInclusive,
         int endExclusive,
         List<String> operations
@@ -249,7 +248,7 @@ class StateStoreInvariantTest {
         int end = Math.max(startInclusive, endExclusive);
 
         List<VersionedEntry> actualEntries = new ArrayList<>();
-        try (StorageCursor cursor = store.scan(key(start), key(end))) {
+        try (EntryCursor cursor = store.scan(KeyRange.between(key(start), key(end)))) {
             while (cursor.hasNext()) {
                 actualEntries.add(cursor.next());
             }
@@ -261,7 +260,7 @@ class StateStoreInvariantTest {
             actualEntries.size(),
             "expectedKeys=%s actualKeys=%s%n%s".formatted(
                 expectedRange.keySet(),
-                actualEntries.stream().map(entry -> Byte.toUnsignedInt(entry.key()[0])).toList(),
+                actualEntries.stream().map(entry -> Byte.toUnsignedInt(entry.key().byteAt(0))).toList(),
                 String.join("\n", operations)
             )
         );
@@ -269,59 +268,59 @@ class StateStoreInvariantTest {
         int index = 0;
         for (var entry : expectedRange.entrySet()) {
             VersionedEntry actual = actualEntries.get(index++);
-            assertArrayEquals(key(entry.getKey()), actual.key(), String.join("\n", operations));
-            assertArrayEquals(entry.getValue().value(), actual.value(), String.join("\n", operations));
+            assertEquals(key(entry.getKey()), actual.key(), String.join("\n", operations));
+            assertEquals(entry.getValue().value(), actual.value(), String.join("\n", operations));
             assertEquals(entry.getValue().revision(), actual.revision(), String.join("\n", operations));
         }
     }
 
-    private static byte[] key(int key) {
-        return new byte[]{(byte) key};
+    private static Bytes key(int key) {
+        return Bytes.copyOf(new byte[]{(byte) key});
     }
 
-    private static byte[] valueFor(int step, int key) {
-        return new byte[]{(byte) step, (byte) key, (byte) (step ^ key)};
+    private static Bytes valueFor(int step, int key) {
+        return Bytes.copyOf(new byte[]{(byte) step, (byte) key, (byte) (step ^ key)});
     }
 
     private static NavigableMap<Integer, ModelValue> copyState(NavigableMap<Integer, ModelValue> source) {
         NavigableMap<Integer, ModelValue> copy = new TreeMap<>();
-        source.forEach((key, value) -> copy.put(key, new ModelValue(value.value().clone(), value.revision())));
+        source.forEach(copy::put);
         return copy;
     }
 
-    private record ModelValue(byte[] value, long revision) {}
+    private record ModelValue(Bytes value, long revision) {}
 
-    private record SnapshotState(StorageSnapshot snapshot, NavigableMap<Integer, ModelValue> visibleState) {}
+    private record SnapshotState(StorageCheckpoint snapshot, NavigableMap<Integer, ModelValue> visibleState) {}
 
-    private static final class StateStoreHolder implements AutoCloseable {
+    private static final class StoreHolder implements AutoCloseable {
         private final StorageConfig config;
-        private StateStore store;
+        private VersionedKeyValueStore store;
         private Path directory;
 
-        private StateStoreHolder(Path directory, StorageConfig config, StateStore store) {
+        private StoreHolder(Path directory, StorageConfig config, VersionedKeyValueStore store) {
             this.directory = directory;
             this.config = config;
             this.store = store;
         }
 
-        static StateStoreHolder open(Path directory, StorageConfig config) {
-            return new StateStoreHolder(directory, config, StateStore.open(directory, config));
+        static StoreHolder open(Path directory, StorageConfig config) {
+            return new StoreHolder(directory, config, VersionedKeyValueStore.open(directory, config));
         }
 
         void reopen() {
             store.close();
-            store = StateStore.open(directory, config);
+            store = VersionedKeyValueStore.open(directory, config);
         }
 
-        void replaceWith(Path directory, StorageSnapshot snapshot) {
+        void replaceWith(Path directory, StorageCheckpoint checkpoint) {
             store.close();
             this.directory = directory;
-            this.store = StateStore.open(directory, config);
-            this.store.restore(snapshot);
+            this.store = VersionedKeyValueStore.open(directory, config);
+            this.store.replaceWith(checkpoint);
         }
 
-        void restoreInPlace(StorageSnapshot snapshot) {
-            store.restore(snapshot);
+        void restoreInPlace(StorageCheckpoint checkpoint) {
+            store.replaceWith(checkpoint);
         }
 
         @Override

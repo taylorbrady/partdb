@@ -5,10 +5,10 @@ import jdk.jfr.Event;
 import jdk.jfr.Label;
 import jdk.jfr.Name;
 
-@Name("io.partdb.StorageSnapshot")
-@Label("PartDB Storage Snapshot")
+@Name("io.partdb.StorageCheckpoint")
+@Label("PartDB Storage Checkpoint")
 @Category({"PartDB", "Storage"})
-final class StorageSnapshotEvent extends Event {
+final class StorageCheckpointEvent extends Event {
     @Label("Phase")
     String phase;
 

@@ -9,7 +9,8 @@ import io.partdb.node.raft.DurableRaftStore;
 import io.partdb.node.raft.RaftNode;
 import io.partdb.node.raft.RaftStore;
 import io.partdb.raft.RaftMembership;
-import io.partdb.storage.StorageEngineStats;
+import io.partdb.storage.KeyRange;
+import io.partdb.storage.LsmStats;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -56,20 +57,23 @@ public final class PartDbNode implements AutoCloseable {
 
     public Optional<Bytes> get(Bytes key) {
         Objects.requireNonNull(key, "key must not be null");
-        return kvStore.get(key.toByteArray())
-            .map(Bytes::copyOf);
+        return kvStore.get(key);
     }
 
     public Stream<KeyValueEntry> scan(Optional<Bytes> startKey, Optional<Bytes> endKey) {
         Objects.requireNonNull(startKey, "startKey must not be null");
         Objects.requireNonNull(endKey, "endKey must not be null");
-        return kvStore.scan(
-            startKey.map(Bytes::toByteArray).orElse(null),
-            endKey.map(Bytes::toByteArray).orElse(null)
-        )
+        KeyRange range = switch ((startKey.isPresent() ? 1 : 0) | (endKey.isPresent() ? 2 : 0)) {
+            case 0 -> KeyRange.all();
+            case 1 -> KeyRange.from(startKey.orElseThrow());
+            case 2 -> KeyRange.until(endKey.orElseThrow());
+            case 3 -> KeyRange.between(startKey.orElseThrow(), endKey.orElseThrow());
+            default -> throw new IllegalStateException("Unexpected key range state");
+        };
+        return kvStore.scan(range)
             .map(entry -> new KeyValueEntry(
-                Bytes.copyOf(entry.key()),
-                Bytes.copyOf(entry.value()),
+                entry.key(),
+                entry.value(),
                 entry.version(),
                 entry.leaseId()
             ));
@@ -147,7 +151,7 @@ public final class PartDbNode implements AutoCloseable {
         return proposalFailureCount.get();
     }
 
-    public StorageEngineStats storageStats() {
+    public LsmStats storageStats() {
         return kvStore.storageStats();
     }
 

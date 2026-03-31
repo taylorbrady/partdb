@@ -1,6 +1,6 @@
 package io.partdb.storage;
 
-public record StorageEngineStats(
+public record LsmStats(
     long activeMemtableBytes,
     int immutableMemtableCount,
     int sstableCount,

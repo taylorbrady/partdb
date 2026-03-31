@@ -9,11 +9,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class LsmEngineCursorTest extends LsmEngineTestSupport {
+class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
 
     @Test
     void closeReleasesResources() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 10; i++) {
                 tree.put(key(i), value(i), nextRevision());
             }
@@ -28,7 +28,7 @@ class LsmEngineCursorTest extends LsmEngineTestSupport {
 
     @Test
     void multipleCursorsOnSameTree() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 20; i++) {
                 tree.put(key(i), value(i), nextRevision());
             }
@@ -53,7 +53,7 @@ class LsmEngineCursorTest extends LsmEngineTestSupport {
     void streamSurvivesCompaction() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int batch = 0; batch < 5; batch++) {
                 for (int i = 0; i < 30; i++) {
                     tree.put(key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextRevision());
@@ -76,7 +76,7 @@ class LsmEngineCursorTest extends LsmEngineTestSupport {
 
     @Test
     void closeAfterPartialConsumption() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 100; i++) {
                 tree.put(key(i), value(i), nextRevision());
             }

@@ -7,14 +7,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-final class SSTableView implements AutoCloseable {
+final class CatalogSnapshot implements AutoCloseable {
 
     private final SSTableSetRef ref;
     private final SSTableManifest manifest;
     private final int maxLevel;
     private final Map<Long, SSTable> readersById;
 
-    SSTableView(SSTableSetRef ref, SSTableManifest manifest) {
+    CatalogSnapshot(SSTableSetRef ref, SSTableManifest manifest) {
         this.ref = ref;
         this.manifest = manifest;
         this.maxLevel = manifest.maxLevel();

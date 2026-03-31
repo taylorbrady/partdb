@@ -4,10 +4,9 @@ import io.partdb.bytes.Bytes;
 
 import java.util.Objects;
 
-public record VersionedEntry(Bytes key, Bytes value, long revision) {
+public record VersionedValue(Bytes value, long revision) {
 
-    public VersionedEntry {
-        key = Objects.requireNonNull(key, "key must not be null");
+    public VersionedValue {
         value = Objects.requireNonNull(value, "value must not be null");
     }
 }

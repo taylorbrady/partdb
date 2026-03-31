@@ -1,8 +1,9 @@
 package io.partdb.benchmark;
 
-import io.partdb.storage.StateStore;
+import io.partdb.bytes.Bytes;
 import io.partdb.storage.StorageConfig;
-import io.partdb.storage.VersionedEntry;
+import io.partdb.storage.VersionedKeyValueStore;
+import io.partdb.storage.VersionedValue;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
@@ -34,28 +35,28 @@ public class MixedWorkloadBenchmark {
     private int valueSize;
 
     private Path tempDir;
-    private StateStore store;
+    private VersionedKeyValueStore store;
     private AtomicLong keyCounter;
     private AtomicLong revisionCounter;
-    private byte[] valueTemplate;
+    private Bytes valueTemplate;
 
     @Setup(Level.Trial)
     public void setup() throws IOException {
         tempDir = Files.createTempDirectory("mixed-workload-bench");
-        store = StateStore.open(tempDir, StorageConfig.defaults());
+        store = VersionedKeyValueStore.open(tempDir, StorageConfig.defaults());
         keyCounter = new AtomicLong(0);
         revisionCounter = new AtomicLong(0);
         byte[] valueBytes = new byte[valueSize];
         ThreadLocalRandom.current().nextBytes(valueBytes);
-        valueTemplate = valueBytes;
+        valueTemplate = Bytes.copyOf(valueBytes);
 
         for (int i = 0; i < initialKeyCount; i++) {
-            byte[] key = formatKey(i);
+            Bytes key = formatKey(i);
             long revision = revisionCounter.incrementAndGet();
             store.put(key, valueTemplate, revision);
         }
         keyCounter.set(initialKeyCount);
-        store.snapshot();
+        store.checkpoint();
     }
 
     @TearDown(Level.Trial)
@@ -84,10 +85,10 @@ public class MixedWorkloadBenchmark {
         }
     }
 
-    private Optional<VersionedEntry> doRead() {
+    private Optional<VersionedValue> doRead() {
         long maxKey = keyCounter.get();
         long keyNum = ThreadLocalRandom.current().nextLong(maxKey);
-        byte[] key = formatKey(keyNum);
+        Bytes key = formatKey(keyNum);
         return store.get(key);
     }
 
@@ -99,13 +100,13 @@ public class MixedWorkloadBenchmark {
         } else {
             keyNum = ThreadLocalRandom.current().nextLong(maxKey);
         }
-        byte[] key = formatKey(keyNum);
+        Bytes key = formatKey(keyNum);
         long revision = revisionCounter.incrementAndGet();
         store.put(key, valueTemplate, revision);
     }
 
-    private static byte[] formatKey(long keyNum) {
-        return ("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8);
+    private static Bytes formatKey(long keyNum) {
+        return Bytes.utf8("key" + String.format("%016d", keyNum));
     }
 
     private static void deleteDirectory(Path dir) throws IOException {

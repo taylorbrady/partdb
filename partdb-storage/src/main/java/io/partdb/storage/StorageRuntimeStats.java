@@ -55,8 +55,8 @@ final class StorageRuntimeStats {
         lastRestoreDurationMillis.set(durationMillis);
     }
 
-    StorageEngineStats snapshot() {
-        return new StorageEngineStats(
+    LsmStats snapshot() {
+        return new LsmStats(
             activeMemtableBytes.get(),
             immutableMemtableCount.get(),
             sstableCount.get(),

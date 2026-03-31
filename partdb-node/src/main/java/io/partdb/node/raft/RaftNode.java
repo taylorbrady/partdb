@@ -39,6 +39,7 @@ public final class RaftNode implements AutoCloseable {
         record Proposal(long id, Bytes data) implements NodeEvent {}
         record Raft(RaftEvent event) implements NodeEvent {}
         record Tick() implements NodeEvent {}
+        record Shutdown() implements NodeEvent {}
     }
 
     private record PendingRpc(CompletableFuture<RaftMessage.Response> future, long createdAtTick) {}
@@ -193,13 +194,23 @@ public final class RaftNode implements AutoCloseable {
 
     @Override
     public void close() {
+        if (!running) {
+            return;
+        }
+
         running = false;
         failPendingOperations(new RaftException.Shutdown());
-        eventLoop.interrupt();
         tickScheduler.shutdown();
-        ioExecutor.shutdown();
         transport.close();
-        store.close();
+        events.offer(new NodeEvent.Shutdown());
+
+        try {
+            eventLoop.join(TimeUnit.SECONDS.toMillis(5));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        ioExecutor.shutdown();
 
         try {
             tickScheduler.awaitTermination(5, TimeUnit.SECONDS);
@@ -207,6 +218,8 @@ public final class RaftNode implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+
+        store.close();
     }
 
     private void runEventLoop() {
@@ -216,6 +229,8 @@ public final class RaftNode implements AutoCloseable {
                 switch (event) {
                     case NodeEvent.Proposal(long id, Bytes data) -> handleProposal(id, data);
                     case NodeEvent.Tick() -> expireStaleRpcs();
+                    case NodeEvent.Shutdown() -> {
+                    }
                     case NodeEvent.Raft(RaftEvent re) -> {
                         var ready = raft.step(re);
                         processReady(ready);
@@ -310,6 +325,10 @@ public final class RaftNode implements AutoCloseable {
     }
 
     private CompletableFuture<RaftMessage.Response> handleIncomingRpc(String from, RaftMessage.Request request) {
+        if (!running) {
+            return CompletableFuture.failedFuture(new RaftException.Shutdown());
+        }
+
         var responseFuture = new CompletableFuture<RaftMessage.Response>();
 
         var key = new RpcKey(from, request.getClass());

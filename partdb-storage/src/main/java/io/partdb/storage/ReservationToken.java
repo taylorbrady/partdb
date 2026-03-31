@@ -7,7 +7,7 @@ record ReservationToken(
     Set<Long> sstableIds,
     int sourceLevel,
     int targetLevel,
-    KeyRange keyRange
+    TableRange keyRange
 ) {
 
     public ReservationToken {

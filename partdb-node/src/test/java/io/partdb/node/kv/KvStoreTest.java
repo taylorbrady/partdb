@@ -13,7 +13,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -28,12 +28,12 @@ class KvStoreTest {
         Path restoredDir = tempDir.resolve("restored");
 
         Bytes snapshot;
-        byte[] key = "lease-key".getBytes(StandardCharsets.UTF_8);
-        byte[] value = "lease-value".getBytes(StandardCharsets.UTF_8);
+        Bytes key = Bytes.utf8("lease-key");
+        Bytes value = Bytes.utf8("lease-value");
 
         try (KvStore source = KvStore.open(sourceDir, StorageConfig.defaults())) {
             source.apply(1, Bytes.copyOf(grantLease(7, 1_000_000_000).toByteArray()));
-            source.apply(2, Bytes.copyOf(put(key, value, 7).toByteArray()));
+            source.apply(2, Bytes.copyOf(put(key.toByteArray(), value.toByteArray(), 7).toByteArray()));
 
             assertTrue(source.get(key).isPresent());
             snapshot = source.snapshot();
@@ -43,7 +43,7 @@ class KvStoreTest {
             restored.restore(2, snapshot);
 
             assertTrue(restored.get(key).isPresent());
-            assertArrayEquals(value, restored.get(key).orElseThrow());
+            assertEquals(value, restored.get(key).orElseThrow());
 
             restored.apply(3, Bytes.copyOf(revokeLease(7).toByteArray()));
 

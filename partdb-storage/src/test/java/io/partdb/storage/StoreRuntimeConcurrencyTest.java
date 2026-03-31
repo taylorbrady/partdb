@@ -12,11 +12,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class LsmEngineConcurrencyTest extends LsmEngineTestSupport {
+class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
 
     @Test
     void concurrentReads() throws Exception {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 100; i++) {
                 tree.put(key(i), value(i), nextRevision());
             }
@@ -50,7 +50,7 @@ class LsmEngineConcurrencyTest extends LsmEngineTestSupport {
 
     @Test
     void concurrentWrites() throws Exception {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             int threadCount = 10;
             int writesPerThread = 100;
 
@@ -79,7 +79,7 @@ class LsmEngineConcurrencyTest extends LsmEngineTestSupport {
 
     @Test
     void concurrentReadsAndWrites() throws Exception {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 50; i++) {
                 tree.put(key(i), value(i), nextRevision());
             }
@@ -123,7 +123,7 @@ class LsmEngineConcurrencyTest extends LsmEngineTestSupport {
     void readsWhileFlushing() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < 50; i++) {
                 tree.put(key(i), value(i), nextRevision());
             }
@@ -174,7 +174,7 @@ class LsmEngineConcurrencyTest extends LsmEngineTestSupport {
     void readsWhileCompacting() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int batch = 0; batch < 5; batch++) {
                 for (int i = 0; i < 50; i++) {
                     tree.put(key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextRevision());
@@ -217,7 +217,7 @@ class LsmEngineConcurrencyTest extends LsmEngineTestSupport {
     void scanWhileFlushing() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < 50; i++) {
                 tree.put(key(i), value(i), nextRevision());
             }

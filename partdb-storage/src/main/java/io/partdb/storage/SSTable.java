@@ -15,8 +15,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
-import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
 final class SSTable implements AutoCloseable {
 
@@ -122,8 +120,8 @@ final class SSTable implements AutoCloseable {
         return block.find(key);
     }
 
-    public Scan scan() {
-        return new Scan();
+    public Iterator<Mutation> scan(Slice startKey, Slice endKey) {
+        return new ScanIterator(startKey, endKey);
     }
 
     public Path path() {
@@ -250,31 +248,6 @@ final class SSTable implements AutoCloseable {
                 "SSTable " + label + " exceeds file bounds: offset=%d size=%d total=%d"
                     .formatted(offset, size, totalSize)
             );
-        }
-    }
-
-    public final class Scan implements Iterable<Mutation> {
-
-        private Slice startKey;
-        private Slice endKey;
-
-        public Scan from(Slice startKey) {
-            this.startKey = startKey;
-            return this;
-        }
-
-        public Scan until(Slice endKey) {
-            this.endKey = endKey;
-            return this;
-        }
-
-        @Override
-        public Iterator<Mutation> iterator() {
-            return new ScanIterator(startKey, endKey);
-        }
-
-        public Stream<Mutation> stream() {
-            return StreamSupport.stream(spliterator(), false);
         }
     }
 

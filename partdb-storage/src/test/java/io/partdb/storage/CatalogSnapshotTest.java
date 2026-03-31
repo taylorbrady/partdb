@@ -10,7 +10,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
-class SSTableViewTest {
+class CatalogSnapshotTest {
 
     @TempDir
     Path tempDir;
@@ -55,7 +55,7 @@ class SSTableViewTest {
         ref.retire(List.of(olderReader, newerReader));
 
         SSTableManifest manifest = new SSTableManifest(2, List.of(newerDescriptor, olderDescriptor));
-        try (SSTableView view = new SSTableView(acquired, manifest)) {
+        try (CatalogSnapshot view = new CatalogSnapshot(acquired, manifest)) {
             Mutation mutation = view.get(slice("shared-key")).orElseThrow();
 
             assertInstanceOf(Mutation.Put.class, mutation);
@@ -88,7 +88,7 @@ class SSTableViewTest {
         ref.retire(List.of(l2Reader, newestL0Reader, l1Reader));
 
         SSTableManifest manifest = new SSTableManifest(3, List.of(newestL0, l1, l2));
-        try (SSTableView view = new SSTableView(acquired, manifest)) {
+        try (CatalogSnapshot view = new CatalogSnapshot(acquired, manifest)) {
             List<SSTable> tables = view.scanTables(slice("a"), slice("z"));
 
             assertEquals(List.of(newestL0Reader, l1Reader, l2Reader), tables);

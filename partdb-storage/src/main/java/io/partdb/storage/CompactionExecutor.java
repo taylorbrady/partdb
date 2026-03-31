@@ -15,11 +15,11 @@ final class CompactionExecutor {
     private static final Logger log = LoggerFactory.getLogger(CompactionExecutor.class);
     private static final int GRANDPARENT_OVERLAP_MULTIPLIER = 10;
 
-    private final SSTableStore sstableStore;
+    private final TableCatalog tableCatalog;
     private final LsmConfig config;
 
-    CompactionExecutor(SSTableStore sstableStore, LsmConfig config) {
-        this.sstableStore = Objects.requireNonNull(sstableStore, "sstableStore");
+    CompactionExecutor(TableCatalog tableCatalog, LsmConfig config) {
+        this.tableCatalog = Objects.requireNonNull(tableCatalog, "tableCatalog");
         this.config = Objects.requireNonNull(config, "config");
     }
 
@@ -67,7 +67,7 @@ final class CompactionExecutor {
         List<SSTable> readers = new ArrayList<>();
         try {
             for (SSTableMetadata table : metadata) {
-                readers.add(sstableStore.openForCompaction(table));
+                readers.add(tableCatalog.openForCompaction(table));
             }
             return readers;
         } catch (Exception e) {
@@ -84,7 +84,7 @@ final class CompactionExecutor {
         List<SSTableMetadata> completedOutputs
     ) {
         List<Iterator<Mutation>> iterators = sources.stream()
-            .map(table -> table.scan().iterator())
+            .map(table -> table.scan(null, null))
             .toList();
 
         Iterator<Mutation> merged = new MergingIterator(iterators);
@@ -104,7 +104,7 @@ final class CompactionExecutor {
         Mutation pending = null;
 
         while (pending != null || entries.hasNext()) {
-            try (SSTable.Builder builder = sstableStore.createBuilder(targetLevel)) {
+            try (SSTable.Builder builder = tableCatalog.createBuilder(targetLevel)) {
                 Slice firstKey = null;
                 while (pending != null || entries.hasNext()) {
                     Mutation next = pending != null ? pending : entries.next();
@@ -167,7 +167,7 @@ final class CompactionExecutor {
     private void cleanupOutputs(List<SSTableMetadata> outputs) {
         for (SSTableMetadata desc : outputs) {
             try {
-                sstableStore.delete(desc.id());
+                tableCatalog.delete(desc.id());
             } catch (IOException e) {
                 log.atWarn()
                     .addKeyValue("sstableId", desc.id())

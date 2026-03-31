@@ -7,17 +7,17 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class LsmEngineCheckpointTest extends LsmEngineTestSupport {
+class StoreRuntimeCheckpointTest extends StoreRuntimeTestSupport {
 
     @Test
     void roundtrip() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
             tree.flush();
 
             byte[] checkpoint = tree.checkpoint();
-            tree.restoreFromCheckpoint(checkpoint);
+            tree.replaceWithCheckpoint(checkpoint);
 
             assertTrue(tree.get(key(1)).isPresent());
             assertEquals(value(10), tree.get(key(1)).get().value());
@@ -32,15 +32,15 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
         Path restoredDir = tempDir.resolve("restored");
 
         byte[] checkpoint;
-        try (LsmEngine source = LsmEngine.open(sourceDir, LsmConfig.defaults())) {
+        try (StoreRuntime source = StoreRuntime.open(sourceDir, LsmConfig.defaults())) {
             source.put(key(1), value(10), nextRevision());
             source.put(key(2), value(20), nextRevision());
             source.flush();
             checkpoint = source.checkpoint();
         }
 
-        try (LsmEngine restored = LsmEngine.open(restoredDir, LsmConfig.defaults())) {
-            restored.restoreFromCheckpoint(checkpoint);
+        try (StoreRuntime restored = StoreRuntime.open(restoredDir, LsmConfig.defaults())) {
+            restored.replaceWithCheckpoint(checkpoint);
 
             assertTrue(restored.get(key(1)).isPresent());
             assertEquals(value(10), restored.get(key(1)).get().value());
@@ -51,7 +51,7 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
 
     @Test
     void restoresToPreviousState() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
 
@@ -64,7 +64,7 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
             assertTrue(tree.get(key(2)).isPresent());
             assertTrue(tree.get(key(3)).isPresent());
 
-            tree.restoreFromCheckpoint(checkpoint);
+            tree.replaceWithCheckpoint(checkpoint);
 
             assertTrue(tree.get(key(1)).isPresent());
             assertEquals(value(10), tree.get(key(1)).get().value());
@@ -75,7 +75,7 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
 
     @Test
     void capturesMultipleSSTables() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
 
@@ -88,7 +88,7 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
             tree.put(key(3), value(30), nextRevision());
             tree.flush();
 
-            tree.restoreFromCheckpoint(checkpoint);
+            tree.replaceWithCheckpoint(checkpoint);
 
             assertTrue(tree.get(key(1)).isPresent());
             assertTrue(tree.get(key(2)).isPresent());
@@ -99,7 +99,7 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
 
     @Test
     void clearsMemtableOnRestore() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
 
@@ -109,7 +109,7 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
 
             assertTrue(tree.get(key(2)).isPresent());
 
-            tree.restoreFromCheckpoint(checkpoint);
+            tree.replaceWithCheckpoint(checkpoint);
 
             assertTrue(tree.get(key(1)).isPresent());
             assertTrue(tree.get(key(2)).isEmpty());
@@ -118,7 +118,7 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
 
     @Test
     void manifestStateRestored() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
 
@@ -131,7 +131,7 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
 
             assertTrue(tree.manifest().nextSSTableId() > originalNextId);
 
-            tree.restoreFromCheckpoint(checkpoint);
+            tree.replaceWithCheckpoint(checkpoint);
 
             assertEquals(originalNextId, tree.manifest().nextSSTableId());
             assertEquals(originalSSTableCount, tree.manifest().sstables().size());
@@ -140,7 +140,7 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
 
     @Test
     void multipleCheckpoints() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
             byte[] checkpoint1 = tree.checkpoint();
@@ -152,12 +152,12 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
             tree.put(key(3), value(30), nextRevision());
             tree.flush();
 
-            tree.restoreFromCheckpoint(checkpoint1);
+            tree.replaceWithCheckpoint(checkpoint1);
             assertTrue(tree.get(key(1)).isPresent());
             assertTrue(tree.get(key(2)).isEmpty());
             assertTrue(tree.get(key(3)).isEmpty());
 
-            tree.restoreFromCheckpoint(checkpoint2);
+            tree.replaceWithCheckpoint(checkpoint2);
             assertTrue(tree.get(key(1)).isPresent());
             assertTrue(tree.get(key(2)).isPresent());
             assertTrue(tree.get(key(3)).isEmpty());
@@ -166,14 +166,14 @@ class LsmEngineCheckpointTest extends LsmEngineTestSupport {
 
     @Test
     void emptyTree() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             byte[] checkpoint = tree.checkpoint();
 
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
             assertTrue(tree.get(key(1)).isPresent());
 
-            tree.restoreFromCheckpoint(checkpoint);
+            tree.replaceWithCheckpoint(checkpoint);
 
             assertTrue(tree.get(key(1)).isEmpty());
             assertTrue(tree.manifest().sstables().isEmpty());

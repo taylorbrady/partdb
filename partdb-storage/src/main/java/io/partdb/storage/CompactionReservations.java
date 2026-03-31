@@ -10,7 +10,7 @@ import java.util.stream.Collectors;
 final class CompactionReservations {
 
     private final ReentrantLock lock = new ReentrantLock();
-    private final Map<Integer, Set<KeyRange>> rangesByLevel = new HashMap<>();
+    private final Map<Integer, Set<TableRange>> rangesByLevel = new HashMap<>();
     private final Set<Long> reservedSSTableIds = new HashSet<>();
 
     public ReserveResult tryReserve(CompactionTask task) {
@@ -24,7 +24,7 @@ final class CompactionReservations {
                 return new ReserveResult.Conflict();
             }
 
-            KeyRange range = KeyRange.from(task.inputs());
+            TableRange range = TableRange.from(task.inputs());
             int sourceLevel = sourceLevel(task);
             int targetLevel = task.targetLevel();
 
@@ -77,20 +77,20 @@ final class CompactionReservations {
         }
     }
 
-    private boolean hasOverlap(int level, KeyRange range) {
-        Set<KeyRange> levelRanges = rangesByLevel.get(level);
+    private boolean hasOverlap(int level, TableRange range) {
+        Set<TableRange> levelRanges = rangesByLevel.get(level);
         if (levelRanges == null) {
             return false;
         }
         return levelRanges.stream().anyMatch(r -> r.overlaps(range));
     }
 
-    private void addRange(int level, KeyRange range) {
+    private void addRange(int level, TableRange range) {
         rangesByLevel.computeIfAbsent(level, _ -> new HashSet<>()).add(range);
     }
 
-    private void removeRange(int level, KeyRange range) {
-        Set<KeyRange> ranges = rangesByLevel.get(level);
+    private void removeRange(int level, TableRange range) {
+        Set<TableRange> ranges = rangesByLevel.get(level);
         if (ranges != null) {
             ranges.remove(range);
             if (ranges.isEmpty()) {

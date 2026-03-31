@@ -11,11 +11,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class LsmEngineCoreTest extends LsmEngineTestSupport {
+class StoreRuntimeCoreTest extends StoreRuntimeTestSupport {
 
     @Test
     void putAndGet() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
 
             Optional<EngineEntry> result = tree.get(key(1));
@@ -27,7 +27,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void getNonExistentKey() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             Optional<EngineEntry> result = tree.get(key(99));
             assertTrue(result.isEmpty());
         }
@@ -35,7 +35,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void deleteKey() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.delete(key(1), nextRevision());
 
@@ -46,7 +46,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void deleteNonExistentKey() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.delete(key(1), nextRevision());
 
             Optional<EngineEntry> result = tree.get(key(1));
@@ -56,7 +56,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void putOverwritesPreviousValue() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(1), value(20), nextRevision());
 
@@ -76,7 +76,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
         older.put(new Mutation.Put(key("key"), value("older"), 1));
         newer.put(new Mutation.Put(key("key"), value("newer"), 2));
 
-        Optional<Mutation> result = LsmEngine.lookupMutation(key("key"), active, List.of(older, newer));
+        Optional<Mutation> result = StoreRuntime.lookupMutation(key("key"), active, List.of(older, newer));
 
         assertTrue(result.isPresent());
         assertInstanceOf(Mutation.Put.class, result.get());
@@ -85,7 +85,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void entireRange() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
             tree.put(key(3), value(30), nextRevision());
@@ -101,7 +101,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void withBounds() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
             tree.put(key(3), value(30), nextRevision());
@@ -117,7 +117,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void excludesDeletedKeys() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
             tree.delete(key(2), nextRevision());
@@ -135,7 +135,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
     void mergesFromMultipleSources() {
         LsmConfig config = smallMemtableConfig(512);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < 20; i++) {
                 tree.put(key(i), largeValue(100), nextRevision());
             }
@@ -153,7 +153,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
     void usesLatestValueForDuplicateKeys() {
         LsmConfig config = smallMemtableConfig(256);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), largeValue(100), nextRevision());
             tree.put(key(1), value(20), nextRevision());
@@ -171,7 +171,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void manualFlush() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
 
@@ -186,7 +186,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
     void automaticOnMemtableSize() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < 10; i++) {
                 tree.put(key(i), largeValue(200), nextRevision());
             }
@@ -201,13 +201,13 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
     void fromSSTables() {
         LsmConfig config = LsmConfig.defaults();
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             tree.put(key(1), value(10), nextRevision());
             tree.put(key(2), value(20), nextRevision());
             tree.flush();
         }
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             Optional<EngineEntry> result1 = tree.get(key(1));
             Optional<EngineEntry> result2 = tree.get(key(2));
 
@@ -221,7 +221,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void readPathPriority() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), nextRevision());
             tree.flush();
             tree.put(key(1), value(20), nextRevision());
@@ -235,7 +235,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void rejectsOlderRevisionThanPersistedValue() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             tree.put(key(1), value(10), 10);
             tree.flush();
 
@@ -253,7 +253,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
     void multipleSSTables() {
         LsmConfig config = smallMemtableConfig(512);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < 30; i++) {
                 tree.put(key(i), largeValue(100), nextRevision());
             }
@@ -268,7 +268,7 @@ class LsmEngineCoreTest extends LsmEngineTestSupport {
 
     @Test
     void emptyManifestLoad() {
-        try (LsmEngine tree = LsmEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
             SSTableManifest manifest = tree.manifest();
             assertNotNull(manifest);
             assertTrue(manifest.sstables().isEmpty());

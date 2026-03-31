@@ -1,8 +1,10 @@
 package io.partdb.benchmark;
 
-import io.partdb.storage.StateStore;
+import io.partdb.bytes.Bytes;
+import io.partdb.storage.EntryCursor;
+import io.partdb.storage.KeyRange;
 import io.partdb.storage.StorageConfig;
-import io.partdb.storage.StorageCursor;
+import io.partdb.storage.VersionedKeyValueStore;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
@@ -18,32 +20,33 @@ import java.util.concurrent.TimeUnit;
 @Fork(1)
 @Warmup(iterations = 3, time = 3)
 @Measurement(iterations = 5, time = 5)
-public class LsmEngineScanBenchmark {
+public class StoreScanBenchmark {
 
     private static final int KEY_COUNT = 100_000;
     private static final int VALUE_SIZE = 100;
 
     private Path tempDir;
-    private StateStore store;
-    private byte[][] existingKeys;
-    private byte[] valueBytes;
+    private VersionedKeyValueStore store;
+    private Bytes[] existingKeys;
+    private Bytes valueBytes;
 
     @Setup(Level.Trial)
     public void setup() throws IOException {
         tempDir = Files.createTempDirectory("lsm-scan-bench");
-        store = StateStore.open(tempDir, StorageConfig.defaults());
-        existingKeys = new byte[KEY_COUNT][];
+        store = VersionedKeyValueStore.open(tempDir, StorageConfig.defaults());
+        existingKeys = new Bytes[KEY_COUNT];
 
-        valueBytes = new byte[VALUE_SIZE];
-        ThreadLocalRandom.current().nextBytes(valueBytes);
+        byte[] bytes = new byte[VALUE_SIZE];
+        ThreadLocalRandom.current().nextBytes(bytes);
+        valueBytes = Bytes.copyOf(bytes);
 
         for (int i = 0; i < KEY_COUNT; i++) {
-            byte[] key = formatKey(i);
+            Bytes key = formatKey(i);
             existingKeys[i] = key;
             store.put(key, valueBytes, i);
         }
 
-        store.snapshot();
+        store.checkpoint();
     }
 
     @TearDown(Level.Trial)
@@ -57,7 +60,7 @@ public class LsmEngineScanBenchmark {
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
     public long scanFull() {
         long count = 0;
-        try (StorageCursor cursor = store.scan(null, null)) {
+        try (EntryCursor cursor = store.scan(KeyRange.all())) {
             while (cursor.hasNext()) {
                 cursor.next();
                 count++;
@@ -72,9 +75,9 @@ public class LsmEngineScanBenchmark {
     @OperationsPerInvocation(100)
     public void scanRange100(Blackhole bh) {
         int start = ThreadLocalRandom.current().nextInt(KEY_COUNT - 100);
-        byte[] startKey = existingKeys[start];
-        byte[] endKey = existingKeys[start + 100];
-        try (StorageCursor cursor = store.scan(startKey, endKey)) {
+        Bytes startKey = existingKeys[start];
+        Bytes endKey = existingKeys[start + 100];
+        try (EntryCursor cursor = store.scan(KeyRange.between(startKey, endKey))) {
             while (cursor.hasNext()) {
                 bh.consume(cursor.next());
             }
@@ -87,17 +90,17 @@ public class LsmEngineScanBenchmark {
     @OperationsPerInvocation(1000)
     public void scanRange1000(Blackhole bh) {
         int start = ThreadLocalRandom.current().nextInt(KEY_COUNT - 1000);
-        byte[] startKey = existingKeys[start];
-        byte[] endKey = existingKeys[start + 1000];
-        try (StorageCursor cursor = store.scan(startKey, endKey)) {
+        Bytes startKey = existingKeys[start];
+        Bytes endKey = existingKeys[start + 1000];
+        try (EntryCursor cursor = store.scan(KeyRange.between(startKey, endKey))) {
             while (cursor.hasNext()) {
                 bh.consume(cursor.next());
             }
         }
     }
 
-    private static byte[] formatKey(long keyNum) {
-        return ("key" + String.format("%016d", keyNum)).getBytes(StandardCharsets.UTF_8);
+    private static Bytes formatKey(long keyNum) {
+        return Bytes.utf8("key" + String.format("%016d", keyNum));
     }
 
     private static void deleteDirectory(Path dir) throws IOException {

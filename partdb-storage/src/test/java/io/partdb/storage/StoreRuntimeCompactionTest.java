@@ -11,13 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class LsmEngineCompactionTest extends LsmEngineTestSupport {
+class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
 
     @Test
     void l0TriggersAtThreshold() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
                 tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
@@ -38,7 +38,7 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
     void mergesOverlappingKeys() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int version = 0; version < 5; version++) {
                 for (int i = 0; i < 20; i++) {
                     tree.put(key(String.format("key-%02d", i)), value("v" + version + "-" + i), nextRevision());
@@ -60,7 +60,7 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
     void tombstonesResultInEmptyGet() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < 50; i++) {
                 tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
@@ -83,7 +83,7 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
     void levelSizeRespected() throws Exception {
         LsmConfig config = smallMemtableConfig(2048);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int batch = 0; batch < 20; batch++) {
                 for (int i = 0; i < 100; i++) {
                     tree.put(key(String.format("key-%05d", batch * 100 + i)), largeValue(100), nextRevision());
@@ -108,7 +108,7 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
     void preservesNewestVersions() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             List<String> expectedValues = new ArrayList<>();
 
             for (int i = 0; i < 30; i++) {
@@ -135,7 +135,7 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
     void manifestConsistency() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < 80; i++) {
                 tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
@@ -166,7 +166,7 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
         List<Slice> keys = new ArrayList<>();
         List<Slice> values = new ArrayList<>();
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < 60; i++) {
                 Slice k = key(String.format("key-%03d", i));
                 Slice v = value("value-" + i);
@@ -178,7 +178,7 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
             Thread.sleep(500);
         }
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < keys.size(); i++) {
                 Optional<EngineEntry> result = tree.get(keys.get(i));
                 assertTrue(result.isPresent());
@@ -191,7 +191,7 @@ class LsmEngineCompactionTest extends LsmEngineTestSupport {
     void scanAfterCompaction() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (LsmEngine tree = LsmEngine.open(tempDir, config)) {
+        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
                 tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
