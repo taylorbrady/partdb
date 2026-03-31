@@ -16,7 +16,7 @@ final class FlushCoordinator implements AutoCloseable {
     private static final int MAX_IMMUTABLE_MEMTABLES = 4;
     private static final long FLUSH_TIMEOUT_SECONDS = 30;
 
-    private final TableCatalog tableCatalog;
+    private final SSTableCatalog sstableCatalog;
     private final Runnable onImmutableMemtablesChanged;
     private final ReentrantLock immutableMemtablesLock;
     private final Semaphore flushPermits;
@@ -24,8 +24,8 @@ final class FlushCoordinator implements AutoCloseable {
 
     private volatile List<ImmutableMemtable> immutableMemtables;
 
-    FlushCoordinator(TableCatalog tableCatalog, Runnable onImmutableMemtablesChanged) {
-        this.tableCatalog = tableCatalog;
+    FlushCoordinator(SSTableCatalog sstableCatalog, Runnable onImmutableMemtablesChanged) {
+        this.sstableCatalog = sstableCatalog;
         this.onImmutableMemtablesChanged = onImmutableMemtablesChanged;
         this.immutableMemtablesLock = new ReentrantLock();
         this.flushPermits = new Semaphore(MAX_IMMUTABLE_MEMTABLES);
@@ -99,7 +99,7 @@ final class FlushCoordinator implements AutoCloseable {
             ImmutableMemtable toFlush = current.getFirst();
 
             try {
-                tableCatalog.flush(toFlush.scan(ScanBounds.all()));
+                sstableCatalog.flush(toFlush.scan(ScanBounds.all()));
             } finally {
                 immutableMemtablesLock.lock();
                 try {

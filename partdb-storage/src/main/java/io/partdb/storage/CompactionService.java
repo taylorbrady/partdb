@@ -4,19 +4,19 @@ import java.time.Duration;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
-final class CompactionManager implements AutoCloseable {
+final class CompactionService implements AutoCloseable {
 
     private final CompactionScheduler scheduler;
 
-    CompactionManager(
-        TableCatalog tableCatalog,
+    CompactionService(
+        SSTableCatalog sstableCatalog,
         LsmConfig config,
         StorageRuntimeStats stats,
         Supplier<SSTableManifest> manifestSupplier,
         Consumer<CompactionResult> resultHandler
     ) {
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
-        CompactionExecutor executor = new CompactionExecutor(tableCatalog, config);
+        CompactionExecutor executor = new CompactionExecutor(sstableCatalog, config);
         this.scheduler = new CompactionScheduler(
             planner,
             executor,

@@ -15,11 +15,11 @@ final class CompactionExecutor {
     private static final Logger log = LoggerFactory.getLogger(CompactionExecutor.class);
     private static final int GRANDPARENT_OVERLAP_MULTIPLIER = 10;
 
-    private final TableCatalog tableCatalog;
+    private final SSTableCatalog sstableCatalog;
     private final LsmConfig config;
 
-    CompactionExecutor(TableCatalog tableCatalog, LsmConfig config) {
-        this.tableCatalog = Objects.requireNonNull(tableCatalog, "tableCatalog");
+    CompactionExecutor(SSTableCatalog sstableCatalog, LsmConfig config) {
+        this.sstableCatalog = Objects.requireNonNull(sstableCatalog, "sstableCatalog");
         this.config = Objects.requireNonNull(config, "config");
     }
 
@@ -67,7 +67,7 @@ final class CompactionExecutor {
         List<SSTableReader> readers = new ArrayList<>();
         try {
             for (SSTableMetadata table : metadata) {
-                readers.add(tableCatalog.openCompactionReader(table));
+                readers.add(sstableCatalog.openCompactionReader(table));
             }
             return readers;
         } catch (Exception e) {
@@ -104,7 +104,7 @@ final class CompactionExecutor {
         StoredEntry pending = null;
 
         while (pending != null || entries.hasNext()) {
-            try (SSTableWriter writer = tableCatalog.createWriter(targetLevel)) {
+            try (SSTableWriter writer = sstableCatalog.createWriter(targetLevel)) {
                 Slice firstKey = null;
                 while (pending != null || entries.hasNext()) {
                     StoredEntry next = pending != null ? pending : entries.next();
@@ -167,7 +167,7 @@ final class CompactionExecutor {
     private void cleanupOutputs(List<SSTableMetadata> outputs) {
         for (SSTableMetadata desc : outputs) {
             try {
-                tableCatalog.delete(desc.id());
+                sstableCatalog.delete(desc.id());
             } catch (IOException e) {
                 log.atWarn()
                     .addKeyValue("sstableId", desc.id())

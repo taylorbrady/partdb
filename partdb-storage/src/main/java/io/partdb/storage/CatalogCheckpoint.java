@@ -188,10 +188,10 @@ final class CatalogCheckpoint {
         }
     }
 
-    ActivatedCatalog activate(Path directory, BlockCache cache) throws IOException {
+    LoadedCatalog activate(Path directory, CatalogPersistence persistence) throws IOException {
         commitTo(directory);
-        manifest.writeTo(directory);
-        return new ActivatedCatalog(manifest, TableCatalog.loadReadersFromManifest(directory, cache, manifest));
+        persistence.writeManifest(manifest);
+        return persistence.loadState(manifest);
     }
 
     void cleanup(Path directory) {
@@ -220,8 +220,6 @@ final class CatalogCheckpoint {
     private static Path stagedPath(Path directory, long id) {
         return directory.resolve("%06d.sst%s".formatted(id, RESTORE_SUFFIX));
     }
-
-    record ActivatedCatalog(SSTableManifest manifest, List<SSTableReader> readers) {}
 
     private record CheckpointSSTable(long id, byte[] data) {}
 }

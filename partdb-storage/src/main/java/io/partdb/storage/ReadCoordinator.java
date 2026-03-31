@@ -12,19 +12,19 @@ final class ReadCoordinator {
 
     private final Supplier<MutableMemtable> activeMemtableSupplier;
     private final Supplier<List<ImmutableMemtable>> immutableMemtablesSupplier;
-    private final TableCatalog tableCatalog;
+    private final SSTableCatalog sstableCatalog;
 
     ReadCoordinator(
         Supplier<MutableMemtable> activeMemtableSupplier,
         Supplier<List<ImmutableMemtable>> immutableMemtablesSupplier,
-        TableCatalog tableCatalog
+        SSTableCatalog sstableCatalog
     ) {
         this.activeMemtableSupplier = Objects.requireNonNull(activeMemtableSupplier, "activeMemtableSupplier");
         this.immutableMemtablesSupplier = Objects.requireNonNull(
             immutableMemtablesSupplier,
             "immutableMemtablesSupplier"
         );
-        this.tableCatalog = Objects.requireNonNull(tableCatalog, "tableCatalog");
+        this.sstableCatalog = Objects.requireNonNull(sstableCatalog, "sstableCatalog");
     }
 
     Optional<StoredEntry.Value> get(Slice key) {
@@ -33,7 +33,7 @@ final class ReadCoordinator {
     }
 
     StoredValueCursor scan(ScanBounds bounds) {
-        CatalogSnapshot readers = tableCatalog.acquire();
+        CatalogSnapshot readers = sstableCatalog.acquire();
         try {
             List<Iterator<StoredEntry>> iterators = new ArrayList<>();
 
@@ -61,7 +61,7 @@ final class ReadCoordinator {
             return result;
         }
 
-        try (CatalogSnapshot readers = tableCatalog.acquire()) {
+        try (CatalogSnapshot readers = sstableCatalog.acquire()) {
             return readers.get(key);
         }
     }

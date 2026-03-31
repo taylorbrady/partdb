@@ -15,23 +15,23 @@ final class StoreRuntime implements AutoCloseable {
     private final AtomicReference<MutableMemtable> activeMemtable;
     private final ReentrantLock rotationLock;
     private final AtomicBoolean closed;
-    private final TableCatalog tableCatalog;
+    private final SSTableCatalog sstableCatalog;
     private final FlushCoordinator flushCoordinator;
     private final StorageRuntimeStats stats;
     private final ReadCoordinator readCoordinator;
-    private final CheckpointManager checkpointManager;
+    private final CheckpointService checkpointService;
 
-    private StoreRuntime(LsmConfig config, TableCatalog tableCatalog, StorageRuntimeStats stats) {
+    private StoreRuntime(LsmConfig config, SSTableCatalog sstableCatalog, StorageRuntimeStats stats) {
         this.config = config;
-        this.tableCatalog = tableCatalog;
+        this.sstableCatalog = sstableCatalog;
         this.stats = stats;
         this.activeMemtable = new AtomicReference<>(new MutableMemtable());
         this.rotationLock = new ReentrantLock();
         this.closed = new AtomicBoolean(false);
-        this.flushCoordinator = new FlushCoordinator(tableCatalog, this::refreshMemtableStats);
-        this.readCoordinator = new ReadCoordinator(activeMemtable::get, flushCoordinator::immutableMemtables, tableCatalog);
-        this.checkpointManager = new CheckpointManager(
-            tableCatalog,
+        this.flushCoordinator = new FlushCoordinator(sstableCatalog, this::refreshMemtableStats);
+        this.readCoordinator = new ReadCoordinator(activeMemtable::get, flushCoordinator::immutableMemtables, sstableCatalog);
+        this.checkpointService = new CheckpointService(
+            sstableCatalog,
             flushCoordinator,
             rotationLock,
             this::resetMemtables,
@@ -45,8 +45,8 @@ final class StoreRuntime implements AutoCloseable {
         try {
             Files.createDirectories(dataDirectory);
             StorageRuntimeStats stats = new StorageRuntimeStats();
-            TableCatalog tableCatalog = TableCatalog.open(dataDirectory, config, stats);
-            return new StoreRuntime(config, tableCatalog, stats);
+            SSTableCatalog sstableCatalog = SSTableCatalog.open(dataDirectory, config, stats);
+            return new StoreRuntime(config, sstableCatalog, stats);
         } catch (IOException e) {
             throw new StorageException.IO("Failed to open store", e);
         }
@@ -69,15 +69,15 @@ final class StoreRuntime implements AutoCloseable {
     }
 
     byte[] checkpoint() {
-        return checkpointManager.checkpoint();
+        return checkpointService.checkpoint();
     }
 
     void replaceWithCheckpoint(byte[] data) {
-        checkpointManager.restore(data);
+        checkpointService.restore(data);
     }
 
     SSTableManifest manifest() {
-        return tableCatalog.manifest();
+        return sstableCatalog.manifest();
     }
 
     LsmStats statsSnapshot() {
@@ -109,7 +109,7 @@ final class StoreRuntime implements AutoCloseable {
 
         flush();
         flushCoordinator.close();
-        tableCatalog.close();
+        sstableCatalog.close();
     }
 
     static Optional<StoredEntry> lookupStoredEntry(

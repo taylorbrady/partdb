@@ -20,7 +20,7 @@ class CompactionExecutorTest {
         LsmConfig config = LsmConfig.defaults()
             .withTargetUncompressedSize(200);
 
-        try (TableCatalog store = TableCatalog.open(tempDir, config, new StorageRuntimeStats())) {
+        try (SSTableCatalog store = SSTableCatalog.open(tempDir, config, new StorageRuntimeStats())) {
             SSTableMetadata input;
             try (SSTableWriter writer = store.createWriter(0)) {
                 writer.add(put("key-1", value(96), 1));
@@ -45,7 +45,7 @@ class CompactionExecutorTest {
         LsmConfig config = LsmConfig.defaults()
             .withTargetUncompressedSize(1_000);
 
-        try (TableCatalog store = TableCatalog.open(tempDir, config, new StorageRuntimeStats())) {
+        try (SSTableCatalog store = SSTableCatalog.open(tempDir, config, new StorageRuntimeStats())) {
             SSTableMetadata input;
             try (SSTableWriter writer = store.createWriter(0)) {
                 writer.add(put("key-1", value(96), 1));
