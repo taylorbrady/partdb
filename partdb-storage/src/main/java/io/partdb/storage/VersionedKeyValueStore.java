@@ -28,17 +28,17 @@ public final class VersionedKeyValueStore implements AutoCloseable {
     public void put(Bytes key, Bytes value, long revision) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(value, "value must not be null");
-        runtime.put(Slice.of(key.toByteArray()), Slice.of(value.toByteArray()), revision);
+        runtime.put(Slice.copyOf(key.toByteArray()), Slice.copyOf(value.toByteArray()), revision);
     }
 
     public void delete(Bytes key, long revision) {
         Objects.requireNonNull(key, "key must not be null");
-        runtime.delete(Slice.of(key.toByteArray()), revision);
+        runtime.delete(Slice.copyOf(key.toByteArray()), revision);
     }
 
     public Optional<VersionedValue> get(Bytes key) {
         Objects.requireNonNull(key, "key must not be null");
-        return runtime.get(Slice.of(key.toByteArray()))
+        return runtime.get(Slice.copyOf(key.toByteArray()))
             .map(entry -> new VersionedValue(Bytes.copyOf(entry.value().toByteArray()), entry.revision()));
     }
 
@@ -49,14 +49,14 @@ public final class VersionedKeyValueStore implements AutoCloseable {
             case KeyRange.All _ ->
                 new CursorAdapter(runtime.scan(ScanBounds.all()));
             case KeyRange.From(var startInclusive) ->
-                new CursorAdapter(runtime.scan(ScanBounds.from(Slice.of(startInclusive.toByteArray()))));
+                new CursorAdapter(runtime.scan(ScanBounds.from(Slice.copyOf(startInclusive.toByteArray()))));
             case KeyRange.Until(var endExclusive) ->
-                new CursorAdapter(runtime.scan(ScanBounds.until(Slice.of(endExclusive.toByteArray()))));
+                new CursorAdapter(runtime.scan(ScanBounds.until(Slice.copyOf(endExclusive.toByteArray()))));
             case KeyRange.Between(var startInclusive, var endExclusive) ->
                 new CursorAdapter(
                     runtime.scan(ScanBounds.between(
-                        Slice.of(startInclusive.toByteArray()),
-                        Slice.of(endExclusive.toByteArray())
+                        Slice.copyOf(startInclusive.toByteArray()),
+                        Slice.copyOf(endExclusive.toByteArray())
                     ))
                 );
         };

@@ -9,8 +9,8 @@ class StoredEntryValueTest {
 
     @Test
     void recordAccessors() {
-        Slice key = Slice.of("key");
-        Slice value = Slice.of("value");
+        Slice key = Slice.utf8("key");
+        Slice value = Slice.utf8("value");
         long revision = 1000L;
 
         StoredEntry.Value entry = new StoredEntry.Value(key, value, revision);
@@ -22,8 +22,8 @@ class StoredEntryValueTest {
 
     @Test
     void equalsAndHashCode() {
-        Slice key = Slice.of("key");
-        Slice value = Slice.of("value");
+        Slice key = Slice.utf8("key");
+        Slice value = Slice.utf8("value");
 
         StoredEntry.Value entry1 = new StoredEntry.Value(key, value, 1000L);
         StoredEntry.Value entry2 = new StoredEntry.Value(key, value, 1000L);
@@ -34,8 +34,8 @@ class StoredEntryValueTest {
 
     @Test
     void notEqualWhenRevisionDiffers() {
-        Slice key = Slice.of("key");
-        Slice value = Slice.of("value");
+        Slice key = Slice.utf8("key");
+        Slice value = Slice.utf8("value");
 
         StoredEntry.Value entry1 = new StoredEntry.Value(key, value, 1000L);
         StoredEntry.Value entry2 = new StoredEntry.Value(key, value, 2000L);
@@ -45,20 +45,20 @@ class StoredEntryValueTest {
 
     @Test
     void notEqualWhenKeyDiffers() {
-        Slice value = Slice.of("value");
+        Slice value = Slice.utf8("value");
 
-        StoredEntry.Value entry1 = new StoredEntry.Value(Slice.of("key1"), value, 1000L);
-        StoredEntry.Value entry2 = new StoredEntry.Value(Slice.of("key2"), value, 1000L);
+        StoredEntry.Value entry1 = new StoredEntry.Value(Slice.utf8("key1"), value, 1000L);
+        StoredEntry.Value entry2 = new StoredEntry.Value(Slice.utf8("key2"), value, 1000L);
 
         assertNotEquals(entry1, entry2);
     }
 
     @Test
     void notEqualWhenValueDiffers() {
-        Slice key = Slice.of("key");
+        Slice key = Slice.utf8("key");
 
-        StoredEntry.Value entry1 = new StoredEntry.Value(key, Slice.of("value1"), 1000L);
-        StoredEntry.Value entry2 = new StoredEntry.Value(key, Slice.of("value2"), 1000L);
+        StoredEntry.Value entry1 = new StoredEntry.Value(key, Slice.utf8("value1"), 1000L);
+        StoredEntry.Value entry2 = new StoredEntry.Value(key, Slice.utf8("value2"), 1000L);
 
         assertNotEquals(entry1, entry2);
     }

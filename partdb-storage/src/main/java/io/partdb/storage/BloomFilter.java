@@ -10,6 +10,8 @@ final class BloomFilter {
 
     private static final int CACHE_LINE_BITS = 512;
     private static final int CACHE_LINE_LONGS = 8;
+    private static final int MURMUR3_C1 = 0xcc9e2d51;
+    private static final int MURMUR3_C2 = 0x1b873593;
 
     private final long[] bits;
     private final int numBlocks;
@@ -64,8 +66,8 @@ final class BloomFilter {
     }
 
     boolean mightContain(Slice key) {
-        int hash1 = Murmur3Hash.hash(key, 0);
-        int hash2 = Murmur3Hash.hash(key, 1);
+        int hash1 = murmur3_32(key, 0);
+        int hash2 = murmur3_32(key, 1);
 
         int blockIndex = Integer.remainderUnsigned(hash1, numBlocks);
         int blockOffset = blockIndex * CACHE_LINE_LONGS;
@@ -114,8 +116,8 @@ final class BloomFilter {
     }
 
     private void add(Slice key) {
-        int hash1 = Murmur3Hash.hash(key, 0);
-        int hash2 = Murmur3Hash.hash(key, 1);
+        int hash1 = murmur3_32(key, 0);
+        int hash2 = murmur3_32(key, 1);
 
         int blockIndex = Integer.remainderUnsigned(hash1, numBlocks);
         int blockOffset = blockIndex * CACHE_LINE_LONGS;
@@ -134,6 +136,53 @@ final class BloomFilter {
     private static int optimalNumBits(int expectedEntries, double falsePositiveRate) {
         double numBits = -(expectedEntries * Math.log(falsePositiveRate)) / (Math.log(2) * Math.log(2));
         return (int) Math.ceil(numBits);
+    }
+
+    private static int murmur3_32(Slice key, int seed) {
+        MemorySegment segment = key.segment();
+        int length = key.length();
+        int hash = seed;
+
+        int roundedEnd = length & ~3;
+        for (int i = 0; i < roundedEnd; i += 4) {
+            int k1 = (segment.get(ValueLayout.JAVA_BYTE, i) & 0xff) |
+                     ((segment.get(ValueLayout.JAVA_BYTE, i + 1) & 0xff) << 8) |
+                     ((segment.get(ValueLayout.JAVA_BYTE, i + 2) & 0xff) << 16) |
+                     ((segment.get(ValueLayout.JAVA_BYTE, i + 3) & 0xff) << 24);
+
+            k1 *= MURMUR3_C1;
+            k1 = Integer.rotateLeft(k1, 15);
+            k1 *= MURMUR3_C2;
+
+            hash ^= k1;
+            hash = Integer.rotateLeft(hash, 13);
+            hash = hash * 5 + 0xe6546b64;
+        }
+
+        int k1 = 0;
+        int remaining = length & 3;
+        if (remaining >= 3) {
+            k1 = (segment.get(ValueLayout.JAVA_BYTE, roundedEnd + 2) & 0xff) << 16;
+        }
+        if (remaining >= 2) {
+            k1 |= (segment.get(ValueLayout.JAVA_BYTE, roundedEnd + 1) & 0xff) << 8;
+        }
+        if (remaining >= 1) {
+            k1 |= segment.get(ValueLayout.JAVA_BYTE, roundedEnd) & 0xff;
+            k1 *= MURMUR3_C1;
+            k1 = Integer.rotateLeft(k1, 15);
+            k1 *= MURMUR3_C2;
+            hash ^= k1;
+        }
+
+        hash ^= length;
+        hash ^= hash >>> 16;
+        hash *= 0x85ebca6b;
+        hash ^= hash >>> 13;
+        hash *= 0xc2b2ae35;
+        hash ^= hash >>> 16;
+
+        return hash;
     }
 
     private static int optimalNumHashFunctions(int expectedEntries, int numBits) {

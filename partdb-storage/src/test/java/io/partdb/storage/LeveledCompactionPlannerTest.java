@@ -147,6 +147,6 @@ class LeveledCompactionPlannerTest {
     }
 
     private static Slice slice(String value) {
-        return Slice.of(value.getBytes(StandardCharsets.UTF_8));
+        return Slice.utf8(value);
     }
 }

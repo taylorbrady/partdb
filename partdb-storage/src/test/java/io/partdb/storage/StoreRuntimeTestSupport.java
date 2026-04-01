@@ -23,23 +23,23 @@ abstract class StoreRuntimeTestSupport {
     }
 
     protected static Slice key(int i) {
-        return Slice.of(new byte[]{(byte) i});
+        return Slice.copyOf(new byte[]{(byte) i});
     }
 
     protected static Slice key(String s) {
-        return Slice.of(s.getBytes(StandardCharsets.UTF_8));
+        return Slice.utf8(s);
     }
 
     protected static Slice value(int i) {
-        return Slice.of(new byte[]{(byte) i});
+        return Slice.copyOf(new byte[]{(byte) i});
     }
 
     protected static Slice value(String s) {
-        return Slice.of(s.getBytes(StandardCharsets.UTF_8));
+        return Slice.utf8(s);
     }
 
     protected static Slice largeValue(int size) {
-        return Slice.of(new byte[size]);
+        return Slice.copyOf(new byte[size]);
     }
 
     protected static LsmConfig smallMemtableConfig(int sizeBytes) {

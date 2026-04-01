@@ -14,11 +14,11 @@ import static org.junit.jupiter.api.Assertions.*;
 class MergingIteratorTest {
 
     private static Slice key(String s) {
-        return Slice.of(s);
+        return Slice.utf8(s);
     }
 
     private static Slice value(String s) {
-        return Slice.of(s);
+        return Slice.utf8(s);
     }
 
     private static StoredEntry put(String key, String value, long revision) {
@@ -426,12 +426,12 @@ class MergingIteratorTest {
         @Test
         void binaryKeyOrdering() {
             StoredEntry highByte = new StoredEntry.Value(
-                Slice.of(new byte[]{(byte) 0xFF}),
+                Slice.copyOf(new byte[]{(byte) 0xFF}),
                 value("high"),
                 2
             );
             StoredEntry lowByte = new StoredEntry.Value(
-                Slice.of(new byte[]{(byte) 0x00}),
+                Slice.copyOf(new byte[]{(byte) 0x00}),
                 value("low"),
                 3
             );

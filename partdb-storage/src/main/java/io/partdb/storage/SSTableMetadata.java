@@ -88,8 +88,8 @@ record SSTableMetadata(
             return new SSTableMetadata(
                 id,
                 level,
-                Slice.of(smallestKeyBytes),
-                Slice.of(largestKeyBytes),
+                Slice.copyOf(smallestKeyBytes),
+                Slice.copyOf(largestKeyBytes),
                 smallestRevision,
                 largestRevision,
                 fileSizeBytes,

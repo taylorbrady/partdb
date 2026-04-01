@@ -2,9 +2,9 @@ package io.partdb.storage;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
+import java.util.Objects;
 
 final class Slice implements Comparable<Slice> {
 
@@ -14,76 +14,54 @@ final class Slice implements Comparable<Slice> {
     private int cachedHash;
 
     private Slice(MemorySegment segment) {
+        Objects.requireNonNull(segment, "segment");
         if (segment.byteSize() > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Slice too large: " + segment.byteSize());
         }
         this.segment = segment.isReadOnly() ? segment : segment.asReadOnly();
     }
 
-    public static Slice of(byte[] bytes) {
+    static Slice copyOf(byte[] bytes) {
+        Objects.requireNonNull(bytes, "bytes");
         if (bytes.length == 0) {
             return EMPTY;
         }
         return new Slice(MemorySegment.ofArray(bytes.clone()));
     }
 
-    public static Slice of(String s) {
+    static Slice utf8(String s) {
+        Objects.requireNonNull(s, "s");
         if (s.isEmpty()) {
             return EMPTY;
         }
-        return of(s.getBytes(StandardCharsets.UTF_8));
+        return copyOf(s.getBytes(StandardCharsets.UTF_8));
     }
 
-    public static Slice of(ByteBuffer buffer) {
-        if (buffer.remaining() == 0) {
-            return EMPTY;
-        }
-        return new Slice(MemorySegment.ofBuffer(buffer));
-    }
-
-    public static Slice wrap(MemorySegment segment) {
+    static Slice wrap(MemorySegment segment) {
         if (segment.byteSize() == 0) {
             return EMPTY;
         }
         return new Slice(segment);
     }
 
-    public static Slice empty() {
+    static Slice empty() {
         return EMPTY;
     }
 
-    public int length() {
+    int length() {
         return (int) segment.byteSize();
     }
 
-    public boolean isEmpty() {
+    boolean isEmpty() {
         return segment.byteSize() == 0;
     }
 
-    public MemorySegment segment() {
+    MemorySegment segment() {
         return segment;
     }
 
-    public byte[] toByteArray() {
+    byte[] toByteArray() {
         return segment.toArray(ValueLayout.JAVA_BYTE);
-    }
-
-    public ByteBuffer asByteBuffer() {
-        return segment.asByteBuffer();
-    }
-
-    public Slice slice(long offset, long length) {
-        if (length == 0) {
-            return EMPTY;
-        }
-        return new Slice(segment.asSlice(offset, length));
-    }
-
-    public boolean startsWith(Slice prefix) {
-        if (prefix.length() > length()) {
-            return false;
-        }
-        return segment.asSlice(0, prefix.length()).mismatch(prefix.segment) == -1;
     }
 
     @Override

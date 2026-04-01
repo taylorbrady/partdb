@@ -71,11 +71,11 @@ class CompactionExecutorTest {
     }
 
     private static StoredEntry.Value put(String key, byte[] value, long revision) {
-        return new StoredEntry.Value(slice(key), Slice.of(value), revision);
+        return new StoredEntry.Value(slice(key), Slice.copyOf(value), revision);
     }
 
     private static Slice slice(String value) {
-        return Slice.of(value.getBytes(StandardCharsets.UTF_8));
+        return Slice.utf8(value);
     }
 
     private static SSTableMetadata metadata(long id, int level, String smallest, String largest, long fileSizeBytes) {
