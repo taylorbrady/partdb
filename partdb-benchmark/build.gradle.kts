@@ -1,58 +1,42 @@
 plugins {
-    java
-    application
+    id("me.champeau.jmh") version "0.7.2"
 }
 
-val jmhVersion = "1.37"
-
 dependencies {
-    implementation(project(":partdb-storage"))
-    implementation("org.openjdk.jmh:jmh-core:$jmhVersion")
-    annotationProcessor("org.openjdk.jmh:jmh-generator-annprocess:$jmhVersion")
+    jmh(project(":partdb-storage"))
 
     val logbackVersion = "1.5.32"
     val logstashEncoderVersion = "9.0"
 
-    runtimeOnly("ch.qos.logback:logback-classic:$logbackVersion")
-    runtimeOnly("net.logstash.logback:logstash-logback-encoder:$logstashEncoderVersion")
+    jmhRuntimeOnly("ch.qos.logback:logback-classic:$logbackVersion")
+    jmhRuntimeOnly("net.logstash.logback:logstash-logback-encoder:$logstashEncoderVersion")
 }
 
-application {
-    mainClass.set("org.openjdk.jmh.Main")
+jmh {
+    jmhVersion = "1.37"
+    warmupIterations = 3
+    iterations = 5
+    fork = 1
+    timeOnIteration = "5s"
+    warmup = "3s"
+    resultFormat = "JSON"
+    resultsFile.set(layout.buildDirectory.file("reports/jmh/results.json"))
+    humanOutputFile.set(layout.buildDirectory.file("reports/jmh/results.txt"))
+    duplicateClassesStrategy = DuplicatesStrategy.EXCLUDE
+    jvmArgsAppend = listOf(
+        "--sun-misc-unsafe-memory-access=allow",
+        "-Xms2g",
+        "-Xmx2g"
+    )
 }
 
-tasks.jar {
-    dependsOn(configurations.runtimeClasspath)
-    manifest {
-        attributes["Main-Class"] = "org.openjdk.jmh.Main"
-    }
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from({
-        configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) }
-    })
-    archiveClassifier.set("all")
-}
+val jmhJar = tasks.named<org.gradle.jvm.tasks.Jar>("jmhJar")
 
 tasks.register<JavaExec>("benchmarkList") {
     group = "benchmark"
     description = "List available JMH benchmarks"
-    classpath = sourceSets.main.get().runtimeClasspath
+    dependsOn(jmhJar)
+    classpath = files(jmhJar.flatMap { it.archiveFile })
     mainClass.set("org.openjdk.jmh.Main")
     args = listOf("-l")
-}
-
-tasks.register<JavaExec>("benchmark") {
-    group = "benchmark"
-    description = "Run JMH benchmarks"
-    classpath = sourceSets.main.get().runtimeClasspath
-    mainClass.set("org.openjdk.jmh.Main")
-    jvmArgs = listOf("-Xms2g", "-Xmx2g")
-
-    val benchArgs = mutableListOf("-rf", "json", "-rff", "build/benchmark-results.json")
-
-    if (project.hasProperty("bench")) {
-        benchArgs += project.property("bench").toString()
-    }
-
-    args = benchArgs
 }
