@@ -80,7 +80,7 @@ public class StorageWorkloadBenchmark {
 
         @Setup(Level.Trial)
         public void setup() throws IOException {
-            openStore("partdb-workload", StorageFixtures.defaultConfig());
+            openStore("partdb-workload", StorageFixtures.defaultOptions());
 
             valueTemplate = BenchmarkValues.fixedValue(valueSize, 0xace1L);
             Bytes[] existingKeys = BenchmarkKeys.storageKeys(initialKeyCount);

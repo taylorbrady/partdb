@@ -6,7 +6,7 @@ import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
 import io.partdb.storage.StorageCheckpoint;
-import io.partdb.storage.StorageConfig;
+import io.partdb.storage.StorageOptions;
 import io.partdb.storage.StorageEngine;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -46,7 +46,7 @@ public class StorageRestoreBenchmark {
         @Param({"100", "1024"})
         int valueSize;
 
-        private final StorageConfig config = StorageFixtures.defaultConfig();
+        private final StorageOptions options = StorageFixtures.defaultOptions();
 
         private Path sourceDir;
         private StorageCheckpoint checkpoint;
@@ -55,7 +55,7 @@ public class StorageRestoreBenchmark {
         @Setup(Level.Trial)
         public void createCheckpoint() throws IOException {
             sourceDir = BenchmarkDirectories.createTempDirectory("partdb-restore-source");
-            try (StorageEngine sourceStore = StorageEngine.open(sourceDir, config)) {
+            try (StorageEngine sourceStore = StorageEngine.open(sourceDir, options)) {
                 Bytes[] keys = BenchmarkKeys.storageKeys(keyCount);
                 StorageFixtures.populate(sourceStore, keys, BenchmarkValues.fixedValue(valueSize, 0x9eedL), 1);
                 checkpoint = sourceStore.checkpoint();
@@ -68,7 +68,7 @@ public class StorageRestoreBenchmark {
         }
 
         public void restoreIntoNewStore() {
-            try (StorageEngine ignored = StorageEngine.restore(targetDir, checkpoint, config)) {
+            try (StorageEngine ignored = StorageEngine.restore(targetDir, checkpoint, options)) {
                 // Benchmark the direct restore path into a new store directory.
             }
         }

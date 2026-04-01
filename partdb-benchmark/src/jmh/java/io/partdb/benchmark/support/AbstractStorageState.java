@@ -1,6 +1,6 @@
 package io.partdb.benchmark.support;
 
-import io.partdb.storage.StorageConfig;
+import io.partdb.storage.StorageOptions;
 import io.partdb.storage.StorageEngine;
 
 import java.io.IOException;
@@ -12,16 +12,16 @@ public abstract class AbstractStorageState {
     private Path tempDirectory;
     private StorageEngine store;
 
-    protected final void openStore(String prefix, StorageConfig config) throws IOException {
+    protected final void openStore(String prefix, StorageOptions options) throws IOException {
         tempDirectory = BenchmarkDirectories.createTempDirectory(prefix);
-        store = StorageEngine.open(tempDirectory, config);
+        store = StorageEngine.open(tempDirectory, options);
     }
 
-    protected final void reopenStore(StorageConfig config) {
+    protected final void reopenStore(StorageOptions options) {
         Objects.requireNonNull(tempDirectory, "tempDirectory");
         Objects.requireNonNull(store, "store");
         store.close();
-        store = StorageEngine.open(tempDirectory, config);
+        store = StorageEngine.open(tempDirectory, options);
     }
 
     protected final void closeStore() {

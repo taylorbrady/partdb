@@ -7,16 +7,16 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class StorageEngineCoreCheckpointTest extends StorageEngineCoreTestSupport {
+class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupport {
 
     @Test
     void roundtrip() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), value(20), nextRevision());
             tree.flush();
 
-            byte[] checkpoint = tree.checkpoint();
+            byte[] checkpoint = tree.checkpointBytes();
             tree.replaceWithCheckpoint(checkpoint);
 
             assertTrue(tree.get(key(1)).isPresent());
@@ -32,14 +32,14 @@ class StorageEngineCoreCheckpointTest extends StorageEngineCoreTestSupport {
         Path restoredDir = tempDir.resolve("restored");
 
         byte[] checkpoint;
-        try (StorageEngineCore source = StorageEngineCore.open(sourceDir, LsmConfig.defaults())) {
+        try (StorageEngine source = StorageEngine.open(sourceDir, LsmConfig.defaults())) {
             put(source, key(1), value(10), nextRevision());
             put(source, key(2), value(20), nextRevision());
             source.flush();
-            checkpoint = source.checkpoint();
+            checkpoint = source.checkpointBytes();
         }
 
-        try (StorageEngineCore restored = StorageEngineCore.open(restoredDir, LsmConfig.defaults())) {
+        try (StorageEngine restored = StorageEngine.open(restoredDir, LsmConfig.defaults())) {
             restored.replaceWithCheckpoint(checkpoint);
 
             assertTrue(restored.get(key(1)).isPresent());
@@ -51,11 +51,11 @@ class StorageEngineCoreCheckpointTest extends StorageEngineCoreTestSupport {
 
     @Test
     void restoresToPreviousState() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             tree.flush();
 
-            byte[] checkpoint = tree.checkpoint();
+            byte[] checkpoint = tree.checkpointBytes();
 
             put(tree, key(2), value(20), nextRevision());
             put(tree, key(3), value(30), nextRevision());
@@ -75,14 +75,14 @@ class StorageEngineCoreCheckpointTest extends StorageEngineCoreTestSupport {
 
     @Test
     void capturesMultipleSSTables() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             tree.flush();
 
             put(tree, key(2), value(20), nextRevision());
             tree.flush();
 
-            byte[] checkpoint = tree.checkpoint();
+            byte[] checkpoint = tree.checkpointBytes();
             assertEquals(2, tree.manifest().sstables().size());
 
             put(tree, key(3), value(30), nextRevision());
@@ -99,11 +99,11 @@ class StorageEngineCoreCheckpointTest extends StorageEngineCoreTestSupport {
 
     @Test
     void clearsMemtableOnRestore() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             tree.flush();
 
-            byte[] checkpoint = tree.checkpoint();
+            byte[] checkpoint = tree.checkpointBytes();
 
             put(tree, key(2), value(20), nextRevision());
 
@@ -118,11 +118,11 @@ class StorageEngineCoreCheckpointTest extends StorageEngineCoreTestSupport {
 
     @Test
     void manifestStateRestored() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             tree.flush();
 
-            byte[] checkpoint = tree.checkpoint();
+            byte[] checkpoint = tree.checkpointBytes();
             long originalNextId = tree.manifest().nextSSTableId();
             int originalSSTableCount = tree.manifest().sstables().size();
 
@@ -140,14 +140,14 @@ class StorageEngineCoreCheckpointTest extends StorageEngineCoreTestSupport {
 
     @Test
     void multipleCheckpoints() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             tree.flush();
-            byte[] checkpoint1 = tree.checkpoint();
+            byte[] checkpoint1 = tree.checkpointBytes();
 
             put(tree, key(2), value(20), nextRevision());
             tree.flush();
-            byte[] checkpoint2 = tree.checkpoint();
+            byte[] checkpoint2 = tree.checkpointBytes();
 
             put(tree, key(3), value(30), nextRevision());
             tree.flush();
@@ -166,8 +166,8 @@ class StorageEngineCoreCheckpointTest extends StorageEngineCoreTestSupport {
 
     @Test
     void emptyTree() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
-            byte[] checkpoint = tree.checkpoint();
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+            byte[] checkpoint = tree.checkpointBytes();
 
             put(tree, key(1), value(10), nextRevision());
             tree.flush();

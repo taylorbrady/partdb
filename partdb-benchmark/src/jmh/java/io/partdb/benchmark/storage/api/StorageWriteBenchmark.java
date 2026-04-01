@@ -8,7 +8,7 @@ import io.partdb.bytes.Bytes;
 import io.partdb.storage.Mutation;
 import io.partdb.storage.Revision;
 import io.partdb.storage.StorageCheckpoint;
-import io.partdb.storage.StorageConfig;
+import io.partdb.storage.StorageOptions;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -115,7 +115,7 @@ public class StorageWriteBenchmark {
 
         @Setup(Level.Iteration)
         public void openFreshStore() throws IOException {
-            openStore("partdb-fresh-write", StorageFixtures.defaultConfig());
+            openStore("partdb-fresh-write", StorageFixtures.defaultOptions());
             revisionCounter = 0;
             randomIndex = 0;
             nextSequentialKeyIndex = 0;
@@ -145,17 +145,17 @@ public class StorageWriteBenchmark {
 
         Bytes[] appendKeys;
         int nextAppendKeyIndex;
-        StorageConfig config;
+        StorageOptions options;
         StorageCheckpoint baselineCheckpoint;
         long baselineRevision;
 
         @Setup(Level.Trial)
         public void prepareTrial() throws IOException {
             prepareDataset(valueSize);
-            config = StorageFixtures.defaultConfig();
+            options = StorageFixtures.defaultOptions();
             existingKeys = BenchmarkKeys.storageKeys(initialKeyCount);
             appendKeys = BenchmarkKeys.storageKeys(initialKeyCount, appendKeySpace);
-            openStore("partdb-steady-write-baseline", config);
+            openStore("partdb-steady-write-baseline", options);
             baselineRevision = StorageFixtures.populate(store(), existingKeys, valueTemplate, 1) - 1;
             baselineCheckpoint = store().checkpoint();
             closeAndDelete();
@@ -163,7 +163,7 @@ public class StorageWriteBenchmark {
 
         @Setup(Level.Iteration)
         public void openIterationStore() throws IOException {
-            openStore("partdb-steady-write", config);
+            openStore("partdb-steady-write", options);
             store().restoreInPlace(baselineCheckpoint);
             revisionCounter = baselineRevision;
             nextAppendKeyIndex = 0;

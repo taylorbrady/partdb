@@ -59,8 +59,7 @@ public class StorageScanBenchmark {
     public long persistedFullScan(PersistedScanState state) {
         long count = 0;
         try (Scan cursor = state.store().scan(KeyRange.all())) {
-            while (cursor.hasNext()) {
-                cursor.next();
+            for (var ignored : cursor) {
                 count++;
             }
         }
@@ -69,8 +68,8 @@ public class StorageScanBenchmark {
 
     private static void consumeRange(BaseScanState state, ScanRange range, Blackhole bh) {
         try (Scan cursor = state.store().scan(KeyRange.between(range.start(), range.endExclusive()))) {
-            while (cursor.hasNext()) {
-                bh.consume(cursor.next());
+            for (var entry : cursor) {
+                bh.consume(entry);
             }
         }
     }
@@ -111,7 +110,7 @@ public class StorageScanBenchmark {
         void prepare(int keyCount, int valueSize, boolean reopenAfterLoad) throws IOException {
             existingKeys = BenchmarkKeys.storageKeys(keyCount);
 
-            openStore("partdb-scan", StorageFixtures.defaultConfig());
+            openStore("partdb-scan", StorageFixtures.defaultOptions());
             StorageFixtures.populate(
                 store(),
                 existingKeys,
@@ -120,7 +119,7 @@ public class StorageScanBenchmark {
             );
             store().checkpoint();
             if (reopenAfterLoad) {
-                reopenStore(StorageFixtures.defaultConfig());
+                reopenStore(StorageFixtures.defaultOptions());
             }
 
             range100 = buildRanges(existingKeys, 100);

@@ -32,7 +32,7 @@ final class ReadCoordinator {
         return result.flatMap(ReadCoordinator::resolveValue);
     }
 
-    StoredValueCursor scan(ScanBounds bounds) {
+    CloseableIterator<StoredEntry.Value> scan(ScanBounds bounds) {
         CatalogSnapshot readers = sstableCatalog.acquire();
         try {
             List<Iterator<StoredEntry>> iterators = new ArrayList<>();
@@ -103,7 +103,7 @@ final class ReadCoordinator {
         }
     }
 
-    private static final class ScanCursor implements StoredValueCursor {
+    private static final class ScanCursor implements CloseableIterator<StoredEntry.Value> {
         private final CatalogSnapshot readers;
         private final MergingIterator merged;
         private StoredEntry.Value next;

@@ -6,7 +6,7 @@ import io.partdb.node.command.proto.CommandProto.Command;
 import io.partdb.node.command.proto.CommandProto.GrantLease;
 import io.partdb.node.command.proto.CommandProto.Put;
 import io.partdb.node.command.proto.CommandProto.RevokeLease;
-import io.partdb.storage.StorageConfig;
+import io.partdb.storage.StorageOptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -31,7 +31,7 @@ class KvStoreTest {
         Bytes key = Bytes.utf8("lease-key");
         Bytes value = Bytes.utf8("lease-value");
 
-        try (KvStore source = KvStore.open(sourceDir, StorageConfig.defaults())) {
+        try (KvStore source = KvStore.open(sourceDir, StorageOptions.defaults())) {
             source.apply(1, Bytes.copyOf(grantLease(7, 1_000_000_000).toByteArray()));
             source.apply(2, Bytes.copyOf(put(key.toByteArray(), value.toByteArray(), 7).toByteArray()));
 
@@ -39,7 +39,7 @@ class KvStoreTest {
             snapshot = source.snapshot();
         }
 
-        try (KvStore restored = KvStore.open(restoredDir, StorageConfig.defaults())) {
+        try (KvStore restored = KvStore.open(restoredDir, StorageOptions.defaults())) {
             restored.restore(2, snapshot);
 
             assertTrue(restored.get(key).isPresent());

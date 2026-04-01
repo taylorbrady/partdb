@@ -11,7 +11,7 @@ import io.partdb.storage.LsmStats;
 import io.partdb.storage.Mutation;
 import io.partdb.storage.Revision;
 import io.partdb.storage.Scan;
-import io.partdb.storage.StorageConfig;
+import io.partdb.storage.StorageOptions;
 import io.partdb.storage.StorageCheckpoint;
 import io.partdb.storage.StorageEngine;
 import io.partdb.storage.ValueRecord;
@@ -41,8 +41,8 @@ public final class KvStore implements StateMachine, AutoCloseable {
         this.lastApplied = 0;
     }
 
-    public static KvStore open(Path dataDirectory, StorageConfig config) {
-        StorageEngine store = StorageEngine.open(dataDirectory, config);
+    public static KvStore open(Path dataDirectory, StorageOptions options) {
+        StorageEngine store = StorageEngine.open(dataDirectory, options);
         LeaseRegistry leaseRegistry = new LeaseRegistry();
         return new KvStore(store, leaseRegistry);
     }
@@ -121,13 +121,14 @@ public final class KvStore implements StateMachine, AutoCloseable {
 
     public Stream<KvEntry> scan(KeyRange range) {
         Scan cursor = store.scan(range);
+        Iterator<EntryRecord> entries = cursor.iterator();
 
         Iterator<KvEntry> iterator = new Iterator<>() {
             private KvEntry next = advance();
 
             private KvEntry advance() {
-                while (cursor.hasNext()) {
-                    EntryRecord entry = cursor.next();
+                while (entries.hasNext()) {
+                    EntryRecord entry = entries.next();
                     StoredValue stored = StoredValue.decode(entry.value().toByteArray());
                     if (stored.leaseId() == 0 || leaseRegistry.isLeaseActive(stored.leaseId())) {
                         return new KvEntry(
@@ -225,8 +226,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
 
     private void rebuildLeaseAttachments() {
         try (Scan cursor = store.scan(KeyRange.all())) {
-            while (cursor.hasNext()) {
-                EntryRecord entry = cursor.next();
+            for (EntryRecord entry : cursor) {
                 StoredValue stored = StoredValue.decode(entry.value().toByteArray());
                 if (stored.leaseId() != 0 && leaseRegistry.isLeaseActive(stored.leaseId())) {
                     leaseRegistry.attachKey(stored.leaseId(), entry.key());

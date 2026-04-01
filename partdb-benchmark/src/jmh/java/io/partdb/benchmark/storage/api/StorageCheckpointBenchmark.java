@@ -46,7 +46,7 @@ public class StorageCheckpointBenchmark {
         @Setup(Level.Trial)
         public void setup() throws IOException {
             Bytes[] keys = BenchmarkKeys.storageKeys(keyCount);
-            openStore("partdb-checkpoint", StorageFixtures.defaultConfig());
+            openStore("partdb-checkpoint", StorageFixtures.defaultOptions());
             StorageFixtures.populate(store(), keys, BenchmarkValues.fixedValue(valueSize, 0x8eedL), 1);
         }
 

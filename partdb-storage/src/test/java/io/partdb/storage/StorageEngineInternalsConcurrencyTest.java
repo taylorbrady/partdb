@@ -12,11 +12,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class StorageEngineCoreConcurrencyTest extends StorageEngineCoreTestSupport {
+class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSupport {
 
     @Test
     void concurrentReads() throws Exception {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 100; i++) {
                 put(tree, key(i), value(i), nextRevision());
             }
@@ -50,7 +50,7 @@ class StorageEngineCoreConcurrencyTest extends StorageEngineCoreTestSupport {
 
     @Test
     void concurrentWrites() throws Exception {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             int threadCount = 10;
             int writesPerThread = 100;
 
@@ -79,7 +79,7 @@ class StorageEngineCoreConcurrencyTest extends StorageEngineCoreTestSupport {
 
     @Test
     void concurrentReadsAndWrites() throws Exception {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 50; i++) {
                 put(tree, key(i), value(i), nextRevision());
             }
@@ -123,7 +123,7 @@ class StorageEngineCoreConcurrencyTest extends StorageEngineCoreTestSupport {
     void readsWhileFlushing() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int i = 0; i < 50; i++) {
                 put(tree, key(i), value(i), nextRevision());
             }
@@ -174,7 +174,7 @@ class StorageEngineCoreConcurrencyTest extends StorageEngineCoreTestSupport {
     void readsWhileCompacting() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int batch = 0; batch < 5; batch++) {
                 for (int i = 0; i < 50; i++) {
                     put(tree, key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextRevision());
@@ -217,7 +217,7 @@ class StorageEngineCoreConcurrencyTest extends StorageEngineCoreTestSupport {
     void scanWhileFlushing() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int i = 0; i < 50; i++) {
                 put(tree, key(i), value(i), nextRevision());
             }
@@ -230,7 +230,7 @@ class StorageEngineCoreConcurrencyTest extends StorageEngineCoreTestSupport {
                     try {
                         startLatch.await();
                         for (int round = 0; round < 10; round++) {
-                            try (StoredValueCursor cursor = tree.scan(ScanBounds.all())) {
+                            try (CloseableIterator<StoredEntry.Value> cursor = tree.scan(ScanBounds.all())) {
                                 while (cursor.hasNext()) {
                                     cursor.next();
                                 }

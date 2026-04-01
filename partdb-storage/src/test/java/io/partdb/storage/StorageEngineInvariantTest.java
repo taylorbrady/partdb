@@ -22,9 +22,9 @@ class StorageEngineInvariantTest {
 
     @Test
     void randomizedOperationsPreserveVisibleStateAcrossReopenAndRestore() {
-        StorageConfig config = StorageConfig.builder()
+        StorageOptions config = StorageOptions.builder()
             .writeBufferMaxBytes(256)
-            .lsmTuning(StorageConfig.LsmTuning.builder()
+            .compactionOptions(CompactionOptions.builder()
                 .targetTableSizeBytes(256)
                 .l0CompactionTrigger(2)
                 .maxBytesForLevelBase(512)
@@ -82,9 +82,9 @@ class StorageEngineInvariantTest {
 
     @Test
     void inPlaceRestoreRewindsVisibleStateAfterAggressiveCompaction() {
-        StorageConfig config = StorageConfig.builder()
+        StorageOptions config = StorageOptions.builder()
             .writeBufferMaxBytes(128)
-            .lsmTuning(StorageConfig.LsmTuning.builder()
+            .compactionOptions(CompactionOptions.builder()
                 .targetTableSizeBytes(128)
                 .l0CompactionTrigger(2)
                 .maxBytesForLevelBase(256)
@@ -145,9 +145,9 @@ class StorageEngineInvariantTest {
 
     @Test
     void randomizedSnapshotsSupportInPlaceAndCrossDirectoryRestore() {
-        StorageConfig config = StorageConfig.builder()
+        StorageOptions config = StorageOptions.builder()
             .writeBufferMaxBytes(192)
-            .lsmTuning(StorageConfig.LsmTuning.builder()
+            .compactionOptions(CompactionOptions.builder()
                 .targetTableSizeBytes(192)
                 .l0CompactionTrigger(2)
                 .maxBytesForLevelBase(384)
@@ -249,8 +249,8 @@ class StorageEngineInvariantTest {
 
         List<EntryRecord> actualEntries = new ArrayList<>();
         try (Scan cursor = store.scan(KeyRange.between(key(start), key(end)))) {
-            while (cursor.hasNext()) {
-                actualEntries.add(cursor.next());
+            for (EntryRecord entry : cursor) {
+                actualEntries.add(entry);
             }
         }
 
@@ -293,29 +293,29 @@ class StorageEngineInvariantTest {
     private record SnapshotState(StorageCheckpoint snapshot, NavigableMap<Integer, ModelValue> visibleState) {}
 
     private static final class StoreHolder implements AutoCloseable {
-        private final StorageConfig config;
+        private final StorageOptions options;
         private StorageEngine store;
         private Path directory;
 
-        private StoreHolder(Path directory, StorageConfig config, StorageEngine store) {
+        private StoreHolder(Path directory, StorageOptions options, StorageEngine store) {
             this.directory = directory;
-            this.config = config;
+            this.options = options;
             this.store = store;
         }
 
-        static StoreHolder open(Path directory, StorageConfig config) {
-            return new StoreHolder(directory, config, StorageEngine.open(directory, config));
+        static StoreHolder open(Path directory, StorageOptions options) {
+            return new StoreHolder(directory, options, StorageEngine.open(directory, options));
         }
 
         void reopen() {
             store.close();
-            store = StorageEngine.open(directory, config);
+            store = StorageEngine.open(directory, options);
         }
 
         void replaceWith(Path directory, StorageCheckpoint checkpoint) {
             store.close();
             this.directory = directory;
-            this.store = StorageEngine.restore(directory, checkpoint, config);
+            this.store = StorageEngine.restore(directory, checkpoint, options);
         }
 
         void restoreInPlace(StorageCheckpoint checkpoint) {

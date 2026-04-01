@@ -8,7 +8,8 @@ import io.partdb.bytes.Bytes;
 import io.partdb.storage.LsmStats;
 import io.partdb.storage.Mutation;
 import io.partdb.storage.Revision;
-import io.partdb.storage.StorageConfig;
+import io.partdb.storage.SstableOptions;
+import io.partdb.storage.StorageOptions;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -69,18 +70,18 @@ public class StorageCompactionBenchmark {
         Bytes[] burstKeys;
         Bytes[] burstValues;
         long revisionCounter;
-        private StorageConfig config;
+        private StorageOptions options;
 
         @Setup(Level.Trial)
         public void prepareTrial() {
-            config = StorageFixtures.compactionConfig(StorageConfig.Compression.valueOf(compressionName));
+            options = StorageFixtures.compactionOptions(SstableOptions.Compression.valueOf(compressionName));
             burstKeys = BenchmarkKeys.storageKeys(entryCountForPayloadTarget(valueSize, burstPayloadBytes));
             burstValues = buildBurstValues(valueSize, valuePattern, burstKeys.length);
         }
 
         @Setup(Level.Invocation)
         public void openIterationStore() throws IOException {
-            openStore("partdb-compaction", config);
+            openStore("partdb-compaction", options);
             revisionCounter = 0;
         }
 

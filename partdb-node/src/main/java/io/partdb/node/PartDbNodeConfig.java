@@ -2,7 +2,7 @@ package io.partdb.node;
 
 import io.partdb.raft.RaftConfig;
 import io.partdb.raft.RaftMembership;
-import io.partdb.storage.StorageConfig;
+import io.partdb.storage.StorageOptions;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -16,14 +16,14 @@ public final class PartDbNodeConfig {
     private final String nodeId;
     private final NodeMembership membership;
     private final Path dataDirectory;
-    private final StorageConfig storageConfig;
+    private final StorageOptions storageOptions;
     private final RaftConfig raftConfig;
     private final Duration tickInterval;
 
     private PartDbNodeConfig(Builder builder) {
         this.nodeId = requireNonBlank(builder.nodeId, "nodeId");
         this.dataDirectory = Objects.requireNonNull(builder.dataDirectory, "dataDirectory must not be null");
-        this.storageConfig = Objects.requireNonNull(builder.storageConfig, "storageConfig must not be null");
+        this.storageOptions = Objects.requireNonNull(builder.storageOptions, "storageOptions must not be null");
         this.raftConfig = Objects.requireNonNull(builder.raftConfig, "raftConfig must not be null");
         this.tickInterval = Objects.requireNonNull(builder.tickInterval, "tickInterval must not be null");
         if (tickInterval.isNegative() || tickInterval.isZero()) {
@@ -53,8 +53,8 @@ public final class PartDbNodeConfig {
         return dataDirectory;
     }
 
-    StorageConfig storageConfig() {
-        return storageConfig;
+    StorageOptions storageOptions() {
+        return storageOptions;
     }
 
     RaftConfig raftConfig() {
@@ -84,14 +84,14 @@ public final class PartDbNodeConfig {
         return nodeId.equals(other.nodeId)
             && membership.equals(other.membership)
             && dataDirectory.equals(other.dataDirectory)
-            && storageConfig.equals(other.storageConfig)
+            && storageOptions.equals(other.storageOptions)
             && raftConfig.equals(other.raftConfig)
             && tickInterval.equals(other.tickInterval);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(nodeId, membership, dataDirectory, storageConfig, raftConfig, tickInterval);
+        return Objects.hash(nodeId, membership, dataDirectory, storageOptions, raftConfig, tickInterval);
     }
 
     @Override
@@ -100,7 +100,7 @@ public final class PartDbNodeConfig {
             + "nodeId='" + nodeId + '\''
             + ", membership=" + membership
             + ", dataDirectory=" + dataDirectory
-            + ", storageConfig=" + storageConfig
+            + ", storageOptions=" + storageOptions
             + ", raftConfig=" + raftConfig
             + ", tickInterval=" + tickInterval
             + '}';
@@ -110,7 +110,7 @@ public final class PartDbNodeConfig {
         private final String nodeId;
         private final Path dataDirectory;
         private NodeMembership membership;
-        private StorageConfig storageConfig = StorageConfig.defaults();
+        private StorageOptions storageOptions = StorageOptions.defaults();
         private RaftConfig raftConfig = RaftConfig.defaults();
         private Duration tickInterval = DEFAULT_TICK_INTERVAL;
 
@@ -136,8 +136,8 @@ public final class PartDbNodeConfig {
             return this;
         }
 
-        Builder storageConfig(StorageConfig storageConfig) {
-            this.storageConfig = Objects.requireNonNull(storageConfig, "storageConfig must not be null");
+        Builder storageOptions(StorageOptions storageOptions) {
+            this.storageOptions = Objects.requireNonNull(storageOptions, "storageOptions must not be null");
             return this;
         }
 

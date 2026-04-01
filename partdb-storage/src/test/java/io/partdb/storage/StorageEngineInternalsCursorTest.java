@@ -9,17 +9,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class StorageEngineCoreCursorTest extends StorageEngineCoreTestSupport {
+class StorageEngineInternalsCursorTest extends StorageEngineInternalTestSupport {
 
     @Test
     void closeReleasesResources() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 10; i++) {
                 put(tree, key(i), value(i), nextRevision());
             }
             tree.flush();
 
-            try (StoredValueCursor cursor = tree.scan(ScanBounds.all())) {
+            try (CloseableIterator<StoredEntry.Value> cursor = tree.scan(ScanBounds.all())) {
                 assertTrue(cursor.hasNext());
                 assertNotNull(cursor.next());
             }
@@ -28,15 +28,15 @@ class StorageEngineCoreCursorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void multipleCursorsOnSameTree() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 20; i++) {
                 put(tree, key(i), value(i), nextRevision());
             }
             tree.flush();
 
-            try (StoredValueCursor cursor1 = tree.scan(ScanBounds.all());
-                 StoredValueCursor cursor2 = tree.scan(ScanBounds.all());
-                 StoredValueCursor cursor3 = tree.scan(ScanBounds.all())) {
+            try (CloseableIterator<StoredEntry.Value> cursor1 = tree.scan(ScanBounds.all());
+                 CloseableIterator<StoredEntry.Value> cursor2 = tree.scan(ScanBounds.all());
+                 CloseableIterator<StoredEntry.Value> cursor3 = tree.scan(ScanBounds.all())) {
 
                 List<StoredEntry.Value> entries1 = readAll(cursor1);
                 List<StoredEntry.Value> entries2 = readAll(cursor2);
@@ -53,7 +53,7 @@ class StorageEngineCoreCursorTest extends StorageEngineCoreTestSupport {
     void streamSurvivesCompaction() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int batch = 0; batch < 5; batch++) {
                 for (int i = 0; i < 30; i++) {
                     put(tree, key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextRevision());
@@ -61,7 +61,7 @@ class StorageEngineCoreCursorTest extends StorageEngineCoreTestSupport {
                 tree.flush();
             }
 
-            try (StoredValueCursor cursor = tree.scan(ScanBounds.all())) {
+            try (CloseableIterator<StoredEntry.Value> cursor = tree.scan(ScanBounds.all())) {
                 Thread.sleep(1000);
 
                 List<StoredEntry.Value> entries = readAll(cursor);
@@ -76,13 +76,13 @@ class StorageEngineCoreCursorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void closeAfterPartialConsumption() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 100; i++) {
                 put(tree, key(i), value(i), nextRevision());
             }
             tree.flush();
 
-            try (StoredValueCursor cursor = tree.scan(ScanBounds.all())) {
+            try (CloseableIterator<StoredEntry.Value> cursor = tree.scan(ScanBounds.all())) {
                 List<StoredEntry.Value> first10 = new ArrayList<>();
                 while (cursor.hasNext() && first10.size() < 10) {
                     first10.add(cursor.next());

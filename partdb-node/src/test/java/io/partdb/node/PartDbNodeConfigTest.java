@@ -1,7 +1,7 @@
 package io.partdb.node;
 
 import io.partdb.raft.RaftConfig;
-import io.partdb.storage.StorageConfig;
+import io.partdb.storage.StorageOptions;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -22,24 +22,24 @@ class PartDbNodeConfigTest {
         assertEquals(Path.of("data/node1"), config.dataDirectory());
         assertEquals(NodeMembership.ofVoters("node1"), config.membership());
         assertEquals(Set.of("node1"), config.memberIds());
-        assertEquals(StorageConfig.defaults(), config.storageConfig());
+        assertEquals(StorageOptions.defaults(), config.storageOptions());
         assertEquals(RaftConfig.defaults(), config.raftConfig());
         assertEquals(Duration.ofMillis(10), config.tickInterval());
     }
 
     @Test
     void builderSupportsAdvancedOverrides() {
-        var storageConfig = StorageConfig.defaults();
+        var storageOptions = StorageOptions.defaults();
         var raftConfig = new RaftConfig(20, 40, 5, 250);
         var config = PartDbNodeConfig.builder("node2", Path.of("data/node2"))
             .voters("node1", "node2")
             .tickInterval(Duration.ofMillis(25))
-            .storageConfig(storageConfig)
+            .storageOptions(storageOptions)
             .raftConfig(raftConfig)
             .build();
 
         assertEquals(Set.of("node1", "node2"), config.memberIds());
-        assertEquals(storageConfig, config.storageConfig());
+        assertEquals(storageOptions, config.storageOptions());
         assertEquals(raftConfig, config.raftConfig());
         assertEquals(Duration.ofMillis(25), config.tickInterval());
     }

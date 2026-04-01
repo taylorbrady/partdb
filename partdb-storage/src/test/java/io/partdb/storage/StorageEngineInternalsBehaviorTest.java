@@ -11,11 +11,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
+class StorageEngineInternalsBehaviorTest extends StorageEngineInternalTestSupport {
 
     @Test
     void putAndGet() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
 
             Optional<StoredEntry.Value> result = tree.get(key(1));
@@ -27,7 +27,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void getNonExistentKey() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             Optional<StoredEntry.Value> result = tree.get(key(99));
             assertTrue(result.isEmpty());
         }
@@ -35,7 +35,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void deleteKey() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             delete(tree, key(1), nextRevision());
 
@@ -46,7 +46,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void deleteNonExistentKey() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             delete(tree, key(1), nextRevision());
 
             Optional<StoredEntry.Value> result = tree.get(key(1));
@@ -56,7 +56,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void putOverwritesPreviousValue() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(1), value(20), nextRevision());
 
@@ -89,7 +89,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void entireRange() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), value(20), nextRevision());
             put(tree, key(3), value(30), nextRevision());
@@ -105,7 +105,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void withBounds() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), value(20), nextRevision());
             put(tree, key(3), value(30), nextRevision());
@@ -121,7 +121,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void excludesDeletedKeys() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), value(20), nextRevision());
             delete(tree, key(2), nextRevision());
@@ -139,7 +139,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
     void mergesFromMultipleSources() {
         LsmConfig config = smallMemtableConfig(512);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int i = 0; i < 20; i++) {
                 put(tree, key(i), largeValue(100), nextRevision());
             }
@@ -157,7 +157,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
     void usesLatestValueForDuplicateKeys() {
         LsmConfig config = smallMemtableConfig(256);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), largeValue(100), nextRevision());
             put(tree, key(1), value(20), nextRevision());
@@ -175,7 +175,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void manualFlush() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), value(20), nextRevision());
 
@@ -190,7 +190,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
     void automaticOnMemtableSize() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int i = 0; i < 10; i++) {
                 put(tree, key(i), largeValue(200), nextRevision());
             }
@@ -205,13 +205,13 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
     void fromSSTables() {
         LsmConfig config = LsmConfig.defaults();
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), value(20), nextRevision());
             tree.flush();
         }
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             Optional<StoredEntry.Value> result1 = tree.get(key(1));
             Optional<StoredEntry.Value> result2 = tree.get(key(2));
 
@@ -225,7 +225,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void readPathPriority() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             tree.flush();
             put(tree, key(1), value(20), nextRevision());
@@ -239,7 +239,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void rejectsOlderRevisionThanPersistedValue() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             put(tree, key(1), value(10), 10);
             tree.flush();
 
@@ -257,7 +257,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
     void multipleSSTables() {
         LsmConfig config = smallMemtableConfig(512);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int i = 0; i < 30; i++) {
                 put(tree, key(i), largeValue(100), nextRevision());
             }
@@ -272,7 +272,7 @@ class StorageEngineCoreBehaviorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void emptyManifestLoad() {
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
             SSTableManifest manifest = tree.manifest();
             assertNotNull(manifest);
             assertTrue(manifest.sstables().isEmpty());

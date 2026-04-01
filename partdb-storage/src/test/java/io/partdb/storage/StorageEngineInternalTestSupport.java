@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
-abstract class StorageEngineCoreTestSupport {
+abstract class StorageEngineInternalTestSupport {
 
     private static final Duration COMPACTION_TIMEOUT = Duration.ofSeconds(20);
 
@@ -46,7 +46,7 @@ abstract class StorageEngineCoreTestSupport {
         return LsmConfig.defaults().withMemtableMaxSizeBytes(sizeBytes);
     }
 
-    protected static List<StoredEntry.Value> readAll(StoredValueCursor cursor) {
+    protected static List<StoredEntry.Value> readAll(CloseableIterator<StoredEntry.Value> cursor) {
         try (cursor) {
             List<StoredEntry.Value> entries = new ArrayList<>();
             while (cursor.hasNext()) {
@@ -56,15 +56,15 @@ abstract class StorageEngineCoreTestSupport {
         }
     }
 
-    protected static void put(StorageEngineCore core, Slice key, Slice value, long revision) {
-        core.apply(List.of(new StoredEntry.Value(key, value, revision)));
+    protected static void put(StorageEngine store, Slice key, Slice value, long revision) {
+        store.apply(List.of(new StoredEntry.Value(key, value, revision)));
     }
 
-    protected static void delete(StorageEngineCore core, Slice key, long revision) {
-        core.apply(List.of(new StoredEntry.Tombstone(key, revision)));
+    protected static void delete(StorageEngine store, Slice key, long revision) {
+        store.apply(List.of(new StoredEntry.Tombstone(key, revision)));
     }
 
-    protected static void awaitCompaction(StorageEngineCore store) {
+    protected static void awaitCompaction(StorageEngine store) {
         store.awaitCompactionIdle(COMPACTION_TIMEOUT);
     }
 }

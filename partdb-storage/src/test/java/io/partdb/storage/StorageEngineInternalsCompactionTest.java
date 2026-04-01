@@ -11,13 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class StorageEngineCoreCompactionTest extends StorageEngineCoreTestSupport {
+class StorageEngineInternalsCompactionTest extends StorageEngineInternalTestSupport {
 
     @Test
     void l0TriggersAtThreshold() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
                 put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
@@ -38,7 +38,7 @@ class StorageEngineCoreCompactionTest extends StorageEngineCoreTestSupport {
     void mergesOverlappingKeys() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int version = 0; version < 5; version++) {
                 for (int i = 0; i < 20; i++) {
                     put(tree, key(String.format("key-%02d", i)), value("v" + version + "-" + i), nextRevision());
@@ -60,7 +60,7 @@ class StorageEngineCoreCompactionTest extends StorageEngineCoreTestSupport {
     void tombstonesResultInEmptyGet() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int i = 0; i < 50; i++) {
                 put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
@@ -83,7 +83,7 @@ class StorageEngineCoreCompactionTest extends StorageEngineCoreTestSupport {
     void levelSizeRespected() {
         LsmConfig config = smallMemtableConfig(2048);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int batch = 0; batch < 20; batch++) {
                 for (int i = 0; i < 100; i++) {
                     put(tree, key(String.format("key-%05d", batch * 100 + i)), largeValue(100), nextRevision());
@@ -108,7 +108,7 @@ class StorageEngineCoreCompactionTest extends StorageEngineCoreTestSupport {
     void preservesNewestVersions() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             List<String> expectedValues = new ArrayList<>();
 
             for (int i = 0; i < 30; i++) {
@@ -135,7 +135,7 @@ class StorageEngineCoreCompactionTest extends StorageEngineCoreTestSupport {
     void manifestConsistency() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int i = 0; i < 80; i++) {
                 put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
@@ -166,7 +166,7 @@ class StorageEngineCoreCompactionTest extends StorageEngineCoreTestSupport {
         List<Slice> keys = new ArrayList<>();
         List<Slice> values = new ArrayList<>();
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int i = 0; i < 60; i++) {
                 Slice k = key(String.format("key-%03d", i));
                 Slice v = value("value-" + i);
@@ -178,7 +178,7 @@ class StorageEngineCoreCompactionTest extends StorageEngineCoreTestSupport {
             awaitCompaction(tree);
         }
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int i = 0; i < keys.size(); i++) {
                 Optional<StoredEntry.Value> result = tree.get(keys.get(i));
                 assertTrue(result.isPresent());
@@ -191,7 +191,7 @@ class StorageEngineCoreCompactionTest extends StorageEngineCoreTestSupport {
     void scanAfterCompaction() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
                 put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }

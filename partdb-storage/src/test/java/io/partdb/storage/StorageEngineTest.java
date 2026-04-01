@@ -25,7 +25,7 @@ class StorageEngineTest {
 
     @Test
     void putGetAndDeleteUseBytesBasedApi() {
-        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             Bytes key = bytes("key");
             Bytes value = bytes("value");
 
@@ -44,15 +44,15 @@ class StorageEngineTest {
 
     @Test
     void scanExposesExplicitCursorLifecycle() {
-        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             store.apply(new Revision(1), Mutation.put(bytes("a"), bytes("1")));
             store.apply(new Revision(2), Mutation.put(bytes("b"), bytes("2")));
             store.apply(new Revision(3), Mutation.put(bytes("c"), bytes("3")));
 
             List<String> keys = new ArrayList<>();
             try (Scan cursor = store.scan(KeyRange.between(bytes("a"), bytes("c")))) {
-                while (cursor.hasNext()) {
-                    keys.add(cursor.next().key().utf8());
+                for (EntryRecord entry : cursor) {
+                    keys.add(entry.key().utf8());
                 }
             }
 
@@ -66,13 +66,13 @@ class StorageEngineTest {
         Path restoredDir = tempDir.resolve("restored");
 
         StorageCheckpoint checkpoint;
-        try (StorageEngine source = StorageEngine.open(sourceDir, StorageConfig.defaults())) {
+        try (StorageEngine source = StorageEngine.open(sourceDir, StorageOptions.defaults())) {
             source.apply(new Revision(1), Mutation.put(bytes("key-1"), bytes("value-1")));
             source.apply(new Revision(2), Mutation.put(bytes("key-2"), bytes("value-2")));
             checkpoint = source.checkpoint();
         }
 
-        try (StorageEngine restored = StorageEngine.restore(restoredDir, checkpoint, StorageConfig.defaults())) {
+        try (StorageEngine restored = StorageEngine.restore(restoredDir, checkpoint, StorageOptions.defaults())) {
 
             Optional<ValueRecord> value1 = restored.get(bytes("key-1"));
             Optional<ValueRecord> value2 = restored.get(bytes("key-2"));
@@ -86,7 +86,7 @@ class StorageEngineTest {
 
     @Test
     void rejectsStaleRevisionForExistingValue() {
-        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             Bytes key = bytes("key");
             store.apply(new Revision(10), Mutation.put(key, bytes("value-1")));
 
@@ -102,7 +102,7 @@ class StorageEngineTest {
 
     @Test
     void allowsIdempotentReplayAtSameRevision() {
-        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             Bytes key = bytes("key");
             Bytes value = bytes("value");
 
@@ -118,7 +118,7 @@ class StorageEngineTest {
 
     @Test
     void rejectsStaleRevisionAgainstPersistedTombstone() {
-        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             Bytes key = bytes("key");
             store.apply(new Revision(10), Mutation.put(key, bytes("value")));
             store.apply(new Revision(11), Mutation.delete(key));
@@ -138,7 +138,7 @@ class StorageEngineTest {
     void openFailsWhenManifestIsMissingButSstablesRemain() throws Exception {
         Path storeDir = tempDir.resolve("store");
 
-        try (StorageEngine store = StorageEngine.open(storeDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(storeDir, StorageOptions.defaults())) {
             store.apply(new Revision(1), Mutation.put(bytes("key"), bytes("value")));
             store.checkpoint();
         }
@@ -147,7 +147,7 @@ class StorageEngineTest {
 
         StorageException.Corruption error = assertThrows(
             StorageException.Corruption.class,
-            () -> StorageEngine.open(storeDir, StorageConfig.defaults())
+            () -> StorageEngine.open(storeDir, StorageOptions.defaults())
         );
 
         assertTrue(error.getMessage().contains("manifest"));
@@ -161,7 +161,7 @@ class StorageEngineTest {
 
         StorageException.Corruption error = assertThrows(
             StorageException.Corruption.class,
-            () -> StorageEngine.open(storeDir, StorageConfig.defaults())
+            () -> StorageEngine.open(storeDir, StorageOptions.defaults())
         );
 
         assertTrue(error.getMessage().contains("manifest"));
@@ -171,7 +171,7 @@ class StorageEngineTest {
     void openFailsWithTruncatedSstableAsCorruption() throws Exception {
         Path storeDir = tempDir.resolve("truncated-sstable");
 
-        try (StorageEngine store = StorageEngine.open(storeDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(storeDir, StorageOptions.defaults())) {
             store.apply(new Revision(1), Mutation.put(bytes("key"), bytes("value")));
             store.checkpoint();
         }
@@ -182,7 +182,7 @@ class StorageEngineTest {
 
         StorageException.Corruption error = assertThrows(
             StorageException.Corruption.class,
-            () -> StorageEngine.open(storeDir, StorageConfig.defaults())
+            () -> StorageEngine.open(storeDir, StorageOptions.defaults())
         );
 
         assertTrue(error.getMessage().contains("SSTable"));
@@ -192,7 +192,7 @@ class StorageEngineTest {
     void getFailsWithCorruptedSstableBlockAsCorruption() throws Exception {
         Path storeDir = tempDir.resolve("corrupted-block");
 
-        try (StorageEngine store = StorageEngine.open(storeDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(storeDir, StorageOptions.defaults())) {
             store.apply(new Revision(1), Mutation.put(bytes("key"), bytes("value")));
             store.checkpoint();
         }
@@ -202,7 +202,7 @@ class StorageEngineTest {
         fileBytes[SSTableHeader.HEADER_SIZE] ^= 0x01;
         Files.write(sstable, fileBytes);
 
-        try (StorageEngine reopened = StorageEngine.open(storeDir, StorageConfig.defaults())) {
+        try (StorageEngine reopened = StorageEngine.open(storeDir, StorageOptions.defaults())) {
             StorageException.Corruption error = assertThrows(
                 StorageException.Corruption.class,
                 () -> reopened.get(bytes("key"))
@@ -214,7 +214,7 @@ class StorageEngineTest {
 
     @Test
     void restoreRejectsCorruptedSnapshotWithoutDiscardingLiveState() {
-        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             Bytes key = bytes("key");
             store.apply(new Revision(1), Mutation.put(key, bytes("before")));
             StorageCheckpoint checkpoint = store.checkpoint();
@@ -240,7 +240,7 @@ class StorageEngineTest {
         Path restoredDir = tempDir.resolve("metadata-restored");
 
         StorageCheckpoint checkpoint;
-        try (StorageEngine store = StorageEngine.open(storeDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(storeDir, StorageOptions.defaults())) {
             store.apply(new Revision(4), Mutation.put(bytes("key"), bytes("value")));
             store.apply(new Revision(9), Mutation.delete(bytes("key")));
 
@@ -248,11 +248,11 @@ class StorageEngineTest {
             checkpoint = store.checkpoint();
         }
 
-        try (StorageEngine reopened = StorageEngine.open(storeDir, StorageConfig.defaults())) {
+        try (StorageEngine reopened = StorageEngine.open(storeDir, StorageOptions.defaults())) {
             assertEquals(new Revision(9), reopened.metadata().appliedThrough());
         }
 
-        try (StorageEngine restored = StorageEngine.restore(restoredDir, checkpoint, StorageConfig.defaults())) {
+        try (StorageEngine restored = StorageEngine.restore(restoredDir, checkpoint, StorageOptions.defaults())) {
             assertEquals(new Revision(9), restored.metadata().appliedThrough());
         }
     }
