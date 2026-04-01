@@ -5,6 +5,7 @@ import io.partdb.benchmark.support.BenchmarkKeys;
 import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
+import io.partdb.storage.StorageCheckpoint;
 import io.partdb.storage.StorageConfig;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -34,7 +35,7 @@ public class StorageWriteBenchmark {
 
     @Benchmark
     public void freshSequentialInsert(FreshWriteState state) {
-        state.store().put(BenchmarkKeys.storageKey(state.nextSequentialKey++), state.valueTemplate, state.nextRevision());
+        state.store().put(state.nextSequentialInsertKey(), state.valueTemplate, state.nextRevision());
     }
 
     @Benchmark
@@ -44,7 +45,7 @@ public class StorageWriteBenchmark {
 
     @Benchmark
     public void steadyStateAppend(SteadyStateWriteState state) {
-        state.store().put(BenchmarkKeys.storageKey(state.nextAppendKey++), state.valueTemplate, state.nextRevision());
+        state.store().put(state.nextAppendKey(), state.valueTemplate, state.nextRevision());
     }
 
     @Benchmark
@@ -72,6 +73,13 @@ public class StorageWriteBenchmark {
             randomIndex = (randomIndex + 1) % randomKeys.length;
             return key;
         }
+
+        static Bytes nextKey(Bytes[] keys, int index, String label) {
+            if (index >= keys.length) {
+                throw new IllegalStateException("Benchmark exhausted precomputed " + label + " keys");
+            }
+            return keys[index];
+        }
     }
 
     @State(Scope.Benchmark)
@@ -79,11 +87,16 @@ public class StorageWriteBenchmark {
         @Param({"100", "1024", "4096"})
         int valueSize;
 
-        long nextSequentialKey;
+        @Param({"2000000"})
+        int sequentialKeySpace;
+
+        Bytes[] sequentialKeys;
+        int nextSequentialKeyIndex;
 
         @Setup(Level.Trial)
         public void prepareTrial() {
             prepareDataset(valueSize);
+            sequentialKeys = BenchmarkKeys.storageKeys(sequentialKeySpace);
         }
 
         @Setup(Level.Iteration)
@@ -91,12 +104,16 @@ public class StorageWriteBenchmark {
             openStore("partdb-fresh-write", StorageFixtures.defaultConfig());
             revisionCounter = 0;
             randomIndex = 0;
-            nextSequentialKey = 0;
+            nextSequentialKeyIndex = 0;
         }
 
         @TearDown(Level.Iteration)
         public void tearDownIteration() throws IOException {
             closeAndDelete();
+        }
+
+        Bytes nextSequentialInsertKey() {
+            return nextKey(sequentialKeys, nextSequentialKeyIndex++, "fresh sequential insert");
         }
     }
 
@@ -109,16 +126,33 @@ public class StorageWriteBenchmark {
         int initialKeyCount;
 
         Bytes[] existingKeys;
-        long nextAppendKey;
+        @Param({"2000000"})
+        int appendKeySpace;
+
+        Bytes[] appendKeys;
+        int nextAppendKeyIndex;
+        StorageConfig config;
+        StorageCheckpoint baselineCheckpoint;
+        long baselineRevision;
 
         @Setup(Level.Trial)
-        public void openSteadyStateStore() throws IOException {
+        public void prepareTrial() throws IOException {
             prepareDataset(valueSize);
-            openStore("partdb-steady-write", StorageFixtures.defaultConfig());
+            config = StorageFixtures.defaultConfig();
             existingKeys = BenchmarkKeys.storageKeys(initialKeyCount);
-            revisionCounter = StorageFixtures.populate(store(), existingKeys, valueTemplate, 1) - 1;
-            store().checkpoint();
-            nextAppendKey = initialKeyCount;
+            appendKeys = BenchmarkKeys.storageKeys(initialKeyCount, appendKeySpace);
+            openStore("partdb-steady-write-baseline", config);
+            baselineRevision = StorageFixtures.populate(store(), existingKeys, valueTemplate, 1) - 1;
+            baselineCheckpoint = store().checkpoint();
+            closeAndDelete();
+        }
+
+        @Setup(Level.Iteration)
+        public void openIterationStore() throws IOException {
+            openStore("partdb-steady-write", config);
+            store().replaceWith(baselineCheckpoint);
+            revisionCounter = baselineRevision;
+            nextAppendKeyIndex = 0;
             randomIndex = 0;
         }
 
@@ -128,8 +162,17 @@ public class StorageWriteBenchmark {
             return key;
         }
 
+        Bytes nextAppendKey() {
+            return nextKey(appendKeys, nextAppendKeyIndex++, "steady-state append");
+        }
+
         @TearDown(Level.Trial)
         public void tearDown() throws IOException {
+            closeAndDelete();
+        }
+
+        @TearDown(Level.Iteration)
+        public void tearDownIteration() throws IOException {
             closeAndDelete();
         }
     }

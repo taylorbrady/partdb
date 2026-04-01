@@ -23,9 +23,13 @@ public final class BenchmarkKeys {
     }
 
     public static Bytes[] storageKeys(int count) {
+        return storageKeys(0, count);
+    }
+
+    public static Bytes[] storageKeys(long startValue, int count) {
         Bytes[] keys = new Bytes[count];
         for (int i = 0; i < count; i++) {
-            keys[i] = storageKey(i);
+            keys[i] = storageKey(startValue + i);
         }
         return keys;
     }
