@@ -29,6 +29,7 @@ final class SSTableCatalog implements AutoCloseable {
     private final AtomicBoolean closed;
     private final StorageRuntimeStats stats;
     private final CatalogManager catalogManager;
+    private final AtomicLong appliedThroughRevision;
 
     private SSTableCatalog(
         LsmConfig config,
@@ -45,6 +46,7 @@ final class SSTableCatalog implements AutoCloseable {
         this.closed = new AtomicBoolean(false);
         this.stats = Objects.requireNonNull(stats, "stats");
         this.catalogManager = new CatalogManager(initialState.toGeneration());
+        this.appliedThroughRevision = new AtomicLong(initialState.manifest().appliedThroughRevision());
         this.stats.updateSstables(initialState.manifest());
 
         this.compactionController = new CompactionController(
@@ -94,6 +96,14 @@ final class SSTableCatalog implements AutoCloseable {
 
     SSTableManifest manifest() {
         return catalogManager.manifest();
+    }
+
+    long appliedThroughRevision() {
+        return appliedThroughRevision.get();
+    }
+
+    void updateAppliedThrough(long revision) {
+        appliedThroughRevision.accumulateAndGet(revision, Math::max);
     }
 
     CatalogCheckpoint captureCheckpoint() {
@@ -206,7 +216,11 @@ final class SSTableCatalog implements AutoCloseable {
 
             List<SSTableMetadata> updatedMetadata = new ArrayList<>(currentManifest.sstables());
             updatedMetadata.addFirst(metadata);
-            SSTableManifest updatedManifest = new SSTableManifest(nextId.get(), updatedMetadata);
+            SSTableManifest updatedManifest = new SSTableManifest(
+                nextId.get(),
+                appliedThroughRevision.get(),
+                updatedMetadata
+            );
             persistence.writeManifest(updatedManifest);
             stats.updateSstables(updatedManifest);
 
@@ -231,7 +245,11 @@ final class SSTableCatalog implements AutoCloseable {
             List<SSTableMetadata> updated = new ArrayList<>(currentManifest.sstables());
             updated.removeAll(removed);
             updated.addAll(added);
-            SSTableManifest updatedManifest = new SSTableManifest(nextId.get(), updated);
+            SSTableManifest updatedManifest = new SSTableManifest(
+                nextId.get(),
+                appliedThroughRevision.get(),
+                updated
+            );
             persistence.writeManifest(updatedManifest);
             stats.updateSstables(updatedManifest);
 
@@ -351,6 +369,7 @@ final class SSTableCatalog implements AutoCloseable {
     private void installCatalogState(LoadedCatalog state) {
         catalogManager.replaceCurrent(state.toGeneration());
         nextId.set(state.manifest().nextSSTableId());
+        appliedThroughRevision.set(state.manifest().appliedThroughRevision());
         stats.updateSstables(state.manifest());
     }
 

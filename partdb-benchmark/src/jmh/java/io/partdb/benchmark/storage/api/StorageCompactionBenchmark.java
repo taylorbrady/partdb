@@ -6,6 +6,8 @@ import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
 import io.partdb.storage.LsmStats;
+import io.partdb.storage.Mutation;
+import io.partdb.storage.Revision;
 import io.partdb.storage.StorageConfig;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -89,7 +91,10 @@ public class StorageCompactionBenchmark {
 
         void writeBurst() {
             for (int index = 0; index < burstKeys.length; index++) {
-                store().put(burstKeys[index], burstValues[index], ++revisionCounter);
+                store().apply(
+                    new Revision(++revisionCounter),
+                    Mutation.put(burstKeys[index], burstValues[index])
+                );
             }
         }
 

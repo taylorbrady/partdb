@@ -15,14 +15,15 @@ import java.util.zip.CRC32C;
 
 record SSTableManifest(
     long nextSSTableId,
+    long appliedThroughRevision,
     List<SSTableMetadata> sstables
 ) {
 
     private static final int MAGIC_NUMBER = 0x4D414E46;
-    private static final int VERSION = 4;
+    private static final int VERSION = 5;
     private static final String MANIFEST_FILENAME = "MANIFEST";
     private static final String MANIFEST_TEMP_FILENAME = "MANIFEST.tmp";
-    private static final int MIN_SERIALIZED_SIZE = 4 + 4 + 8 + 4 + 4;
+    private static final int MIN_SERIALIZED_SIZE = 4 + 4 + 8 + 8 + 4 + 4;
 
     public SSTableManifest {
         Objects.requireNonNull(sstables, "sstables");
@@ -31,6 +32,9 @@ record SSTableManifest(
         if (nextSSTableId < 0) {
             throw new IllegalArgumentException("nextSSTableId must be non-negative");
         }
+        if (appliedThroughRevision < 0) {
+            throw new IllegalArgumentException("appliedThroughRevision must be non-negative");
+        }
     }
 
     public static SSTableManifest readFrom(Path dataDirectory) {
@@ -38,7 +42,7 @@ record SSTableManifest(
             Path manifestPath = dataDirectory.resolve(MANIFEST_FILENAME);
 
             if (!Files.exists(manifestPath)) {
-                return new SSTableManifest(0, List.of());
+                return new SSTableManifest(0, 0, List.of());
             }
 
             byte[] bytes = Files.readAllBytes(manifestPath);
@@ -102,6 +106,7 @@ record SSTableManifest(
         buffer.putInt(MAGIC_NUMBER);
         buffer.putInt(VERSION);
         buffer.putLong(nextSSTableId);
+        buffer.putLong(appliedThroughRevision);
         buffer.putInt(sstables.size());
 
         for (SSTableMetadata sst : sstables) {
@@ -149,6 +154,7 @@ record SSTableManifest(
             }
 
             long nextSSTableId = buffer.getLong();
+            long appliedThroughRevision = buffer.getLong();
             int sstableCount = buffer.getInt();
             if (sstableCount < 0) {
                 throw new StorageException.Corruption("Negative SSTable manifest entry count");
@@ -163,14 +169,14 @@ record SSTableManifest(
                 throw new StorageException.Corruption("Trailing SSTable manifest data");
             }
 
-            return new SSTableManifest(nextSSTableId, sstables);
+            return new SSTableManifest(nextSSTableId, appliedThroughRevision, sstables);
         } catch (BufferUnderflowException | IllegalArgumentException e) {
             throw new StorageException.Corruption("Malformed SSTable manifest", e);
         }
     }
 
     private int calculateSize() {
-        int size = 4 + 4 + 8 + 4 + 4;
+        int size = 4 + 4 + 8 + 8 + 4 + 4;
         for (SSTableMetadata sst : sstables) {
             size += sst.serializedSize();
         }

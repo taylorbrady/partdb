@@ -7,13 +7,13 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class StoreRuntimeCheckpointTest extends StoreRuntimeTestSupport {
+class StorageEngineCoreCheckpointTest extends StorageEngineCoreTestSupport {
 
     @Test
     void roundtrip() {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
-            tree.put(key(1), value(10), nextRevision());
-            tree.put(key(2), value(20), nextRevision());
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+            put(tree, key(1), value(10), nextRevision());
+            put(tree, key(2), value(20), nextRevision());
             tree.flush();
 
             byte[] checkpoint = tree.checkpoint();
@@ -32,14 +32,14 @@ class StoreRuntimeCheckpointTest extends StoreRuntimeTestSupport {
         Path restoredDir = tempDir.resolve("restored");
 
         byte[] checkpoint;
-        try (StoreRuntime source = StoreRuntime.open(sourceDir, LsmConfig.defaults())) {
-            source.put(key(1), value(10), nextRevision());
-            source.put(key(2), value(20), nextRevision());
+        try (StorageEngineCore source = StorageEngineCore.open(sourceDir, LsmConfig.defaults())) {
+            put(source, key(1), value(10), nextRevision());
+            put(source, key(2), value(20), nextRevision());
             source.flush();
             checkpoint = source.checkpoint();
         }
 
-        try (StoreRuntime restored = StoreRuntime.open(restoredDir, LsmConfig.defaults())) {
+        try (StorageEngineCore restored = StorageEngineCore.open(restoredDir, LsmConfig.defaults())) {
             restored.replaceWithCheckpoint(checkpoint);
 
             assertTrue(restored.get(key(1)).isPresent());
@@ -51,14 +51,14 @@ class StoreRuntimeCheckpointTest extends StoreRuntimeTestSupport {
 
     @Test
     void restoresToPreviousState() {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
-            tree.put(key(1), value(10), nextRevision());
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+            put(tree, key(1), value(10), nextRevision());
             tree.flush();
 
             byte[] checkpoint = tree.checkpoint();
 
-            tree.put(key(2), value(20), nextRevision());
-            tree.put(key(3), value(30), nextRevision());
+            put(tree, key(2), value(20), nextRevision());
+            put(tree, key(3), value(30), nextRevision());
             tree.flush();
 
             assertTrue(tree.get(key(2)).isPresent());
@@ -75,17 +75,17 @@ class StoreRuntimeCheckpointTest extends StoreRuntimeTestSupport {
 
     @Test
     void capturesMultipleSSTables() {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
-            tree.put(key(1), value(10), nextRevision());
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+            put(tree, key(1), value(10), nextRevision());
             tree.flush();
 
-            tree.put(key(2), value(20), nextRevision());
+            put(tree, key(2), value(20), nextRevision());
             tree.flush();
 
             byte[] checkpoint = tree.checkpoint();
             assertEquals(2, tree.manifest().sstables().size());
 
-            tree.put(key(3), value(30), nextRevision());
+            put(tree, key(3), value(30), nextRevision());
             tree.flush();
 
             tree.replaceWithCheckpoint(checkpoint);
@@ -99,13 +99,13 @@ class StoreRuntimeCheckpointTest extends StoreRuntimeTestSupport {
 
     @Test
     void clearsMemtableOnRestore() {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
-            tree.put(key(1), value(10), nextRevision());
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+            put(tree, key(1), value(10), nextRevision());
             tree.flush();
 
             byte[] checkpoint = tree.checkpoint();
 
-            tree.put(key(2), value(20), nextRevision());
+            put(tree, key(2), value(20), nextRevision());
 
             assertTrue(tree.get(key(2)).isPresent());
 
@@ -118,15 +118,15 @@ class StoreRuntimeCheckpointTest extends StoreRuntimeTestSupport {
 
     @Test
     void manifestStateRestored() {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
-            tree.put(key(1), value(10), nextRevision());
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+            put(tree, key(1), value(10), nextRevision());
             tree.flush();
 
             byte[] checkpoint = tree.checkpoint();
             long originalNextId = tree.manifest().nextSSTableId();
             int originalSSTableCount = tree.manifest().sstables().size();
 
-            tree.put(key(2), value(20), nextRevision());
+            put(tree, key(2), value(20), nextRevision());
             tree.flush();
 
             assertTrue(tree.manifest().nextSSTableId() > originalNextId);
@@ -140,16 +140,16 @@ class StoreRuntimeCheckpointTest extends StoreRuntimeTestSupport {
 
     @Test
     void multipleCheckpoints() {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
-            tree.put(key(1), value(10), nextRevision());
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
+            put(tree, key(1), value(10), nextRevision());
             tree.flush();
             byte[] checkpoint1 = tree.checkpoint();
 
-            tree.put(key(2), value(20), nextRevision());
+            put(tree, key(2), value(20), nextRevision());
             tree.flush();
             byte[] checkpoint2 = tree.checkpoint();
 
-            tree.put(key(3), value(30), nextRevision());
+            put(tree, key(3), value(30), nextRevision());
             tree.flush();
 
             tree.replaceWithCheckpoint(checkpoint1);
@@ -166,10 +166,10 @@ class StoreRuntimeCheckpointTest extends StoreRuntimeTestSupport {
 
     @Test
     void emptyTree() {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
             byte[] checkpoint = tree.checkpoint();
 
-            tree.put(key(1), value(10), nextRevision());
+            put(tree, key(1), value(10), nextRevision());
             tree.flush();
             assertTrue(tree.get(key(1)).isPresent());
 

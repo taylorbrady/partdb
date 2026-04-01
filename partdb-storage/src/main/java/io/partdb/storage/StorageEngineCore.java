@@ -6,11 +6,12 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
-final class StoreRuntime implements AutoCloseable {
+final class StorageEngineCore implements AutoCloseable {
 
     private final LsmConfig config;
     private final AtomicReference<MutableMemtable> activeMemtable;
@@ -22,7 +23,7 @@ final class StoreRuntime implements AutoCloseable {
     private final ReadCoordinator readCoordinator;
     private final CheckpointService checkpointService;
 
-    private StoreRuntime(LsmConfig config, SSTableCatalog sstableCatalog, StorageRuntimeStats stats) {
+    private StorageEngineCore(LsmConfig config, SSTableCatalog sstableCatalog, StorageRuntimeStats stats) {
         this.config = config;
         this.sstableCatalog = sstableCatalog;
         this.stats = stats;
@@ -42,23 +43,36 @@ final class StoreRuntime implements AutoCloseable {
         refreshMemtableStats();
     }
 
-    static StoreRuntime open(Path dataDirectory, LsmConfig config) {
+    static StorageEngineCore open(Path dataDirectory, LsmConfig config) {
         try {
             Files.createDirectories(dataDirectory);
             StorageRuntimeStats stats = new StorageRuntimeStats();
             SSTableCatalog sstableCatalog = SSTableCatalog.open(dataDirectory, config, stats);
-            return new StoreRuntime(config, sstableCatalog, stats);
+            return new StorageEngineCore(config, sstableCatalog, stats);
         } catch (IOException e) {
             throw new StorageException.IO("Failed to open store", e);
         }
     }
 
-    void put(Slice key, Slice value, long revision) {
-        applyStoredEntry(new StoredEntry.Value(key, value, revision));
-    }
+    void apply(List<StoredEntry> entries) {
+        if (entries.isEmpty()) {
+            return;
+        }
 
-    void delete(Slice key, long revision) {
-        applyStoredEntry(new StoredEntry.Tombstone(key, revision));
+        rotationLock.lock();
+        try {
+            validateBatch(entries);
+            for (StoredEntry entry : entries) {
+                appendValidatedEntry(entry);
+            }
+            long maxRevision = entries.stream()
+                .mapToLong(StoredEntry::revision)
+                .max()
+                .orElse(0);
+            sstableCatalog.updateAppliedThrough(maxRevision);
+        } finally {
+            rotationLock.unlock();
+        }
     }
 
     Optional<StoredEntry.Value> get(Slice key) {
@@ -84,6 +98,10 @@ final class StoreRuntime implements AutoCloseable {
     LsmStats statsSnapshot() {
         refreshMemtableStats();
         return stats.snapshot();
+    }
+
+    StorageMetadata metadataSnapshot() {
+        return new StorageMetadata(new Revision(sstableCatalog.appliedThroughRevision()));
     }
 
     void awaitCompactionIdle(Duration timeout) {
@@ -117,20 +135,7 @@ final class StoreRuntime implements AutoCloseable {
         sstableCatalog.close();
     }
 
-    static Optional<StoredEntry> lookupStoredEntry(
-        Slice key,
-        MutableMemtable activeMemtable,
-        List<ImmutableMemtable> immutableMemtables
-    ) {
-        return ReadCoordinator.lookupStoredEntry(key, activeMemtable, immutableMemtables);
-    }
-
-    private void applyStoredEntry(StoredEntry entry) {
-        ValidationResult validation = validateStoredEntry(entry);
-        if (validation == ValidationResult.DUPLICATE) {
-            return;
-        }
-
+    private void appendValidatedEntry(StoredEntry entry) {
         while (true) {
             MutableMemtable memtable = activeMemtable.get();
             MutableMemtable.WriteResult writeResult = memtable.put(entry);
@@ -147,6 +152,19 @@ final class StoreRuntime implements AutoCloseable {
                 tryRotateMemtable(memtable);
             }
             return;
+        }
+    }
+
+    private void validateBatch(List<StoredEntry> entries) {
+        Set<Slice> keys = new java.util.HashSet<>(entries.size());
+        for (StoredEntry entry : entries) {
+            if (!keys.add(entry.key())) {
+                throw new IllegalArgumentException("Write batch contains duplicate key: " + entry.key());
+            }
+            ValidationResult validation = validateStoredEntry(entry);
+            if (validation == ValidationResult.DUPLICATE) {
+                continue;
+            }
         }
     }
 

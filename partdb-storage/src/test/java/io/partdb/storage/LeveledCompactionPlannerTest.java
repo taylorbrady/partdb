@@ -19,7 +19,7 @@ class LeveledCompactionPlannerTest {
             .withMaxLevels(4);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
 
-        SSTableManifest manifest = new SSTableManifest(10, List.of(
+        SSTableManifest manifest = new SSTableManifest(10, 0, List.of(
             sstable(5, 0, "e", "e", 10),
             sstable(4, 0, "d", "d", 10),
             sstable(3, 0, "c", "c", 10),
@@ -43,7 +43,7 @@ class LeveledCompactionPlannerTest {
             .withMaxBytesForLevelBase(100);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
 
-        SSTableManifest manifest = new SSTableManifest(3, List.of(
+        SSTableManifest manifest = new SSTableManifest(3, 0, List.of(
             sstable(1, 2, "a", "m", 800),
             sstable(2, 2, "n", "z", 800)
         ));
@@ -61,7 +61,7 @@ class LeveledCompactionPlannerTest {
             .withMaxBytesForLevelBase(100);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
 
-        SSTableManifest manifest = new SSTableManifest(8, List.of(
+        SSTableManifest manifest = new SSTableManifest(8, 0, List.of(
             sstable(8, 0, "m", "m", 10),
             sstable(7, 0, "n", "n", 10),
             sstable(6, 0, "o", "o", 10),
@@ -84,7 +84,7 @@ class LeveledCompactionPlannerTest {
             .withMaxBytesForLevelBase(100);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
 
-        SSTableManifest manifest = new SSTableManifest(10, List.of(
+        SSTableManifest manifest = new SSTableManifest(10, 0, List.of(
             sstable(1, 1, "a", "c", 80),
             sstable(2, 1, "d", "f", 80),
             sstable(3, 2, "a", "c", 500),
@@ -107,7 +107,7 @@ class LeveledCompactionPlannerTest {
             .withMaxBytesForLevelBase(100);
         LeveledCompactionPlanner planner = new LeveledCompactionPlanner(config);
 
-        SSTableManifest manifest = new SSTableManifest(10, List.of(
+        SSTableManifest manifest = new SSTableManifest(10, 0, List.of(
             sstable(1, 1, "d", "f", 150),
             sstable(2, 2, "d", "f", 50),
             sstable(3, 3, "c", "e", 25),

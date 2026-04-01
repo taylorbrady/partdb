@@ -29,7 +29,7 @@ class SSTableManifestTest {
 
     @Test
     void readFromMissingManifestReturnsEmptyManifest() {
-        assertEquals(new SSTableManifest(0, List.of()), SSTableManifest.readFrom(tempDir));
+        assertEquals(new SSTableManifest(0, 0, List.of()), SSTableManifest.readFrom(tempDir));
     }
 
     @Test
@@ -61,7 +61,7 @@ class SSTableManifestTest {
     @Test
     void rejectsTrailingManifestData() {
         byte[] encoded = manifest().toBytes();
-        writeInt(encoded, 16, 0);
+        writeInt(encoded, 24, 0);
         rewriteChecksum(encoded);
 
         StorageException.Corruption error = assertThrows(
@@ -75,6 +75,7 @@ class SSTableManifestTest {
     private static SSTableManifest manifest() {
         return new SSTableManifest(
             7,
+            11,
             List.of(
                 new SSTableMetadata(1, 0, Slice.utf8("alpha"), Slice.utf8("delta"), 1, 4, 512, 12),
                 new SSTableMetadata(2, 1, Slice.utf8("echo"), Slice.utf8("omega"), 5, 9, 768, 16)

@@ -15,7 +15,7 @@ import java.util.TreeMap;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class VersionedKeyValueStoreInvariantTest {
+class StorageEngineInvariantTest {
 
     @TempDir
     Path tempDir;
@@ -46,13 +46,13 @@ class VersionedKeyValueStoreInvariantTest {
                     int key = random.nextInt(24);
                     Bytes value = valueFor(step, key);
                     revision++;
-                    holder.store.put(key(key), value, revision);
+                    holder.store.apply(new Revision(revision), Mutation.put(key(key), value));
                     expected.put(key, new ModelValue(value, revision));
                     operations.add("put step=%d key=%d rev=%d".formatted(step, key, revision));
                 } else if (op < 65) {
                     int key = random.nextInt(24);
                     revision++;
-                    holder.store.delete(key(key), revision);
+                    holder.store.apply(new Revision(revision), Mutation.delete(key(key)));
                     expected.remove(key);
                     operations.add("delete step=%d key=%d rev=%d".formatted(step, key, revision));
                 } else if (op < 80) {
@@ -101,14 +101,14 @@ class VersionedKeyValueStoreInvariantTest {
                 int key = round % 16;
                 Bytes value = valueFor(round, key);
                 revision++;
-                holder.store.put(key(key), value, revision);
+                holder.store.apply(new Revision(revision), Mutation.put(key(key), value));
                 expected.put(key, new ModelValue(value, revision));
                 operations.add("seed-put round=%d key=%d rev=%d".formatted(round, key, revision));
             }
 
             for (int key = 0; key < 8; key++) {
                 revision++;
-                holder.store.delete(key(key), revision);
+                holder.store.apply(new Revision(revision), Mutation.delete(key(key)));
                 expected.remove(key);
                 operations.add("seed-delete key=%d rev=%d".formatted(key, revision));
             }
@@ -121,13 +121,13 @@ class VersionedKeyValueStoreInvariantTest {
                 int key = (round * 7) % 24;
                 if (round % 5 == 0) {
                     revision++;
-                    holder.store.delete(key(key), revision);
+                    holder.store.apply(new Revision(revision), Mutation.delete(key(key)));
                     expected.remove(key);
                     operations.add("mutate-delete round=%d key=%d rev=%d".formatted(round, key, revision));
                 } else {
                     Bytes value = valueFor(200 + round, key);
                     revision++;
-                    holder.store.put(key(key), value, revision);
+                    holder.store.apply(new Revision(revision), Mutation.put(key(key), value));
                     expected.put(key, new ModelValue(value, revision));
                     operations.add("mutate-put round=%d key=%d rev=%d".formatted(round, key, revision));
                 }
@@ -172,13 +172,13 @@ class VersionedKeyValueStoreInvariantTest {
                     int key = random.nextInt(24);
                     Bytes value = valueFor(step, key);
                     revision++;
-                    holder.store.put(key(key), value, revision);
+                    holder.store.apply(new Revision(revision), Mutation.put(key(key), value));
                     expected.put(key, new ModelValue(value, revision));
                     operations.add("put step=%d key=%d rev=%d".formatted(step, key, revision));
                 } else if (op < 56) {
                     int key = random.nextInt(24);
                     revision++;
-                    holder.store.delete(key(key), revision);
+                    holder.store.apply(new Revision(revision), Mutation.delete(key(key)));
                     expected.remove(key);
                     operations.add("delete step=%d key=%d rev=%d".formatted(step, key, revision));
                 } else if (op < 68) {
@@ -220,11 +220,11 @@ class VersionedKeyValueStoreInvariantTest {
 
     private static void assertGetMatches(
         NavigableMap<Integer, ModelValue> expected,
-        VersionedKeyValueStore store,
+        StorageEngine store,
         int key,
         List<String> operations
     ) {
-        Optional<VersionedValue> actual = store.get(key(key));
+        Optional<ValueRecord> actual = store.get(key(key));
         ModelValue model = expected.get(key);
 
         if (model == null) {
@@ -232,14 +232,14 @@ class VersionedKeyValueStoreInvariantTest {
             return;
         }
 
-        VersionedValue value = actual.orElseThrow();
+        ValueRecord value = actual.orElseThrow();
         assertEquals(model.value(), value.value(), String.join("\n", operations));
-        assertEquals(model.revision(), value.revision(), String.join("\n", operations));
+        assertEquals(new Revision(model.revision()), value.modRevision(), String.join("\n", operations));
     }
 
     private static void assertScanMatches(
         NavigableMap<Integer, ModelValue> expected,
-        VersionedKeyValueStore store,
+        StorageEngine store,
         int startInclusive,
         int endExclusive,
         List<String> operations
@@ -247,8 +247,8 @@ class VersionedKeyValueStoreInvariantTest {
         int start = Math.min(startInclusive, endExclusive);
         int end = Math.max(startInclusive, endExclusive);
 
-        List<VersionedEntry> actualEntries = new ArrayList<>();
-        try (EntryCursor cursor = store.scan(KeyRange.between(key(start), key(end)))) {
+        List<EntryRecord> actualEntries = new ArrayList<>();
+        try (Scan cursor = store.scan(KeyRange.between(key(start), key(end)))) {
             while (cursor.hasNext()) {
                 actualEntries.add(cursor.next());
             }
@@ -267,10 +267,10 @@ class VersionedKeyValueStoreInvariantTest {
 
         int index = 0;
         for (var entry : expectedRange.entrySet()) {
-            VersionedEntry actual = actualEntries.get(index++);
+            EntryRecord actual = actualEntries.get(index++);
             assertEquals(key(entry.getKey()), actual.key(), String.join("\n", operations));
             assertEquals(entry.getValue().value(), actual.value(), String.join("\n", operations));
-            assertEquals(entry.getValue().revision(), actual.revision(), String.join("\n", operations));
+            assertEquals(new Revision(entry.getValue().revision()), actual.modRevision(), String.join("\n", operations));
         }
     }
 
@@ -294,33 +294,32 @@ class VersionedKeyValueStoreInvariantTest {
 
     private static final class StoreHolder implements AutoCloseable {
         private final StorageConfig config;
-        private VersionedKeyValueStore store;
+        private StorageEngine store;
         private Path directory;
 
-        private StoreHolder(Path directory, StorageConfig config, VersionedKeyValueStore store) {
+        private StoreHolder(Path directory, StorageConfig config, StorageEngine store) {
             this.directory = directory;
             this.config = config;
             this.store = store;
         }
 
         static StoreHolder open(Path directory, StorageConfig config) {
-            return new StoreHolder(directory, config, VersionedKeyValueStore.open(directory, config));
+            return new StoreHolder(directory, config, StorageEngine.open(directory, config));
         }
 
         void reopen() {
             store.close();
-            store = VersionedKeyValueStore.open(directory, config);
+            store = StorageEngine.open(directory, config);
         }
 
         void replaceWith(Path directory, StorageCheckpoint checkpoint) {
             store.close();
             this.directory = directory;
-            this.store = VersionedKeyValueStore.open(directory, config);
-            this.store.replaceWith(checkpoint);
+            this.store = StorageEngine.restore(directory, checkpoint, config);
         }
 
         void restoreInPlace(StorageCheckpoint checkpoint) {
-            store.replaceWith(checkpoint);
+            store.restoreInPlace(checkpoint);
         }
 
         @Override

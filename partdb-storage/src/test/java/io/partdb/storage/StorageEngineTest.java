@@ -18,25 +18,25 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class VersionedKeyValueStoreTest {
+class StorageEngineTest {
 
     @TempDir
     Path tempDir;
 
     @Test
     void putGetAndDeleteUseBytesBasedApi() {
-        try (VersionedKeyValueStore store = VersionedKeyValueStore.open(tempDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
             Bytes key = bytes("key");
             Bytes value = bytes("value");
 
-            store.put(key, value, 10);
+            store.apply(new Revision(10), Mutation.put(key, value));
 
-            Optional<VersionedValue> loaded = store.get(key);
+            Optional<ValueRecord> loaded = store.get(key);
             assertTrue(loaded.isPresent());
             assertEquals(value, loaded.get().value());
-            assertEquals(10, loaded.get().revision());
+            assertEquals(new Revision(10), loaded.get().modRevision());
 
-            store.delete(key, 11);
+            store.apply(new Revision(11), Mutation.delete(key));
 
             assertTrue(store.get(key).isEmpty());
         }
@@ -44,13 +44,13 @@ class VersionedKeyValueStoreTest {
 
     @Test
     void scanExposesExplicitCursorLifecycle() {
-        try (VersionedKeyValueStore store = VersionedKeyValueStore.open(tempDir, StorageConfig.defaults())) {
-            store.put(bytes("a"), bytes("1"), 1);
-            store.put(bytes("b"), bytes("2"), 2);
-            store.put(bytes("c"), bytes("3"), 3);
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
+            store.apply(new Revision(1), Mutation.put(bytes("a"), bytes("1")));
+            store.apply(new Revision(2), Mutation.put(bytes("b"), bytes("2")));
+            store.apply(new Revision(3), Mutation.put(bytes("c"), bytes("3")));
 
             List<String> keys = new ArrayList<>();
-            try (EntryCursor cursor = store.scan(KeyRange.between(bytes("a"), bytes("c")))) {
+            try (Scan cursor = store.scan(KeyRange.between(bytes("a"), bytes("c")))) {
                 while (cursor.hasNext()) {
                     keys.add(cursor.next().key().utf8());
                 }
@@ -66,17 +66,16 @@ class VersionedKeyValueStoreTest {
         Path restoredDir = tempDir.resolve("restored");
 
         StorageCheckpoint checkpoint;
-        try (VersionedKeyValueStore source = VersionedKeyValueStore.open(sourceDir, StorageConfig.defaults())) {
-            source.put(bytes("key-1"), bytes("value-1"), 1);
-            source.put(bytes("key-2"), bytes("value-2"), 2);
+        try (StorageEngine source = StorageEngine.open(sourceDir, StorageConfig.defaults())) {
+            source.apply(new Revision(1), Mutation.put(bytes("key-1"), bytes("value-1")));
+            source.apply(new Revision(2), Mutation.put(bytes("key-2"), bytes("value-2")));
             checkpoint = source.checkpoint();
         }
 
-        try (VersionedKeyValueStore restored = VersionedKeyValueStore.open(restoredDir, StorageConfig.defaults())) {
-            restored.replaceWith(checkpoint);
+        try (StorageEngine restored = StorageEngine.restore(restoredDir, checkpoint, StorageConfig.defaults())) {
 
-            Optional<VersionedValue> value1 = restored.get(bytes("key-1"));
-            Optional<VersionedValue> value2 = restored.get(bytes("key-2"));
+            Optional<ValueRecord> value1 = restored.get(bytes("key-1"));
+            Optional<ValueRecord> value2 = restored.get(bytes("key-2"));
 
             assertTrue(value1.isPresent());
             assertTrue(value2.isPresent());
@@ -87,13 +86,13 @@ class VersionedKeyValueStoreTest {
 
     @Test
     void rejectsStaleRevisionForExistingValue() {
-        try (VersionedKeyValueStore store = VersionedKeyValueStore.open(tempDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
             Bytes key = bytes("key");
-            store.put(key, bytes("value-1"), 10);
+            store.apply(new Revision(10), Mutation.put(key, bytes("value-1")));
 
             StorageException.InvalidRevision error = assertThrows(
                 StorageException.InvalidRevision.class,
-                () -> store.put(key, bytes("value-2"), 9)
+                () -> store.apply(new Revision(9), Mutation.put(key, bytes("value-2")))
             );
 
             assertTrue(error.getMessage().contains("older"));
@@ -103,31 +102,31 @@ class VersionedKeyValueStoreTest {
 
     @Test
     void allowsIdempotentReplayAtSameRevision() {
-        try (VersionedKeyValueStore store = VersionedKeyValueStore.open(tempDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
             Bytes key = bytes("key");
             Bytes value = bytes("value");
 
-            store.put(key, value, 10);
-            store.put(key, value, 10);
+            store.apply(new Revision(10), Mutation.put(key, value));
+            store.apply(new Revision(10), Mutation.put(key, value));
 
-            Optional<VersionedValue> loaded = store.get(key);
+            Optional<ValueRecord> loaded = store.get(key);
             assertTrue(loaded.isPresent());
             assertEquals(value, loaded.get().value());
-            assertEquals(10, loaded.get().revision());
+            assertEquals(new Revision(10), loaded.get().modRevision());
         }
     }
 
     @Test
     void rejectsStaleRevisionAgainstPersistedTombstone() {
-        try (VersionedKeyValueStore store = VersionedKeyValueStore.open(tempDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
             Bytes key = bytes("key");
-            store.put(key, bytes("value"), 10);
-            store.delete(key, 11);
+            store.apply(new Revision(10), Mutation.put(key, bytes("value")));
+            store.apply(new Revision(11), Mutation.delete(key));
             store.checkpoint();
 
             StorageException.InvalidRevision error = assertThrows(
                 StorageException.InvalidRevision.class,
-                () -> store.put(key, bytes("late-value"), 10)
+                () -> store.apply(new Revision(10), Mutation.put(key, bytes("late-value")))
             );
 
             assertTrue(error.getMessage().contains("older"));
@@ -139,8 +138,8 @@ class VersionedKeyValueStoreTest {
     void openFailsWhenManifestIsMissingButSstablesRemain() throws Exception {
         Path storeDir = tempDir.resolve("store");
 
-        try (VersionedKeyValueStore store = VersionedKeyValueStore.open(storeDir, StorageConfig.defaults())) {
-            store.put(bytes("key"), bytes("value"), 1);
+        try (StorageEngine store = StorageEngine.open(storeDir, StorageConfig.defaults())) {
+            store.apply(new Revision(1), Mutation.put(bytes("key"), bytes("value")));
             store.checkpoint();
         }
 
@@ -148,7 +147,7 @@ class VersionedKeyValueStoreTest {
 
         StorageException.Corruption error = assertThrows(
             StorageException.Corruption.class,
-            () -> VersionedKeyValueStore.open(storeDir, StorageConfig.defaults())
+            () -> StorageEngine.open(storeDir, StorageConfig.defaults())
         );
 
         assertTrue(error.getMessage().contains("manifest"));
@@ -162,7 +161,7 @@ class VersionedKeyValueStoreTest {
 
         StorageException.Corruption error = assertThrows(
             StorageException.Corruption.class,
-            () -> VersionedKeyValueStore.open(storeDir, StorageConfig.defaults())
+            () -> StorageEngine.open(storeDir, StorageConfig.defaults())
         );
 
         assertTrue(error.getMessage().contains("manifest"));
@@ -172,8 +171,8 @@ class VersionedKeyValueStoreTest {
     void openFailsWithTruncatedSstableAsCorruption() throws Exception {
         Path storeDir = tempDir.resolve("truncated-sstable");
 
-        try (VersionedKeyValueStore store = VersionedKeyValueStore.open(storeDir, StorageConfig.defaults())) {
-            store.put(bytes("key"), bytes("value"), 1);
+        try (StorageEngine store = StorageEngine.open(storeDir, StorageConfig.defaults())) {
+            store.apply(new Revision(1), Mutation.put(bytes("key"), bytes("value")));
             store.checkpoint();
         }
 
@@ -183,7 +182,7 @@ class VersionedKeyValueStoreTest {
 
         StorageException.Corruption error = assertThrows(
             StorageException.Corruption.class,
-            () -> VersionedKeyValueStore.open(storeDir, StorageConfig.defaults())
+            () -> StorageEngine.open(storeDir, StorageConfig.defaults())
         );
 
         assertTrue(error.getMessage().contains("SSTable"));
@@ -193,8 +192,8 @@ class VersionedKeyValueStoreTest {
     void getFailsWithCorruptedSstableBlockAsCorruption() throws Exception {
         Path storeDir = tempDir.resolve("corrupted-block");
 
-        try (VersionedKeyValueStore store = VersionedKeyValueStore.open(storeDir, StorageConfig.defaults())) {
-            store.put(bytes("key"), bytes("value"), 1);
+        try (StorageEngine store = StorageEngine.open(storeDir, StorageConfig.defaults())) {
+            store.apply(new Revision(1), Mutation.put(bytes("key"), bytes("value")));
             store.checkpoint();
         }
 
@@ -203,7 +202,7 @@ class VersionedKeyValueStoreTest {
         fileBytes[SSTableHeader.HEADER_SIZE] ^= 0x01;
         Files.write(sstable, fileBytes);
 
-        try (VersionedKeyValueStore reopened = VersionedKeyValueStore.open(storeDir, StorageConfig.defaults())) {
+        try (StorageEngine reopened = StorageEngine.open(storeDir, StorageConfig.defaults())) {
             StorageException.Corruption error = assertThrows(
                 StorageException.Corruption.class,
                 () -> reopened.get(bytes("key"))
@@ -215,23 +214,46 @@ class VersionedKeyValueStoreTest {
 
     @Test
     void restoreRejectsCorruptedSnapshotWithoutDiscardingLiveState() {
-        try (VersionedKeyValueStore store = VersionedKeyValueStore.open(tempDir, StorageConfig.defaults())) {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageConfig.defaults())) {
             Bytes key = bytes("key");
-            store.put(key, bytes("before"), 1);
+            store.apply(new Revision(1), Mutation.put(key, bytes("before")));
             StorageCheckpoint checkpoint = store.checkpoint();
 
-            store.put(key, bytes("after"), 2);
+            store.apply(new Revision(2), Mutation.put(key, bytes("after")));
 
             StorageException.Corruption error = assertThrows(
                 StorageException.Corruption.class,
-                () -> store.replaceWith(corruptFirstSstableByte(checkpoint))
+                () -> store.restoreInPlace(corruptFirstSstableByte(checkpoint))
             );
 
             assertTrue(error.getMessage().contains("Checkpoint"));
-            Optional<VersionedValue> loaded = store.get(key);
+            Optional<ValueRecord> loaded = store.get(key);
             assertTrue(loaded.isPresent());
             assertEquals(bytes("after"), loaded.get().value());
-            assertEquals(2, loaded.get().revision());
+            assertEquals(new Revision(2), loaded.get().modRevision());
+        }
+    }
+
+    @Test
+    void metadataTracksAppliedRevisionAcrossReopenAndRestore() {
+        Path storeDir = tempDir.resolve("metadata");
+        Path restoredDir = tempDir.resolve("metadata-restored");
+
+        StorageCheckpoint checkpoint;
+        try (StorageEngine store = StorageEngine.open(storeDir, StorageConfig.defaults())) {
+            store.apply(new Revision(4), Mutation.put(bytes("key"), bytes("value")));
+            store.apply(new Revision(9), Mutation.delete(bytes("key")));
+
+            assertEquals(new Revision(9), store.metadata().appliedThrough());
+            checkpoint = store.checkpoint();
+        }
+
+        try (StorageEngine reopened = StorageEngine.open(storeDir, StorageConfig.defaults())) {
+            assertEquals(new Revision(9), reopened.metadata().appliedThrough());
+        }
+
+        try (StorageEngine restored = StorageEngine.restore(restoredDir, checkpoint, StorageConfig.defaults())) {
+            assertEquals(new Revision(9), restored.metadata().appliedThrough());
         }
     }
 

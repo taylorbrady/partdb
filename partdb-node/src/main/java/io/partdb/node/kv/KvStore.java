@@ -5,14 +5,17 @@ import io.partdb.bytes.Bytes;
 import io.partdb.node.command.proto.CommandProto.Command;
 import io.partdb.node.lease.LeaseRegistry;
 import io.partdb.node.raft.StateMachine;
-import io.partdb.storage.EntryCursor;
+import io.partdb.storage.EntryRecord;
 import io.partdb.storage.KeyRange;
 import io.partdb.storage.LsmStats;
+import io.partdb.storage.Mutation;
+import io.partdb.storage.Revision;
+import io.partdb.storage.Scan;
 import io.partdb.storage.StorageConfig;
 import io.partdb.storage.StorageCheckpoint;
-import io.partdb.storage.VersionedKeyValueStore;
-import io.partdb.storage.VersionedEntry;
-import io.partdb.storage.VersionedValue;
+import io.partdb.storage.StorageEngine;
+import io.partdb.storage.ValueRecord;
+import io.partdb.storage.WriteBatch;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -28,18 +31,18 @@ import java.util.stream.StreamSupport;
 
 public final class KvStore implements StateMachine, AutoCloseable {
 
-    private final VersionedKeyValueStore store;
+    private final StorageEngine store;
     private final LeaseRegistry leaseRegistry;
     private volatile long lastApplied;
 
-    private KvStore(VersionedKeyValueStore store, LeaseRegistry leaseRegistry) {
+    private KvStore(StorageEngine store, LeaseRegistry leaseRegistry) {
         this.store = store;
         this.leaseRegistry = leaseRegistry;
         this.lastApplied = 0;
     }
 
     public static KvStore open(Path dataDirectory, StorageConfig config) {
-        VersionedKeyValueStore store = VersionedKeyValueStore.open(dataDirectory, config);
+        StorageEngine store = StorageEngine.open(dataDirectory, config);
         LeaseRegistry leaseRegistry = new LeaseRegistry();
         return new KvStore(store, leaseRegistry);
     }
@@ -61,8 +64,8 @@ public final class KvStore implements StateMachine, AutoCloseable {
                 Bytes key = Bytes.copyOf(put.getKey().toByteArray());
                 Bytes value = Bytes.copyOf(put.getValue().toByteArray());
                 long leaseId = put.getLeaseId();
-                StoredValue stored = new StoredValue(value.toByteArray(), index, leaseId);
-                store.put(key, Bytes.copyOf(stored.encode()), index);
+                StoredValue stored = new StoredValue(value.toByteArray(), leaseId);
+                store.apply(new Revision(index), Mutation.put(key, Bytes.copyOf(stored.encode())));
                 if (leaseId != 0) {
                     leaseRegistry.attachKey(leaseId, key);
                 }
@@ -71,7 +74,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
                 var delete = command.getDelete();
                 Bytes key = Bytes.copyOf(delete.getKey().toByteArray());
                 detachKeyFromLease(key);
-                store.delete(key, index);
+                store.apply(new Revision(index), Mutation.delete(key));
             }
             case GRANT_LEASE -> {
                 var grant = command.getGrantLease();
@@ -79,9 +82,11 @@ public final class KvStore implements StateMachine, AutoCloseable {
             }
             case REVOKE_LEASE -> {
                 var revoke = command.getRevokeLease();
+                WriteBatch.Builder batch = WriteBatch.builder();
                 for (Bytes key : leaseRegistry.attachedKeys(revoke.getLeaseId())) {
-                    store.delete(key, index);
+                    batch.delete(key);
                 }
+                store.apply(new Revision(index), batch.build());
                 leaseRegistry.revoke(revoke.getLeaseId());
             }
             case KEEP_ALIVE_LEASE -> {
@@ -93,7 +98,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
     }
 
     private void detachKeyFromLease(Bytes key) {
-        Optional<VersionedValue> existing = store.get(key);
+        Optional<ValueRecord> existing = store.get(key);
         if (existing.isPresent()) {
             StoredValue stored = StoredValue.decode(existing.get().value().toByteArray());
             if (stored.leaseId() != 0) {
@@ -103,7 +108,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
     }
 
     public Optional<Bytes> get(Bytes key) {
-        Optional<VersionedValue> raw = store.get(key);
+        Optional<ValueRecord> raw = store.get(key);
         if (raw.isEmpty()) {
             return Optional.empty();
         }
@@ -115,20 +120,20 @@ public final class KvStore implements StateMachine, AutoCloseable {
     }
 
     public Stream<KvEntry> scan(KeyRange range) {
-        EntryCursor cursor = store.scan(range);
+        Scan cursor = store.scan(range);
 
         Iterator<KvEntry> iterator = new Iterator<>() {
             private KvEntry next = advance();
 
             private KvEntry advance() {
                 while (cursor.hasNext()) {
-                    VersionedEntry entry = cursor.next();
+                    EntryRecord entry = cursor.next();
                     StoredValue stored = StoredValue.decode(entry.value().toByteArray());
                     if (stored.leaseId() == 0 || leaseRegistry.isLeaseActive(stored.leaseId())) {
                         return new KvEntry(
                             entry.key(),
                             Bytes.copyOf(stored.value()),
-                            stored.version(),
+                            entry.modRevision().value(),
                             stored.leaseId()
                         );
                     }
@@ -194,7 +199,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         byte[] leaseData = new byte[leaseLen];
         buffer.get(leaseData);
 
-        store.replaceWith(new StorageCheckpoint(Bytes.copyOf(storageData)));
+        store.restoreInPlace(new StorageCheckpoint(Bytes.copyOf(storageData)));
         leaseRegistry.restoreSnapshot(leaseData);
         rebuildLeaseAttachments();
 
@@ -219,9 +224,9 @@ public final class KvStore implements StateMachine, AutoCloseable {
     }
 
     private void rebuildLeaseAttachments() {
-        try (EntryCursor cursor = store.scan(KeyRange.all())) {
+        try (Scan cursor = store.scan(KeyRange.all())) {
             while (cursor.hasNext()) {
-                VersionedEntry entry = cursor.next();
+                EntryRecord entry = cursor.next();
                 StoredValue stored = StoredValue.decode(entry.value().toByteArray());
                 if (stored.leaseId() != 0 && leaseRegistry.isLeaseActive(stored.leaseId())) {
                     leaseRegistry.attachKey(stored.leaseId(), entry.key());

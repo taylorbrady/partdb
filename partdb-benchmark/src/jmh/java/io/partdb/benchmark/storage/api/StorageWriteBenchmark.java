@@ -5,6 +5,8 @@ import io.partdb.benchmark.support.BenchmarkKeys;
 import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
+import io.partdb.storage.Mutation;
+import io.partdb.storage.Revision;
 import io.partdb.storage.StorageCheckpoint;
 import io.partdb.storage.StorageConfig;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -35,22 +37,34 @@ public class StorageWriteBenchmark {
 
     @Benchmark
     public void freshSequentialInsert(FreshWriteState state) {
-        state.store().put(state.nextSequentialInsertKey(), state.valueTemplate, state.nextRevision());
+        state.store().apply(
+            new Revision(state.nextRevision()),
+            Mutation.put(state.nextSequentialInsertKey(), state.valueTemplate)
+        );
     }
 
     @Benchmark
     public void freshRandomInsert(FreshWriteState state) {
-        state.store().put(state.nextRandomKey(), state.valueTemplate, state.nextRevision());
+        state.store().apply(
+            new Revision(state.nextRevision()),
+            Mutation.put(state.nextRandomKey(), state.valueTemplate)
+        );
     }
 
     @Benchmark
     public void steadyStateAppend(SteadyStateWriteState state) {
-        state.store().put(state.nextAppendKey(), state.valueTemplate, state.nextRevision());
+        state.store().apply(
+            new Revision(state.nextRevision()),
+            Mutation.put(state.nextAppendKey(), state.valueTemplate)
+        );
     }
 
     @Benchmark
     public void steadyStateUpdateRandom(SteadyStateWriteState state) {
-        state.store().put(state.nextRandomExistingKey(), state.valueTemplate, state.nextRevision());
+        state.store().apply(
+            new Revision(state.nextRevision()),
+            Mutation.put(state.nextRandomExistingKey(), state.valueTemplate)
+        );
     }
 
     public abstract static class BaseWriteState extends AbstractStorageState {
@@ -150,7 +164,7 @@ public class StorageWriteBenchmark {
         @Setup(Level.Iteration)
         public void openIterationStore() throws IOException {
             openStore("partdb-steady-write", config);
-            store().replaceWith(baselineCheckpoint);
+            store().restoreInPlace(baselineCheckpoint);
             revisionCounter = baselineRevision;
             nextAppendKeyIndex = 0;
             randomIndex = 0;

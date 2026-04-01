@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
-abstract class StoreRuntimeTestSupport {
+abstract class StorageEngineCoreTestSupport {
 
     private static final Duration COMPACTION_TIMEOUT = Duration.ofSeconds(20);
 
@@ -56,7 +56,15 @@ abstract class StoreRuntimeTestSupport {
         }
     }
 
-    protected static void awaitCompaction(StoreRuntime store) {
+    protected static void put(StorageEngineCore core, Slice key, Slice value, long revision) {
+        core.apply(List.of(new StoredEntry.Value(key, value, revision)));
+    }
+
+    protected static void delete(StorageEngineCore core, Slice key, long revision) {
+        core.apply(List.of(new StoredEntry.Tombstone(key, revision)));
+    }
+
+    protected static void awaitCompaction(StorageEngineCore store) {
         store.awaitCompactionIdle(COMPACTION_TIMEOUT);
     }
 }

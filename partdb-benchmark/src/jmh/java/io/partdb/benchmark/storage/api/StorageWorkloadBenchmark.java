@@ -6,6 +6,8 @@ import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.benchmark.support.StorageWorkloadScript;
 import io.partdb.bytes.Bytes;
+import io.partdb.storage.Mutation;
+import io.partdb.storage.Revision;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -50,7 +52,10 @@ public class StorageWorkloadBenchmark {
         StorageWorkloadScript.Operation operation = state.nextOperation();
         switch (operation.kind()) {
             case READ_EXISTING, READ_MISSING -> bh.consume(state.store().get(operation.key()));
-            case UPDATE_EXISTING, INSERT_NEW -> state.store().put(operation.key(), state.valueTemplate, state.nextRevision());
+            case UPDATE_EXISTING, INSERT_NEW -> state.store().apply(
+                new Revision(state.nextRevision()),
+                Mutation.put(operation.key(), state.valueTemplate)
+            );
         }
     }
 

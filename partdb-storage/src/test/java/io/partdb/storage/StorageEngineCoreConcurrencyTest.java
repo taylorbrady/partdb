@@ -12,13 +12,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
+class StorageEngineCoreConcurrencyTest extends StorageEngineCoreTestSupport {
 
     @Test
     void concurrentReads() throws Exception {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 100; i++) {
-                tree.put(key(i), value(i), nextRevision());
+                put(tree, key(i), value(i), nextRevision());
             }
             tree.flush();
 
@@ -50,7 +50,7 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
 
     @Test
     void concurrentWrites() throws Exception {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
             int threadCount = 10;
             int writesPerThread = 100;
 
@@ -60,7 +60,7 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
                     executor.submit(() -> {
                         for (int i = 0; i < writesPerThread; i++) {
                             int keyIndex = threadId * writesPerThread + i;
-                            tree.put(key(keyIndex & 0xFF), value(keyIndex), nextRevision());
+                            put(tree, key(keyIndex & 0xFF), value(keyIndex), nextRevision());
                         }
                     });
                 }
@@ -79,9 +79,9 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
 
     @Test
     void concurrentReadsAndWrites() throws Exception {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 50; i++) {
-                tree.put(key(i), value(i), nextRevision());
+                put(tree, key(i), value(i), nextRevision());
             }
 
             int writerCount = 5;
@@ -93,7 +93,7 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
                     int threadId = t;
                     executor.submit(() -> {
                         for (int i = 0; i < 100; i++) {
-                            tree.put(key((50 + threadId * 100 + i) & 0xFF), value(i), nextRevision());
+                            put(tree, key((50 + threadId * 100 + i) & 0xFF), value(i), nextRevision());
                         }
                     });
                 }
@@ -123,9 +123,9 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
     void readsWhileFlushing() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int i = 0; i < 50; i++) {
-                tree.put(key(i), value(i), nextRevision());
+                put(tree, key(i), value(i), nextRevision());
             }
 
             int readerCount = 5;
@@ -151,7 +151,7 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
                         startLatch.await();
                         for (int round = 0; round < 5; round++) {
                             for (int i = 0; i < 20; i++) {
-                                tree.put(key((100 + round * 20 + i) & 0xFF), largeValue(100), nextRevision());
+                                put(tree, key((100 + round * 20 + i) & 0xFF), largeValue(100), nextRevision());
                             }
                             tree.flush();
                         }
@@ -174,10 +174,10 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
     void readsWhileCompacting() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int batch = 0; batch < 5; batch++) {
                 for (int i = 0; i < 50; i++) {
-                    tree.put(key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextRevision());
+                    put(tree, key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextRevision());
                 }
                 tree.flush();
             }
@@ -217,9 +217,9 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
     void scanWhileFlushing() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int i = 0; i < 50; i++) {
-                tree.put(key(i), value(i), nextRevision());
+                put(tree, key(i), value(i), nextRevision());
             }
 
             CountDownLatch startLatch = new CountDownLatch(1);
@@ -246,7 +246,7 @@ class StoreRuntimeConcurrencyTest extends StoreRuntimeTestSupport {
                         startLatch.await();
                         for (int round = 0; round < 5; round++) {
                             for (int i = 0; i < 20; i++) {
-                                tree.put(key((100 + round * 20 + i) & 0xFF), largeValue(100), nextRevision());
+                                put(tree, key((100 + round * 20 + i) & 0xFF), largeValue(100), nextRevision());
                             }
                             tree.flush();
                         }

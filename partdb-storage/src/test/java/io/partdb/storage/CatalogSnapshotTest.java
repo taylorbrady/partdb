@@ -45,7 +45,7 @@ class CatalogSnapshotTest {
             NoOpBlockCache.INSTANCE
         );
 
-        SSTableManifest manifest = new SSTableManifest(2, List.of(newerDescriptor, olderDescriptor));
+        SSTableManifest manifest = new SSTableManifest(2, 20, List.of(newerDescriptor, olderDescriptor));
         CatalogGeneration generation = new CatalogGeneration(manifest, List.of(olderReader, newerReader));
         CatalogGeneration.CatalogLease lease = generation.tryAcquire();
         if (lease == null) {
@@ -77,7 +77,7 @@ class CatalogSnapshotTest {
         );
         SSTableReader l1Reader = SSTableReader.open(l1.id(), l1.level(), tablePath(l1.id()), NoOpBlockCache.INSTANCE);
 
-        SSTableManifest manifest = new SSTableManifest(3, List.of(newestL0, l1, l2));
+        SSTableManifest manifest = new SSTableManifest(3, 30, List.of(newestL0, l1, l2));
         CatalogGeneration generation = new CatalogGeneration(manifest, List.of(l2Reader, newestL0Reader, l1Reader));
         CatalogGeneration.CatalogLease lease = generation.tryAcquire();
         if (lease == null) {

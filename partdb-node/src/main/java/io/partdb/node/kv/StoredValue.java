@@ -4,15 +4,13 @@ import java.nio.ByteBuffer;
 
 record StoredValue(
     byte[] value,
-    long version,
     long leaseId
 ) {
 
-    private static final int HEADER_SIZE = 16;
+    private static final int HEADER_SIZE = 8;
 
     public byte[] encode() {
         ByteBuffer buffer = ByteBuffer.allocate(HEADER_SIZE + value.length);
-        buffer.putLong(version);
         buffer.putLong(leaseId);
         buffer.put(value);
         return buffer.array();
@@ -20,10 +18,9 @@ record StoredValue(
 
     public static StoredValue decode(byte[] encoded) {
         ByteBuffer buffer = ByteBuffer.wrap(encoded);
-        long version = buffer.getLong();
         long leaseId = buffer.getLong();
         byte[] valueBytes = new byte[buffer.remaining()];
         buffer.get(valueBytes);
-        return new StoredValue(valueBytes, version, leaseId);
+        return new StoredValue(valueBytes, leaseId);
     }
 }

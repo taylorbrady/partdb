@@ -38,7 +38,7 @@ class CatalogManagerTest {
         AtomicBoolean cleaned = new AtomicBoolean(false);
 
         manager.install(
-            new CatalogGeneration(new SSTableManifest(1, List.of()), List.of()),
+            new CatalogGeneration(new SSTableManifest(1, 0, List.of()), List.of()),
             List.of(() -> cleaned.set(true))
         );
 
@@ -55,6 +55,6 @@ class CatalogManagerTest {
     }
 
     private static SSTableManifest emptyManifest() {
-        return new SSTableManifest(0, List.of());
+        return new SSTableManifest(0, 0, List.of());
     }
 }

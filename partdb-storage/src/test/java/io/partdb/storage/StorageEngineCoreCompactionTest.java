@@ -11,15 +11,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
+class StorageEngineCoreCompactionTest extends StorageEngineCoreTestSupport {
 
     @Test
     void l0TriggersAtThreshold() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
-                tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
+                put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
 
             tree.flush();
@@ -38,10 +38,10 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     void mergesOverlappingKeys() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int version = 0; version < 5; version++) {
                 for (int i = 0; i < 20; i++) {
-                    tree.put(key(String.format("key-%02d", i)), value("v" + version + "-" + i), nextRevision());
+                    put(tree, key(String.format("key-%02d", i)), value("v" + version + "-" + i), nextRevision());
                 }
                 tree.flush();
             }
@@ -60,14 +60,14 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     void tombstonesResultInEmptyGet() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int i = 0; i < 50; i++) {
-                tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
+                put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
             tree.flush();
 
             for (int i = 0; i < 50; i++) {
-                tree.delete(key(String.format("key-%03d", i)), nextRevision());
+                delete(tree, key(String.format("key-%03d", i)), nextRevision());
             }
             tree.flush();
 
@@ -83,10 +83,10 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     void levelSizeRespected() {
         LsmConfig config = smallMemtableConfig(2048);
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int batch = 0; batch < 20; batch++) {
                 for (int i = 0; i < 100; i++) {
-                    tree.put(key(String.format("key-%05d", batch * 100 + i)), largeValue(100), nextRevision());
+                    put(tree, key(String.format("key-%05d", batch * 100 + i)), largeValue(100), nextRevision());
                 }
                 tree.flush();
             }
@@ -108,13 +108,13 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     void preservesNewestVersions() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             List<String> expectedValues = new ArrayList<>();
 
             for (int i = 0; i < 30; i++) {
                 String val = "version-" + i;
                 expectedValues.add(val);
-                tree.put(key(String.format("key-%02d", i)), value(val), nextRevision());
+                put(tree, key(String.format("key-%02d", i)), value(val), nextRevision());
 
                 if (i % 10 == 9) {
                     tree.flush();
@@ -135,9 +135,9 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     void manifestConsistency() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int i = 0; i < 80; i++) {
-                tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
+                put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
             tree.flush();
 
@@ -166,19 +166,19 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
         List<Slice> keys = new ArrayList<>();
         List<Slice> values = new ArrayList<>();
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int i = 0; i < 60; i++) {
                 Slice k = key(String.format("key-%03d", i));
                 Slice v = value("value-" + i);
                 keys.add(k);
                 values.add(v);
-                tree.put(k, v, nextRevision());
+                put(tree, k, v, nextRevision());
             }
             tree.flush();
             awaitCompaction(tree);
         }
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int i = 0; i < keys.size(); i++) {
                 Optional<StoredEntry.Value> result = tree.get(keys.get(i));
                 assertTrue(result.isPresent());
@@ -191,9 +191,9 @@ class StoreRuntimeCompactionTest extends StoreRuntimeTestSupport {
     void scanAfterCompaction() {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int i = 0; i < 100; i++) {
-                tree.put(key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
+                put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
             tree.flush();
 

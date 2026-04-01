@@ -1,8 +1,10 @@
 package io.partdb.benchmark.support;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.storage.Mutation;
+import io.partdb.storage.Revision;
 import io.partdb.storage.StorageConfig;
-import io.partdb.storage.VersionedKeyValueStore;
+import io.partdb.storage.StorageEngine;
 
 public final class StorageFixtures {
 
@@ -37,10 +39,10 @@ public final class StorageFixtures {
             .build();
     }
 
-    public static long populate(VersionedKeyValueStore store, Bytes[] keys, Bytes value, long startingRevision) {
+    public static long populate(StorageEngine store, Bytes[] keys, Bytes value, long startingRevision) {
         long revision = startingRevision;
         for (Bytes key : keys) {
-            store.put(key, value, revision++);
+            store.apply(new Revision(revision++), Mutation.put(key, value));
         }
         return revision;
     }

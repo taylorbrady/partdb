@@ -5,8 +5,8 @@ import io.partdb.benchmark.support.BenchmarkKeys;
 import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
-import io.partdb.storage.EntryCursor;
 import io.partdb.storage.KeyRange;
+import io.partdb.storage.Scan;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -58,7 +58,7 @@ public class StorageScanBenchmark {
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
     public long persistedFullScan(PersistedScanState state) {
         long count = 0;
-        try (EntryCursor cursor = state.store().scan(KeyRange.all())) {
+        try (Scan cursor = state.store().scan(KeyRange.all())) {
             while (cursor.hasNext()) {
                 cursor.next();
                 count++;
@@ -68,7 +68,7 @@ public class StorageScanBenchmark {
     }
 
     private static void consumeRange(BaseScanState state, ScanRange range, Blackhole bh) {
-        try (EntryCursor cursor = state.store().scan(KeyRange.between(range.start(), range.endExclusive()))) {
+        try (Scan cursor = state.store().scan(KeyRange.between(range.start(), range.endExclusive()))) {
             while (cursor.hasNext()) {
                 bh.consume(cursor.next());
             }

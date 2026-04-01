@@ -12,7 +12,6 @@ class StoredValueTest {
     void encodeDecodeRoundTrip() {
         var original = new StoredValue(
             "hello".getBytes(),
-            42L,
             123L
         );
 
@@ -20,22 +19,12 @@ class StoredValueTest {
         var decoded = StoredValue.decode(encoded);
 
         assertArrayEquals(original.value(), decoded.value());
-        assertEquals(original.version(), decoded.version());
         assertEquals(original.leaseId(), decoded.leaseId());
     }
 
     @Test
-    void preservesVersion() {
-        var stored = new StoredValue("data".getBytes(), 999L, 0L);
-
-        var decoded = StoredValue.decode(stored.encode());
-
-        assertEquals(999L, decoded.version());
-    }
-
-    @Test
     void preservesLeaseId() {
-        var stored = new StoredValue("data".getBytes(), 1L, 456L);
+        var stored = new StoredValue("data".getBytes(), 456L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -44,7 +33,7 @@ class StoredValueTest {
 
     @Test
     void handlesZeroLeaseId() {
-        var stored = new StoredValue("data".getBytes(), 1L, 0L);
+        var stored = new StoredValue("data".getBytes(), 0L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -53,7 +42,7 @@ class StoredValueTest {
 
     @Test
     void handlesEmptyValue() {
-        var stored = new StoredValue(new byte[0], 1L, 0L);
+        var stored = new StoredValue(new byte[0], 0L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -66,7 +55,7 @@ class StoredValueTest {
         for (int i = 0; i < largeData.length; i++) {
             largeData[i] = (byte) (i % 256);
         }
-        var stored = new StoredValue(largeData, 1L, 0L);
+        var stored = new StoredValue(largeData, 0L);
 
         var decoded = StoredValue.decode(stored.encode());
 
@@ -77,38 +66,36 @@ class StoredValueTest {
     void handlesMaxLongValues() {
         var stored = new StoredValue(
             "data".getBytes(),
-            Long.MAX_VALUE,
             Long.MAX_VALUE
         );
 
         var decoded = StoredValue.decode(stored.encode());
 
-        assertEquals(Long.MAX_VALUE, decoded.version());
         assertEquals(Long.MAX_VALUE, decoded.leaseId());
     }
 
     @Test
     void encodedSizeIsHeaderPlusValue() {
         byte[] value = "test".getBytes();
-        var stored = new StoredValue(value, 1L, 1L);
+        var stored = new StoredValue(value, 1L);
 
         var encoded = stored.encode();
 
-        assertEquals(16 + value.length, encoded.length);
+        assertEquals(8 + value.length, encoded.length);
     }
 
     @Test
     void differentValuesProduceDifferentEncodings() {
-        var stored1 = new StoredValue("aaa".getBytes(), 1L, 1L);
-        var stored2 = new StoredValue("bbb".getBytes(), 1L, 1L);
+        var stored1 = new StoredValue("aaa".getBytes(), 1L);
+        var stored2 = new StoredValue("bbb".getBytes(), 1L);
 
         assertFalse(java.util.Arrays.equals(stored1.encode(), stored2.encode()));
     }
 
     @Test
-    void differentVersionsProduceDifferentEncodings() {
-        var stored1 = new StoredValue("data".getBytes(), 1L, 0L);
-        var stored2 = new StoredValue("data".getBytes(), 2L, 0L);
+    void differentLeaseIdsProduceDifferentEncodings() {
+        var stored1 = new StoredValue("data".getBytes(), 1L);
+        var stored2 = new StoredValue("data".getBytes(), 2L);
 
         assertFalse(java.util.Arrays.equals(stored1.encode(), stored2.encode()));
     }

@@ -9,13 +9,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
+class StorageEngineCoreCursorTest extends StorageEngineCoreTestSupport {
 
     @Test
     void closeReleasesResources() {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 10; i++) {
-                tree.put(key(i), value(i), nextRevision());
+                put(tree, key(i), value(i), nextRevision());
             }
             tree.flush();
 
@@ -28,9 +28,9 @@ class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
 
     @Test
     void multipleCursorsOnSameTree() {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 20; i++) {
-                tree.put(key(i), value(i), nextRevision());
+                put(tree, key(i), value(i), nextRevision());
             }
             tree.flush();
 
@@ -53,10 +53,10 @@ class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
     void streamSurvivesCompaction() throws Exception {
         LsmConfig config = smallMemtableConfig(1024);
 
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, config)) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, config)) {
             for (int batch = 0; batch < 5; batch++) {
                 for (int i = 0; i < 30; i++) {
-                    tree.put(key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextRevision());
+                    put(tree, key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextRevision());
                 }
                 tree.flush();
             }
@@ -76,9 +76,9 @@ class StoreRuntimeCursorTest extends StoreRuntimeTestSupport {
 
     @Test
     void closeAfterPartialConsumption() {
-        try (StoreRuntime tree = StoreRuntime.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngineCore tree = StorageEngineCore.open(tempDir, LsmConfig.defaults())) {
             for (int i = 0; i < 100; i++) {
-                tree.put(key(i), value(i), nextRevision());
+                put(tree, key(i), value(i), nextRevision());
             }
             tree.flush();
 
