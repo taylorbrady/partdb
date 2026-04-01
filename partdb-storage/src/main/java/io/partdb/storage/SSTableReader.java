@@ -20,7 +20,7 @@ final class SSTableReader implements AutoCloseable {
     private final Arena arena;
     private final MemorySegment segment;
     private final BloomFilter bloomFilter;
-    private final BlockIndex index;
+    private final DataBlockIndex index;
     private final SSTableFooter footer;
     private final BlockCache cache;
     private final BlockCodec codec;
@@ -33,7 +33,7 @@ final class SSTableReader implements AutoCloseable {
         Arena arena,
         MemorySegment segment,
         BloomFilter bloomFilter,
-        BlockIndex index,
+        DataBlockIndex index,
         SSTableFooter footer,
         BlockCache cache,
         BlockCodec codec,
@@ -67,7 +67,7 @@ final class SSTableReader implements AutoCloseable {
             BlockCodec codec = BlockCodec.fromId(header.codecId());
             SSTableFooter footer = readFooter(segment, fileSize);
             BloomFilter bloomFilter = readBloomFilter(segment, footer);
-            BlockIndex index = readIndex(segment, footer, fileSize);
+            DataBlockIndex index = readIndex(segment, footer, fileSize);
 
             return new SSTableReader(
                 id,
@@ -104,12 +104,12 @@ final class SSTableReader implements AutoCloseable {
             return Optional.empty();
         }
 
-        Optional<BlockIndex.Entry> blockEntry = index.find(key);
+        Optional<DataBlockIndex.Entry> blockEntry = index.find(key);
         if (blockEntry.isEmpty()) {
             return Optional.empty();
         }
 
-        Block block = loadBlock(blockEntry.get().handle());
+        DataBlockReader block = loadBlock(blockEntry.get().handle());
         return block.find(key);
     }
 
@@ -172,8 +172,8 @@ final class SSTableReader implements AutoCloseable {
         arena.close();
     }
 
-    private Block loadBlock(BlockHandle handle) {
-        Block cached = cache.get(id, handle.offset());
+    private DataBlockReader loadBlock(BlockHandle handle) {
+        DataBlockReader cached = cache.get(id, handle.offset());
         if (cached != null) {
             return cached;
         }
@@ -181,7 +181,7 @@ final class SSTableReader implements AutoCloseable {
         MemorySegment blockSegment = segment.asSlice(handle.offset(), handle.size());
         CompressedBlock compressed = CompressedBlock.deserialize(blockSegment);
         byte[] decompressed = codec.decompress(compressed.data(), compressed.uncompressedSize());
-        Block block = Block.from(MemorySegment.ofArray(decompressed));
+        DataBlockReader block = DataBlockReader.from(MemorySegment.ofArray(decompressed));
 
         cache.put(id, handle.offset(), block);
 
@@ -217,7 +217,7 @@ final class SSTableReader implements AutoCloseable {
         return BloomFilter.from(bloomSegment);
     }
 
-    private static BlockIndex readIndex(MemorySegment segment, SSTableFooter footer, long fileSize) {
+    private static DataBlockIndex readIndex(MemorySegment segment, SSTableFooter footer, long fileSize) {
         long indexOffset = footer.indexOffset();
         int footerSize = SSTableFooter.calculateFooterSize(footer.smallestKey(), footer.largestKey());
         long indexSize = fileSize - footerSize - indexOffset;
@@ -226,7 +226,7 @@ final class SSTableReader implements AutoCloseable {
         }
         validateRange(segment.byteSize(), indexOffset, (int) indexSize, "index");
         MemorySegment indexSegment = segment.asSlice(indexOffset, indexSize);
-        return BlockIndex.deserialize(indexSegment, footer.blockCount());
+        return DataBlockIndex.deserialize(indexSegment, footer.blockCount());
     }
 
     private static void validateRange(long totalSize, long offset, int size, String label) {
@@ -247,9 +247,9 @@ final class SSTableReader implements AutoCloseable {
     private final class ScanIterator implements Iterator<StoredEntry> {
 
         private final ScanBounds bounds;
-        private final List<BlockIndex.Entry> blocks;
+        private final List<DataBlockIndex.Entry> blocks;
         private int currentBlockIndex;
-        private Iterator<StoredEntry> currentBlockIterator;
+        private DataBlockCursor currentBlockCursor;
         private StoredEntry nextEntry;
 
         private ScanIterator(ScanBounds bounds) {
@@ -258,7 +258,7 @@ final class SSTableReader implements AutoCloseable {
                 ? index.entries()
                 : index.findInRange(bounds);
             this.currentBlockIndex = 0;
-            this.currentBlockIterator = null;
+            this.currentBlockCursor = null;
             advance();
         }
 
@@ -279,8 +279,8 @@ final class SSTableReader implements AutoCloseable {
 
         private void advance() {
             while (true) {
-                if (currentBlockIterator != null && currentBlockIterator.hasNext()) {
-                    StoredEntry entry = currentBlockIterator.next();
+                if (currentBlockCursor != null && currentBlockCursor.hasNext()) {
+                    StoredEntry entry = currentBlockCursor.next();
 
                     if (!bounds.includes(entry.key())) {
                         Slice endExclusive = bounds.endExclusive();
@@ -300,9 +300,11 @@ final class SSTableReader implements AutoCloseable {
                     return;
                 }
 
-                BlockIndex.Entry blockEntry = blocks.get(currentBlockIndex);
-                Block block = loadBlock(blockEntry.handle());
-                currentBlockIterator = block.iterator();
+                DataBlockIndex.Entry blockEntry = blocks.get(currentBlockIndex);
+                DataBlockReader block = loadBlock(blockEntry.handle());
+                currentBlockCursor = currentBlockIndex == 0 && bounds.startInclusive() != null
+                    ? block.cursorAtOrAfter(bounds.startInclusive())
+                    : block.cursor();
                 currentBlockIndex++;
             }
         }

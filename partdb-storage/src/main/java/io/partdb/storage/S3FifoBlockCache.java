@@ -19,11 +19,11 @@ final class S3FifoBlockCache implements BlockCache {
     private record CacheKey(long sstableId, long offset) {}
 
     private static final class CacheEntry {
-        final Block block;
+        final DataBlockReader block;
         final long sizeInBytes;
         volatile int frequency;
 
-        CacheEntry(Block block) {
+        CacheEntry(DataBlockReader block) {
             this.block = block;
             this.sizeInBytes = block.sizeInBytes();
             this.frequency = 0;
@@ -68,7 +68,7 @@ final class S3FifoBlockCache implements BlockCache {
     }
 
     @Override
-    public Block get(long sstableId, long offset) {
+    public DataBlockReader get(long sstableId, long offset) {
         CacheKey key = new CacheKey(sstableId, offset);
 
         lock.readLock().lock();
@@ -95,7 +95,7 @@ final class S3FifoBlockCache implements BlockCache {
     }
 
     @Override
-    public void put(long sstableId, long offset, Block block) {
+    public void put(long sstableId, long offset, DataBlockReader block) {
         CacheKey key = new CacheKey(sstableId, offset);
         long blockSize = block.sizeInBytes();
 

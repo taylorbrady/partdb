@@ -8,17 +8,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-final class BlockIndex {
+final class DataBlockIndex {
 
     record Entry(Slice firstKey, BlockHandle handle) {}
 
     private final List<Entry> entries;
 
-    public BlockIndex(List<Entry> entries) {
+    DataBlockIndex(List<Entry> entries) {
         this.entries = List.copyOf(entries);
     }
 
-    public static BlockIndex deserialize(MemorySegment segment, int blockCount) {
+    static DataBlockIndex deserialize(MemorySegment segment, int blockCount) {
         if (blockCount < 0) {
             throw new StorageException.Corruption("Negative block count: " + blockCount);
         }
@@ -29,39 +29,41 @@ final class BlockIndex {
 
         for (int i = 0; i < blockCount; i++) {
             if (offset + Integer.BYTES > size) {
-                throw new StorageException.Corruption("Truncated block index key length");
+                throw new StorageException.Corruption("Truncated data block index key length");
             }
             int keyLength = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset);
             if (keyLength < 0) {
-                throw new StorageException.Corruption("Negative block index key length");
+                throw new StorageException.Corruption("Negative data block index key length");
             }
-            long entrySize = 4L + keyLength + Long.BYTES + Integer.BYTES;
+            long entrySize = Integer.BYTES + keyLength + Long.BYTES + Integer.BYTES;
             if (offset + entrySize > size) {
-                throw new StorageException.Corruption("Truncated block index entry");
+                throw new StorageException.Corruption("Truncated data block index entry");
             }
 
-            Slice key = Slice.wrap(segment.asSlice(offset + 4, keyLength));
-
-            long blockOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + 4 + keyLength);
-            int blockSize = segment.get(ValueLayout.JAVA_INT_UNALIGNED, offset + 4 + keyLength + 8);
+            Slice key = Slice.wrap(segment.asSlice(offset + Integer.BYTES, keyLength));
+            long blockOffset = segment.get(ValueLayout.JAVA_LONG_UNALIGNED, offset + Integer.BYTES + keyLength);
+            int blockSize = segment.get(
+                ValueLayout.JAVA_INT_UNALIGNED,
+                offset + Integer.BYTES + keyLength + Long.BYTES
+            );
 
             entries.add(new Entry(key, new BlockHandle(blockOffset, blockSize)));
             offset += entrySize;
         }
 
         if (offset != size) {
-            throw new StorageException.Corruption("Trailing block index data");
+            throw new StorageException.Corruption("Trailing data block index data");
         }
 
-        return new BlockIndex(entries);
+        return new DataBlockIndex(entries);
     }
 
-    public Optional<Entry> find(Slice key) {
+    Optional<Entry> find(Slice key) {
         int index = indexOf(key);
         return index >= 0 ? Optional.of(entries.get(index)) : Optional.empty();
     }
 
-    public List<Entry> findInRange(ScanBounds bounds) {
+    List<Entry> findInRange(ScanBounds bounds) {
         if (entries.isEmpty()) {
             return List.of();
         }
@@ -88,18 +90,14 @@ final class BlockIndex {
         return result;
     }
 
-    public List<Entry> entries() {
+    List<Entry> entries() {
         return entries;
     }
 
-    public int size() {
-        return entries.size();
-    }
-
-    public byte[] serialize() {
+    byte[] serialize() {
         int totalSize = 0;
         for (Entry entry : entries) {
-            totalSize += 4 + entry.firstKey().length() + 8 + 4;
+            totalSize += Integer.BYTES + entry.firstKey().length() + Long.BYTES + Integer.BYTES;
         }
 
         ByteBuffer buffer = ByteBuffer.allocate(totalSize).order(ByteOrder.nativeOrder());
@@ -124,9 +122,9 @@ final class BlockIndex {
 
         while (low <= high) {
             int mid = (low + high) >>> 1;
-            int cmp = key.compareTo(entries.get(mid).firstKey());
+            int comparison = key.compareTo(entries.get(mid).firstKey());
 
-            if (cmp >= 0) {
+            if (comparison >= 0) {
                 result = mid;
                 low = mid + 1;
             } else {

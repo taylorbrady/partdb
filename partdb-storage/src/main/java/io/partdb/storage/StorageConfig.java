@@ -36,6 +36,7 @@ public record StorageConfig(
         return new LsmConfig(
             writeBufferMaxBytes,
             lsmTuning.dataBlockSizeBytes(),
+            lsmTuning.dataBlockRestartInterval(),
             lsmTuning.bloomFilterFalsePositiveRate(),
             compression.toBlockCodec(),
             readCacheMaxBytes,
@@ -62,6 +63,7 @@ public record StorageConfig(
 
     public record LsmTuning(
         int dataBlockSizeBytes,
+        int dataBlockRestartInterval,
         double bloomFilterFalsePositiveRate,
         long targetTableSizeBytes,
         int maxConcurrentCompactions,
@@ -74,6 +76,9 @@ public record StorageConfig(
         public LsmTuning {
             if (dataBlockSizeBytes <= 0) {
                 throw new IllegalArgumentException("dataBlockSizeBytes must be positive");
+            }
+            if (dataBlockRestartInterval <= 0) {
+                throw new IllegalArgumentException("dataBlockRestartInterval must be positive");
             }
             if (bloomFilterFalsePositiveRate <= 0 || bloomFilterFalsePositiveRate >= 1) {
                 throw new IllegalArgumentException("bloomFilterFalsePositiveRate must be between 0 and 1");
@@ -112,6 +117,7 @@ public record StorageConfig(
 
         public static final class Builder {
             private int dataBlockSizeBytes = LsmConfig.DEFAULT_BLOCK_SIZE;
+            private int dataBlockRestartInterval = LsmConfig.DEFAULT_BLOCK_RESTART_INTERVAL;
             private double bloomFilterFalsePositiveRate = LsmConfig.DEFAULT_BLOOM_FILTER_FPR;
             private long targetTableSizeBytes = LsmConfig.DEFAULT_TARGET_UNCOMPRESSED_SIZE;
             private int maxConcurrentCompactions = LsmConfig.DEFAULT_MAX_CONCURRENT_COMPACTIONS;
@@ -125,6 +131,7 @@ public record StorageConfig(
 
             private Builder(LsmTuning lsmTuning) {
                 this.dataBlockSizeBytes = lsmTuning.dataBlockSizeBytes;
+                this.dataBlockRestartInterval = lsmTuning.dataBlockRestartInterval;
                 this.bloomFilterFalsePositiveRate = lsmTuning.bloomFilterFalsePositiveRate;
                 this.targetTableSizeBytes = lsmTuning.targetTableSizeBytes;
                 this.maxConcurrentCompactions = lsmTuning.maxConcurrentCompactions;
@@ -136,6 +143,11 @@ public record StorageConfig(
 
             public Builder dataBlockSizeBytes(int dataBlockSizeBytes) {
                 this.dataBlockSizeBytes = dataBlockSizeBytes;
+                return this;
+            }
+
+            public Builder dataBlockRestartInterval(int dataBlockRestartInterval) {
+                this.dataBlockRestartInterval = dataBlockRestartInterval;
                 return this;
             }
 
@@ -177,6 +189,7 @@ public record StorageConfig(
             public LsmTuning build() {
                 return new LsmTuning(
                     dataBlockSizeBytes,
+                    dataBlockRestartInterval,
                     bloomFilterFalsePositiveRate,
                     targetTableSizeBytes,
                     maxConcurrentCompactions,

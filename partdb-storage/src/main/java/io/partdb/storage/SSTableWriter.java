@@ -17,8 +17,8 @@ final class SSTableWriter implements AutoCloseable {
     private final Path path;
     private final LsmConfig config;
     private final FileChannel channel;
-    private final List<BlockIndex.Entry> indexEntries;
-    private final Block.Builder currentBlock;
+    private final List<DataBlockIndex.Entry> indexEntries;
+    private final DataBlockWriter currentBlock;
     private final List<Slice> keys;
 
     private Slice lastKey;
@@ -38,7 +38,7 @@ final class SSTableWriter implements AutoCloseable {
         this.config = config;
         this.channel = channel;
         this.indexEntries = new ArrayList<>();
-        this.currentBlock = new Block.Builder();
+        this.currentBlock = new DataBlockWriter(config.blockRestartInterval());
         this.keys = new ArrayList<>();
         this.lastKey = null;
         this.firstKey = null;
@@ -105,11 +105,11 @@ final class SSTableWriter implements AutoCloseable {
         totalEntryCount++;
         uncompressedBytes += entry.encodedSizeBytes();
 
-        if (currentBlock.estimatedSize() > config.blockSize() && !currentBlock.isEmpty()) {
+        if (currentBlock.estimatedSizeBytes() > config.blockSize() && !currentBlock.isEmpty()) {
             flushCurrentBlock();
         }
 
-        currentBlock.add(entry);
+        currentBlock.append(entry);
     }
 
     long uncompressedBytes() {
@@ -171,7 +171,7 @@ final class SSTableWriter implements AutoCloseable {
             filePosition += bloomFilterData.length;
 
             long indexOffset = filePosition;
-            BlockIndex blockIndex = new BlockIndex(indexEntries);
+            DataBlockIndex blockIndex = new DataBlockIndex(indexEntries);
             byte[] indexData = blockIndex.serialize();
 
             buffer = ByteBuffer.wrap(indexData);
@@ -233,7 +233,7 @@ final class SSTableWriter implements AutoCloseable {
         }
 
         Slice blockFirstKey = currentBlock.firstKey();
-        byte[] uncompressedData = currentBlock.build();
+        byte[] uncompressedData = currentBlock.finish();
 
         byte[] compressedData = config.blockCodec().compress(uncompressedData);
         CompressedBlock compressedBlock = new CompressedBlock(
@@ -253,7 +253,7 @@ final class SSTableWriter implements AutoCloseable {
             }
 
             filePosition += blockData.length;
-            indexEntries.add(new BlockIndex.Entry(blockFirstKey, new BlockHandle(blockOffset, blockData.length)));
+            indexEntries.add(new DataBlockIndex.Entry(blockFirstKey, new BlockHandle(blockOffset, blockData.length)));
 
             currentBlock.reset();
         } catch (IOException e) {

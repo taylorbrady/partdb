@@ -5,6 +5,7 @@ import java.util.Objects;
 record LsmConfig(
     long memtableMaxSizeBytes,
     int blockSize,
+    int blockRestartInterval,
     double bloomFilterFalsePositiveRate,
     BlockCodec blockCodec,
     long blockCacheMaxBytes,
@@ -18,6 +19,7 @@ record LsmConfig(
 
     public static final long DEFAULT_MEMTABLE_MAX_SIZE_BYTES = 64 * 1024 * 1024;
     public static final int DEFAULT_BLOCK_SIZE = 32 * 1024;
+    public static final int DEFAULT_BLOCK_RESTART_INTERVAL = 16;
     public static final double DEFAULT_BLOOM_FILTER_FPR = 0.01;
     public static final long DEFAULT_BLOCK_CACHE_MAX_BYTES = 64 * 1024 * 1024;
     public static final long DEFAULT_TARGET_UNCOMPRESSED_SIZE = 64 * 1024 * 1024;
@@ -33,6 +35,9 @@ record LsmConfig(
         }
         if (blockSize <= 0) {
             throw new IllegalArgumentException("blockSize must be positive");
+        }
+        if (blockRestartInterval <= 0) {
+            throw new IllegalArgumentException("blockRestartInterval must be positive");
         }
         if (bloomFilterFalsePositiveRate <= 0 || bloomFilterFalsePositiveRate >= 1) {
             throw new IllegalArgumentException("bloomFilterFalsePositiveRate must be between 0 and 1");
@@ -79,6 +84,10 @@ record LsmConfig(
 
     public LsmConfig withBlockSize(int blockSize) {
         return toBuilder().blockSize(blockSize).build();
+    }
+
+    public LsmConfig withBlockRestartInterval(int blockRestartInterval) {
+        return toBuilder().blockRestartInterval(blockRestartInterval).build();
     }
 
     public LsmConfig withBloomFilterFalsePositiveRate(double bloomFilterFalsePositiveRate) {
@@ -131,6 +140,7 @@ record LsmConfig(
     public static final class Builder {
         private long memtableMaxSizeBytes = DEFAULT_MEMTABLE_MAX_SIZE_BYTES;
         private int blockSize = DEFAULT_BLOCK_SIZE;
+        private int blockRestartInterval = DEFAULT_BLOCK_RESTART_INTERVAL;
         private double bloomFilterFalsePositiveRate = DEFAULT_BLOOM_FILTER_FPR;
         private BlockCodec blockCodec = BlockCodec.DEFLATE;
         private long blockCacheMaxBytes = DEFAULT_BLOCK_CACHE_MAX_BYTES;
@@ -147,6 +157,7 @@ record LsmConfig(
         private Builder(LsmConfig config) {
             this.memtableMaxSizeBytes = config.memtableMaxSizeBytes;
             this.blockSize = config.blockSize;
+            this.blockRestartInterval = config.blockRestartInterval;
             this.bloomFilterFalsePositiveRate = config.bloomFilterFalsePositiveRate;
             this.blockCodec = config.blockCodec;
             this.blockCacheMaxBytes = config.blockCacheMaxBytes;
@@ -165,6 +176,11 @@ record LsmConfig(
 
         public Builder blockSize(int blockSize) {
             this.blockSize = blockSize;
+            return this;
+        }
+
+        public Builder blockRestartInterval(int blockRestartInterval) {
+            this.blockRestartInterval = blockRestartInterval;
             return this;
         }
 
@@ -217,6 +233,7 @@ record LsmConfig(
             return new LsmConfig(
                 memtableMaxSizeBytes,
                 blockSize,
+                blockRestartInterval,
                 bloomFilterFalsePositiveRate,
                 blockCodec,
                 blockCacheMaxBytes,

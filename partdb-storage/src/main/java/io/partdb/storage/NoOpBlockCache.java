@@ -7,12 +7,12 @@ final class NoOpBlockCache implements BlockCache {
     private NoOpBlockCache() {}
 
     @Override
-    public Block get(long sstableId, long offset) {
+    public DataBlockReader get(long sstableId, long offset) {
         return null;
     }
 
     @Override
-    public void put(long sstableId, long offset, Block block) {}
+    public void put(long sstableId, long offset, DataBlockReader block) {}
 
     @Override
     public void invalidate(long sstableId) {}
