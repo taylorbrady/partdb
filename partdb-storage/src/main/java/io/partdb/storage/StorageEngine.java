@@ -14,7 +14,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
 public final class StorageEngine implements AutoCloseable {
@@ -26,10 +25,10 @@ public final class StorageEngine implements AutoCloseable {
     private final SstableStore sstableStore;
     private final VersionSet versionSet;
     private final CompactionScheduler compactionScheduler;
-    private final AtomicLong appliedThroughRevision;
+    private final CheckpointInstaller checkpointInstaller;
+    private final RevisionState revisionState;
     private final MemtableFlusher memtableFlusher;
     private final StorageRuntimeStats runtimeStats;
-    private final Checkpointer checkpointer;
 
     private StorageEngine(
         LsmConfig lsmConfig,
@@ -44,7 +43,8 @@ public final class StorageEngine implements AutoCloseable {
         this.sstableStore = Objects.requireNonNull(sstableStore, "sstableStore must not be null");
         this.versionSet = Objects.requireNonNull(versionSet, "versionSet must not be null");
         this.compactionScheduler = Objects.requireNonNull(compactionScheduler, "compactionScheduler must not be null");
-        this.appliedThroughRevision = new AtomicLong(appliedThroughRevision);
+        this.checkpointInstaller = Objects.requireNonNull(checkpointInstaller, "checkpointInstaller must not be null");
+        this.revisionState = new RevisionState(appliedThroughRevision);
         this.runtimeStats = Objects.requireNonNull(runtimeStats, "runtimeStats must not be null");
         this.memtables = new MemtableSet();
         this.rotationLock = new ReentrantLock();
@@ -53,20 +53,8 @@ public final class StorageEngine implements AutoCloseable {
             sstableStore,
             versionSet,
             memtables,
-            this.appliedThroughRevision::get,
-            this::refreshMemtableStats,
-            compactionScheduler::requestCompaction
-        );
-        this.checkpointer = new Checkpointer(
-            versionSet,
-            checkpointInstaller,
+            revisionState,
             compactionScheduler,
-            memtableFlusher,
-            rotationLock,
-            this::resetMemtables,
-            this::flush,
-            this.appliedThroughRevision::get,
-            this.appliedThroughRevision::set,
             runtimeStats
         );
         refreshMemtableStats();
@@ -94,25 +82,24 @@ public final class StorageEngine implements AutoCloseable {
             SstableStore sstableStore = new SstableStore(dataDirectory, config, blockCache);
             CheckpointInstaller checkpointInstaller = new CheckpointInstaller(dataDirectory, manifestStore, sstableStore);
             LoadedStoreVersion initialState = sstableStore.openState(manifestStore);
-            VersionSet versionSet = VersionSet.open(manifestStore, initialState, runtimeStats);
+            VersionSet versionSet = VersionSet.open(manifestStore, sstableStore, initialState, runtimeStats);
             Compactor compactor = new Compactor(sstableStore, versionSet, config);
             CompactionScheduler compactionScheduler = new CompactionScheduler(
                 compactor,
+                sstableStore,
+                versionSet,
                 config,
-                runtimeStats,
-                versionSet::manifest,
-                result -> {}
+                runtimeStats
             );
             StorageEngine engine = new StorageEngine(
                 config,
                 sstableStore,
                 versionSet,
                 compactionScheduler,
-                initialState.manifest().appliedThroughRevision(),
+                initialState.manifest().durableThroughRevision(),
                 checkpointInstaller,
                 runtimeStats
             );
-            engine.installCompactionResultHandler();
             return engine;
         } catch (IOException e) {
             throw new StorageException.IO("Failed to open store", e);
@@ -164,7 +151,7 @@ public final class StorageEngine implements AutoCloseable {
                 .mapToLong(StoredEntry::revision)
                 .max()
                 .orElse(0);
-            appliedThroughRevision.accumulateAndGet(maxRevision, Math::max);
+            revisionState.recordApplied(maxRevision);
         } finally {
             rotationLock.unlock();
         }
@@ -196,7 +183,28 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     byte[] checkpointBytes() {
-        return checkpointer.checkpoint();
+        StorageCheckpointEvent event = new StorageCheckpointEvent();
+        event.phase = "checkpoint";
+        event.begin();
+
+        long startNanos = System.nanoTime();
+        try {
+            flush();
+            byte[] checkpoint;
+            try (VersionLease snapshot = versionSet.acquire(revisionState.durableThroughRevision())) {
+                checkpoint = VersionCheckpoint.capture(snapshot).toBytes();
+            }
+            runtimeStats.checkpointFinished((System.nanoTime() - startNanos) / 1_000_000);
+            event.bytes = checkpoint.length;
+            event.success = true;
+            return checkpoint;
+        } catch (RuntimeException e) {
+            event.success = false;
+            event.error = e.getClass().getSimpleName();
+            throw e;
+        } finally {
+            event.commit();
+        }
     }
 
     public void restoreInPlace(StorageCheckpoint checkpoint) {
@@ -204,11 +212,33 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     void replaceWithCheckpoint(byte[] data) {
-        checkpointer.restore(data);
+        VersionCheckpoint checkpoint = VersionCheckpoint.fromBytes(data);
+
+        StorageCheckpointEvent event = new StorageCheckpointEvent();
+        event.phase = "restore";
+        event.bytes = data.length;
+        event.begin();
+
+        long startNanos = System.nanoTime();
+        rotationLock.lock();
+        try {
+            memtableFlusher.awaitIdle();
+            restoreCheckpoint(checkpoint);
+            resetMemtables();
+            runtimeStats.restoreFinished((System.nanoTime() - startNanos) / 1_000_000);
+            event.success = true;
+        } catch (RuntimeException e) {
+            event.success = false;
+            event.error = e.getClass().getSimpleName();
+            throw e;
+        } finally {
+            rotationLock.unlock();
+            event.commit();
+        }
     }
 
     public StorageMetadata metadata() {
-        return new StorageMetadata(new Revision(appliedThroughRevision.get()));
+        return new StorageMetadata(new Revision(revisionState.appliedThroughRevision()));
     }
 
     public LsmStats stats() {
@@ -331,50 +361,86 @@ public final class StorageEngine implements AutoCloseable {
         refreshMemtableStats();
     }
 
+    private void restoreCheckpoint(VersionCheckpoint checkpoint) {
+        boolean restoredStateInstalled = false;
+        boolean backedUpCurrentState = false;
+
+        try {
+            try {
+                checkpointInstaller.stageAndValidate(checkpoint);
+            } catch (IOException e) {
+                throw new StorageException.IO("Failed to stage checkpoint files", e);
+            }
+
+            try (CompactionScheduler.Pause ignored = compactionScheduler.pauseAndAwaitIdle(Duration.ofSeconds(30))) {
+                SSTableManifest previousManifest = versionSet.manifest();
+                StoreVersion previousVersion = versionSet.retireCurrent();
+
+                if (!previousVersion.awaitDrain(Duration.ofSeconds(30))) {
+                    LoadedStoreVersion liveState = checkpointInstaller.restoreLive(previousManifest);
+                    versionSet.replaceCurrent(liveState);
+                    revisionState.restore(liveState.manifest().durableThroughRevision());
+                    throw new StorageException.Timeout(
+                        "Timed out waiting for store version readers to drain during restore",
+                        null
+                    );
+                }
+
+                try {
+                    checkpointInstaller.backupCurrentState(previousManifest);
+                    backedUpCurrentState = true;
+                } catch (IOException e) {
+                    throw new StorageException.IO("Failed to restore checkpoint", e);
+                }
+
+                try {
+                    LoadedStoreVersion restored = checkpointInstaller.activate(checkpoint);
+                    versionSet.replaceCurrent(restored);
+                    revisionState.restore(restored.manifest().durableThroughRevision());
+                    restoredStateInstalled = true;
+                } catch (IOException e) {
+                    rollbackRestore(previousManifest, backedUpCurrentState);
+                    throw new StorageException.IO("Failed to restore checkpoint", e);
+                } catch (RuntimeException e) {
+                    rollbackRestore(previousManifest, backedUpCurrentState);
+                    throw e;
+                }
+
+                if (restoredStateInstalled) {
+                    compactionScheduler.requestCompaction();
+                    try {
+                        checkpointInstaller.cleanupBackups(previousManifest);
+                    } catch (IOException e) {
+                        org.slf4j.LoggerFactory.getLogger(StorageEngine.class)
+                            .atWarn()
+                            .setCause(e)
+                            .log("Failed to clean restore backup files");
+                    }
+                }
+            }
+        } finally {
+            checkpointInstaller.cleanupStaged(checkpoint);
+        }
+    }
+
+    private void rollbackRestore(SSTableManifest previousManifest, boolean backedUpCurrentState) {
+        try {
+            LoadedStoreVersion restored = checkpointInstaller.rollback(previousManifest, backedUpCurrentState);
+            versionSet.replaceCurrent(restored);
+            revisionState.restore(restored.manifest().durableThroughRevision());
+        } catch (IOException e) {
+            throw new StorageException.IO("Failed to restore checkpoint", e);
+        }
+    }
+
     private ReadView openReadView() {
-        long snapshotRevision = appliedThroughRevision.get();
+        long snapshotRevision = revisionState.appliedThroughRevision();
         MemtableView memtableView = memtables.captureView();
         VersionLease tables = versionSet.acquire(snapshotRevision);
         try {
             return new ReadView(memtableView, tables, snapshotRevision);
         } catch (RuntimeException e) {
             tables.close();
-            throw e;
-        }
-    }
-
-    private void installCompactionResultHandler() {
-        compactionScheduler.setResultHandler(this::handleCompactionResult);
-    }
-
-    private void handleCompactionResult(CompactionResult result) {
-        switch (result) {
-            case CompactionResult.Success(var task, var outputs) -> applyCompaction(task.inputs(), outputs);
-            case CompactionResult.Failure(var task, var cause) ->
-                org.slf4j.LoggerFactory.getLogger(StorageEngine.class)
-                    .atError()
-                    .addKeyValue("targetLevel", task.targetLevel())
-                    .setCause(cause)
-                    .log("Compaction failed");
-        }
-    }
-
-    private void applyCompaction(List<SSTableMetadata> removed, List<SSTableMetadata> added) {
-        List<SSTableReader> addedReaders = sstableStore.openReaders(added);
-        try {
-            List<Runnable> cleanupActions = removed.isEmpty()
-                ? List.of()
-                : List.of(() -> sstableStore.deleteTables(removed));
-            versionSet.applyCompaction(
-                removed,
-                added,
-                addedReaders,
-                appliedThroughRevision.get(),
-                cleanupActions
-            );
-        } catch (RuntimeException e) {
-            sstableStore.closeReaders(addedReaders);
-            sstableStore.deleteTables(added);
             throw e;
         }
     }

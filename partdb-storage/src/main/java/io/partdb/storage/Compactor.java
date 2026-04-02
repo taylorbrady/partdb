@@ -23,7 +23,7 @@ final class Compactor {
         this.config = Objects.requireNonNull(config, "config");
     }
 
-    CompactionResult compact(CompactionTask task) {
+    List<SSTableMetadata> compact(CompactionTask task) {
         long startNanos = System.nanoTime();
         List<SSTableReader> inputs = null;
         List<SSTableMetadata> completedOutputs = new ArrayList<>();
@@ -47,7 +47,7 @@ final class Compactor {
                 .addKeyValue("durationMs", durationMs)
                 .log("Compaction completed");
 
-            return new CompactionResult.Success(task, outputs);
+            return outputs;
         } catch (Exception e) {
             log.atError()
                 .addKeyValue("targetLevel", task.targetLevel())
@@ -55,7 +55,10 @@ final class Compactor {
                 .setCause(e)
                 .log("Compaction failed");
             cleanupOutputs(completedOutputs);
-            return new CompactionResult.Failure(task, e);
+            if (e instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new StorageException.IO("Compaction failed", e);
         } finally {
             if (inputs != null) {
                 closeAll(inputs);

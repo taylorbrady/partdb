@@ -11,7 +11,6 @@ import java.util.Iterator;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 class CompactorTest {
 
@@ -32,10 +31,7 @@ class CompactorTest {
                 input = writer.finish();
             }
 
-            CompactionResult result = fixture.compactor().compact(new CompactionTask(List.of(input), 1, false));
-
-            CompactionResult.Success success = assertInstanceOf(CompactionResult.Success.class, result);
-            List<SSTableMetadata> outputs = success.outputs();
+            List<SSTableMetadata> outputs = fixture.compactor().compact(new CompactionTask(List.of(input), 1, false));
 
             assertEquals(3, outputs.size());
             assertEquals(List.of(1L, 1L, 1L), outputs.stream().map(SSTableMetadata::entryCount).toList());
@@ -61,10 +57,7 @@ class CompactorTest {
                 metadata(11, 2, "key-2", "key-2", 6_000)
             );
 
-            CompactionResult result = fixture.compactor().compact(new CompactionTask(List.of(input), grandparents, 1, false));
-
-            CompactionResult.Success success = assertInstanceOf(CompactionResult.Success.class, result);
-            List<SSTableMetadata> outputs = success.outputs();
+            List<SSTableMetadata> outputs = fixture.compactor().compact(new CompactionTask(List.of(input), grandparents, 1, false));
 
             assertEquals(2, outputs.size());
             assertEquals(List.of(1L, 2L), outputs.stream().map(SSTableMetadata::entryCount).toList());
@@ -82,12 +75,8 @@ class CompactorTest {
                 input = writer.finish();
             }
 
-            CompactionResult.Success success = assertInstanceOf(
-                CompactionResult.Success.class,
-                fixture.compactor().compact(new CompactionTask(List.of(input), 1, false))
-            );
-
-            assertEquals(List.of("key@5:value"), readEntries(fixture, success.outputs()));
+            List<SSTableMetadata> outputs = fixture.compactor().compact(new CompactionTask(List.of(input), 1, false));
+            assertEquals(List.of("key@5:value"), readEntries(fixture, outputs));
         }
     }
 
@@ -103,12 +92,8 @@ class CompactorTest {
                 input = writer.finish();
             }
 
-            CompactionResult.Success success = assertInstanceOf(
-                CompactionResult.Success.class,
-                fixture.compactor().compact(new CompactionTask(List.of(input), 1, false))
-            );
-
-            assertEquals(List.of("key@5:value", "key@3:value"), readEntries(fixture, success.outputs()));
+            List<SSTableMetadata> outputs = fixture.compactor().compact(new CompactionTask(List.of(input), 1, false));
+            assertEquals(List.of("key@5:value", "key@3:value"), readEntries(fixture, outputs));
         }
     }
 
@@ -122,12 +107,8 @@ class CompactorTest {
                 input = writer.finish();
             }
 
-            CompactionResult.Success success = assertInstanceOf(
-                CompactionResult.Success.class,
-                fixture.compactor().compact(new CompactionTask(List.of(input), 4, true))
-            );
-
-            assertEquals(List.of(), success.outputs());
+            List<SSTableMetadata> outputs = fixture.compactor().compact(new CompactionTask(List.of(input), 4, true));
+            assertEquals(List.of(), outputs);
         }
     }
 
@@ -142,12 +123,8 @@ class CompactorTest {
                 input = writer.finish();
             }
 
-            CompactionResult.Success success = assertInstanceOf(
-                CompactionResult.Success.class,
-                fixture.compactor().compact(new CompactionTask(List.of(input), 4, true))
-            );
-
-            assertEquals(List.of("key@5:tombstone", "key@3:value"), readEntries(fixture, success.outputs()));
+            List<SSTableMetadata> outputs = fixture.compactor().compact(new CompactionTask(List.of(input), 4, true));
+            assertEquals(List.of("key@5:tombstone", "key@3:value"), readEntries(fixture, outputs));
         }
     }
 
@@ -185,7 +162,7 @@ class CompactorTest {
         SstableStore sstableStore = new SstableStore(tempDir, config, NoOpBlockCache.INSTANCE);
         StorageRuntimeStats stats = new StorageRuntimeStats();
         LoadedStoreVersion initialState = sstableStore.openState(manifestStore);
-        VersionSet versionSet = VersionSet.open(manifestStore, initialState, stats);
+        VersionSet versionSet = VersionSet.open(manifestStore, sstableStore, initialState, stats);
         return new CompactorFixture(
             sstableStore,
             versionSet,

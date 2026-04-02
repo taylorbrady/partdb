@@ -12,6 +12,7 @@ final class MutableMemtable implements Memtable {
 
     private final ConcurrentSkipListMap<InternalKey, InternalEntry> entries;
     private final AtomicLong sizeInBytes;
+    private final AtomicLong maxRevision;
     private final ReentrantLock lifecycleLock;
 
     private volatile ImmutableMemtable immutableView;
@@ -19,6 +20,7 @@ final class MutableMemtable implements Memtable {
     MutableMemtable() {
         this.entries = new ConcurrentSkipListMap<>();
         this.sizeInBytes = new AtomicLong(0);
+        this.maxRevision = new AtomicLong(0);
         this.lifecycleLock = new ReentrantLock();
         this.immutableView = null;
     }
@@ -50,6 +52,7 @@ final class MutableMemtable implements Memtable {
 
             if (delta[0] != 0) {
                 sizeInBytes.addAndGet(delta[0]);
+                maxRevision.accumulateAndGet(entry.revision(), Math::max);
             }
             return result[0];
         } finally {
@@ -65,7 +68,7 @@ final class MutableMemtable implements Memtable {
         lifecycleLock.lock();
         try {
             if (immutableView == null) {
-                immutableView = new ImmutableMemtable(entries, sizeInBytes.get());
+                immutableView = new ImmutableMemtable(entries, sizeInBytes.get(), maxRevision.get());
             }
             return immutableView;
         } finally {

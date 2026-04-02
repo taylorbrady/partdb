@@ -52,7 +52,7 @@ class VersionLeaseTest {
             throw new AssertionError("fresh store version should be acquirable");
         }
 
-        version.retire(List.of());
+        version.retire(VersionRetirement.none());
 
         try (VersionLease view = new VersionLease(lease)) {
             StoredEntry mutation = view.get(slice("shared-key")).orElseThrow();
@@ -84,7 +84,7 @@ class VersionLeaseTest {
             throw new AssertionError("fresh store version should be acquirable");
         }
 
-        version.retire(List.of());
+        version.retire(VersionRetirement.none());
 
         try (VersionLease view = new VersionLease(lease)) {
             List<SSTableReader> tables = view.scanTables(ScanBounds.between(slice("a"), slice("z")));

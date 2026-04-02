@@ -8,10 +8,12 @@ final class ImmutableMemtable implements Memtable {
 
     private final NavigableMap<InternalKey, InternalEntry> entries;
     private final long sizeInBytes;
+    private final long maxRevision;
 
-    ImmutableMemtable(NavigableMap<InternalKey, InternalEntry> entries, long sizeInBytes) {
+    ImmutableMemtable(NavigableMap<InternalKey, InternalEntry> entries, long sizeInBytes, long maxRevision) {
         this.entries = java.util.Collections.unmodifiableNavigableMap(entries);
         this.sizeInBytes = sizeInBytes;
+        this.maxRevision = maxRevision;
     }
 
     @Override
@@ -32,5 +34,9 @@ final class ImmutableMemtable implements Memtable {
     @Override
     public long entryCount() {
         return entries.size();
+    }
+
+    long maxRevision() {
+        return maxRevision;
     }
 }

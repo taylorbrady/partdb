@@ -4,23 +4,28 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 final class VersionLease implements AutoCloseable {
 
     private final StoreVersion.Lease lease;
-    private final Runnable onClose;
+    private final VersionSet versionSet;
+    private final long snapshotRevision;
     private final SSTableManifest manifest;
     private final int maxLevel;
+    private final AtomicBoolean closed;
 
     VersionLease(StoreVersion.Lease lease) {
-        this(lease, () -> {});
+        this(lease, null, Long.MIN_VALUE);
     }
 
-    VersionLease(StoreVersion.Lease lease, Runnable onClose) {
+    VersionLease(StoreVersion.Lease lease, VersionSet versionSet, long snapshotRevision) {
         this.lease = lease;
-        this.onClose = Objects.requireNonNull(onClose, "onClose");
+        this.versionSet = versionSet;
+        this.snapshotRevision = snapshotRevision;
         this.manifest = lease.manifest();
         this.maxLevel = manifest.maxLevel();
+        this.closed = new AtomicBoolean(false);
     }
 
     List<SSTableReader> level0() {
@@ -87,10 +92,16 @@ final class VersionLease implements AutoCloseable {
 
     @Override
     public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+
         try {
             lease.close();
         } finally {
-            onClose.run();
+            if (versionSet != null) {
+                versionSet.releaseSnapshot(snapshotRevision);
+            }
         }
     }
 

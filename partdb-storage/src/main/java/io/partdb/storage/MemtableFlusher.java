@@ -8,7 +8,6 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.LongSupplier;
 
 final class MemtableFlusher implements AutoCloseable {
 
@@ -18,9 +17,9 @@ final class MemtableFlusher implements AutoCloseable {
     private final SstableStore sstableStore;
     private final VersionSet versionSet;
     private final MemtableSet memtables;
-    private final LongSupplier appliedThroughRevision;
-    private final Runnable onMemtablesChanged;
-    private final Runnable onFlushInstalled;
+    private final RevisionState revisionState;
+    private final CompactionScheduler compactionScheduler;
+    private final StorageRuntimeStats stats;
     private final Semaphore flushPermits;
     private final ExecutorService flushExecutor;
     private final AtomicReference<StorageException.IO> backgroundFailure;
@@ -29,16 +28,16 @@ final class MemtableFlusher implements AutoCloseable {
         SstableStore sstableStore,
         VersionSet versionSet,
         MemtableSet memtables,
-        LongSupplier appliedThroughRevision,
-        Runnable onMemtablesChanged,
-        Runnable onFlushInstalled
+        RevisionState revisionState,
+        CompactionScheduler compactionScheduler,
+        StorageRuntimeStats stats
     ) {
         this.sstableStore = sstableStore;
         this.versionSet = versionSet;
         this.memtables = memtables;
-        this.appliedThroughRevision = appliedThroughRevision;
-        this.onMemtablesChanged = onMemtablesChanged;
-        this.onFlushInstalled = onFlushInstalled;
+        this.revisionState = revisionState;
+        this.compactionScheduler = compactionScheduler;
+        this.stats = stats;
         this.flushPermits = new Semaphore(MAX_IMMUTABLE_MEMTABLES);
         this.flushExecutor = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
         this.backgroundFailure = new AtomicReference<>();
@@ -67,7 +66,7 @@ final class MemtableFlusher implements AutoCloseable {
             backgroundFailure.compareAndSet(null, failure);
             throw failure;
         }
-        onMemtablesChanged.run();
+        refreshMemtableStats();
     }
 
     void awaitIdle() {
@@ -128,8 +127,8 @@ final class MemtableFlusher implements AutoCloseable {
                 flushMemtable(toFlush);
                 memtables.retire(toFlush);
                 flushPermits.release();
-                onMemtablesChanged.run();
-                onFlushInstalled.run();
+                refreshMemtableStats();
+                compactionScheduler.requestCompaction();
             } catch (RuntimeException e) {
                 backgroundFailure.compareAndSet(null, new StorageException.IO("Memtable flush failed", e));
                 throwIfFailed();
@@ -151,11 +150,16 @@ final class MemtableFlusher implements AutoCloseable {
 
         SSTableReader reader = sstableStore.openReader(metadata);
         try {
-            versionSet.addFlushed(metadata, reader, appliedThroughRevision.getAsLong());
+            versionSet.apply(new VersionEdit.Flush(new InstalledTable(metadata, reader), memtable.maxRevision()));
+            revisionState.recordDurable(memtable.maxRevision());
         } catch (RuntimeException e) {
             sstableStore.closeReaders(java.util.List.of(reader));
             sstableStore.deleteTables(java.util.List.of(metadata));
             throw e;
         }
+    }
+
+    private void refreshMemtableStats() {
+        stats.updateMemtables(memtables.activeSizeInBytes(), memtables.immutableCount());
     }
 }

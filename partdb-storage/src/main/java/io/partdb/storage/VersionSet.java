@@ -16,6 +16,7 @@ final class VersionSet {
     private static final Logger log = LoggerFactory.getLogger(VersionSet.class);
 
     private final ManifestStore manifestStore;
+    private final SstableStore sstableStore;
     private final StorageRuntimeStats stats;
     private final AtomicLong nextSstableId;
     private final ReentrantLock changeLock;
@@ -26,16 +27,18 @@ final class VersionSet {
     private volatile boolean closed;
 
     VersionSet(StoreVersion initialVersion) {
-        this(null, initialVersion, null, initialVersion.manifest().nextSSTableId());
+        this(null, null, initialVersion, null, initialVersion.manifest().nextSSTableId());
     }
 
     private VersionSet(
         ManifestStore manifestStore,
+        SstableStore sstableStore,
         StoreVersion initialVersion,
         StorageRuntimeStats stats,
         long nextSstableId
     ) {
         this.manifestStore = manifestStore;
+        this.sstableStore = sstableStore;
         this.stats = stats;
         this.nextSstableId = new AtomicLong(nextSstableId);
         this.currentVersion = Objects.requireNonNull(initialVersion, "initialVersion");
@@ -44,14 +47,21 @@ final class VersionSet {
         this.activeSnapshotCounts = new TreeMap<>();
     }
 
-    static VersionSet open(ManifestStore manifestStore, LoadedStoreVersion initialState, StorageRuntimeStats stats) {
+    static VersionSet open(
+        ManifestStore manifestStore,
+        SstableStore sstableStore,
+        LoadedStoreVersion initialState,
+        StorageRuntimeStats stats
+    ) {
         Objects.requireNonNull(manifestStore, "manifestStore");
+        Objects.requireNonNull(sstableStore, "sstableStore");
         Objects.requireNonNull(initialState, "initialState");
         Objects.requireNonNull(stats, "stats");
 
         stats.updateSstables(initialState.manifest());
         return new VersionSet(
             manifestStore,
+            sstableStore,
             initialState.toStoreVersion(),
             stats,
             initialState.manifest().nextSSTableId()
@@ -72,7 +82,7 @@ final class VersionSet {
             StoreVersion.Lease lease = version.tryAcquire();
             if (lease != null) {
                 recordSnapshot(snapshotRevision);
-                return new VersionLease(lease, () -> releaseSnapshot(snapshotRevision));
+                return new VersionLease(lease, this, snapshotRevision);
             }
 
             changeLock.lock();
@@ -112,97 +122,37 @@ final class VersionSet {
         }
     }
 
-    void addFlushed(SSTableMetadata metadata, SSTableReader reader, long appliedThroughRevision) {
-        Objects.requireNonNull(metadata, "metadata");
-        Objects.requireNonNull(reader, "reader");
+    void apply(VersionEdit edit) {
+        Objects.requireNonNull(edit, "edit");
         ensurePersistentState();
 
         changeLock.lock();
         try {
             ensureOpen();
 
-            SSTableManifest currentManifest = currentVersion.manifest();
-            List<SSTableMetadata> updatedMetadata = new ArrayList<>(currentManifest.sstables());
-            updatedMetadata.addFirst(metadata);
-            SSTableManifest updatedManifest = new SSTableManifest(
-                nextSstableId.get(),
-                appliedThroughRevision,
-                updatedMetadata
-            );
-            manifestStore.write(updatedManifest);
-            stats.updateSstables(updatedManifest);
-
-            List<SSTableReader> readers = new ArrayList<>(currentVersion.readers().size() + 1);
-            readers.add(reader);
-            readers.addAll(retainReaders(currentVersion.readers()));
-
-            installLocked(new StoreVersion(updatedManifest, readers), List.of());
+            ReaderInstall readerInstall = buildReaders(edit);
+            VersionRetirement retirement = buildRetirement(edit);
+            SSTableManifest updatedManifest = edit.applyTo(currentVersion.manifest(), nextSstableId.get());
+            try {
+                manifestStore.write(updatedManifest);
+                stats.updateSstables(updatedManifest);
+                installLocked(new StoreVersion(updatedManifest, readerInstall.readers()), retirement);
+            } catch (RuntimeException e) {
+                closeReaders(readerInstall.retainedExisting());
+                throw e;
+            }
         } finally {
             changeLock.unlock();
         }
     }
 
-    void applyCompaction(
-        List<SSTableMetadata> removed,
-        List<SSTableMetadata> added,
-        List<SSTableReader> addedReaders,
-        long appliedThroughRevision,
-        List<Runnable> cleanupActions
-    ) {
-        Objects.requireNonNull(removed, "removed");
-        Objects.requireNonNull(added, "added");
-        Objects.requireNonNull(addedReaders, "addedReaders");
-        Objects.requireNonNull(cleanupActions, "cleanupActions");
-        ensurePersistentState();
-
-        changeLock.lock();
-        try {
-            ensureOpen();
-
-            SSTableManifest currentManifest = currentVersion.manifest();
-            List<SSTableMetadata> updated = new ArrayList<>(currentManifest.sstables());
-            updated.removeAll(removed);
-            updated.addAll(added);
-            SSTableManifest updatedManifest = new SSTableManifest(
-                nextSstableId.get(),
-                appliedThroughRevision,
-                updated
-            );
-            manifestStore.write(updatedManifest);
-            stats.updateSstables(updatedManifest);
-
-            var removedIds = removed.stream().map(SSTableMetadata::id).collect(java.util.stream.Collectors.toSet());
-            List<SSTableReader> orphanedReaders = new ArrayList<>();
-            List<SSTableReader> retainedReaders = new ArrayList<>();
-
-            for (SSTableReader existingReader : currentVersion.readers()) {
-                if (removedIds.contains(existingReader.id())) {
-                    orphanedReaders.add(existingReader);
-                } else {
-                    retainedReaders.add(existingReader.retain());
-                }
-            }
-
-            retainedReaders.addAll(addedReaders);
-
-            List<Runnable> allCleanup = new ArrayList<>(cleanupActions);
-            if (!orphanedReaders.isEmpty()) {
-                allCleanup.add(() -> closeReaders(orphanedReaders));
-            }
-
-            installLocked(new StoreVersion(updatedManifest, retainedReaders), List.copyOf(allCleanup));
-        } finally {
-            changeLock.unlock();
-        }
-    }
-
-    void install(StoreVersion nextVersion, List<Runnable> cleanupActions) {
+    void install(StoreVersion nextVersion, VersionRetirement retirement) {
         Objects.requireNonNull(nextVersion, "nextVersion");
-        Objects.requireNonNull(cleanupActions, "cleanupActions");
+        Objects.requireNonNull(retirement, "retirement");
 
         changeLock.lock();
         try {
-            installLocked(nextVersion, cleanupActions);
+            installLocked(nextVersion, retirement);
         } finally {
             changeLock.unlock();
         }
@@ -213,7 +163,7 @@ final class VersionSet {
         try {
             ensureOpen();
             StoreVersion version = currentVersion;
-            version.retire(closeReadersCleanup(version.readers()));
+            version.retire(new VersionRetirement(sstableStore, version.readers(), List.of()));
             return version;
         } finally {
             changeLock.unlock();
@@ -242,7 +192,7 @@ final class VersionSet {
             closed = true;
             versionChanged.signalAll();
             StoreVersion version = currentVersion;
-            version.retire(closeReadersCleanup(version.readers()));
+            version.retire(new VersionRetirement(sstableStore, version.readers(), List.of()));
             return version;
         } finally {
             changeLock.unlock();
@@ -258,7 +208,7 @@ final class VersionSet {
         }
     }
 
-    private void releaseSnapshot(long snapshotRevision) {
+    void releaseSnapshot(long snapshotRevision) {
         changeLock.lock();
         try {
             Integer count = activeSnapshotCounts.get(snapshotRevision);
@@ -288,19 +238,12 @@ final class VersionSet {
         }
     }
 
-    private void installLocked(StoreVersion nextVersion, List<Runnable> cleanupActions) {
+    private void installLocked(StoreVersion nextVersion, VersionRetirement retirement) {
         ensureOpen();
         StoreVersion previous = currentVersion;
         currentVersion = nextVersion;
-        previous.retire(cleanupActions);
+        previous.retire(retirement);
         versionChanged.signalAll();
-    }
-
-    private List<Runnable> closeReadersCleanup(List<SSTableReader> readers) {
-        if (readers.isEmpty()) {
-            return List.of();
-        }
-        return List.of(() -> closeReaders(readers));
     }
 
     private void closeReaders(List<SSTableReader> readers) {
@@ -328,4 +271,55 @@ final class VersionSet {
             throw e;
         }
     }
+
+    private ReaderInstall buildReaders(VersionEdit edit) {
+        var removedIds = edit.removedIds();
+        List<SSTableReader> readers = new ArrayList<>(currentVersion.readers().size() + edit.additions().size());
+        List<SSTableReader> retainedExisting = new ArrayList<>(currentVersion.readers().size());
+
+        try {
+            if (edit.additionMode() == VersionEdit.AdditionMode.PREPEND) {
+                for (InstalledTable addition : edit.additions()) {
+                    readers.add(addition.reader());
+                }
+            }
+
+            for (SSTableReader existingReader : currentVersion.readers()) {
+                if (!removedIds.contains(existingReader.id())) {
+                    SSTableReader retained = existingReader.retain();
+                    retainedExisting.add(retained);
+                    readers.add(retained);
+                }
+            }
+
+            if (edit.additionMode() == VersionEdit.AdditionMode.APPEND) {
+                for (InstalledTable addition : edit.additions()) {
+                    readers.add(addition.reader());
+                }
+            }
+
+            return new ReaderInstall(List.copyOf(readers), List.copyOf(retainedExisting));
+        } catch (RuntimeException e) {
+            closeReaders(retainedExisting);
+            throw e;
+        }
+    }
+
+    private VersionRetirement buildRetirement(VersionEdit edit) {
+        if (edit.removals().isEmpty()) {
+            return VersionRetirement.none();
+        }
+
+        var removedIds = edit.removedIds();
+        List<SSTableReader> readersToClose = new ArrayList<>();
+        for (SSTableReader existingReader : currentVersion.readers()) {
+            if (removedIds.contains(existingReader.id())) {
+                readersToClose.add(existingReader);
+            }
+        }
+
+        return new VersionRetirement(sstableStore, readersToClose, edit.removals());
+    }
+
+    private record ReaderInstall(List<SSTableReader> readers, List<SSTableReader> retainedExisting) {}
 }

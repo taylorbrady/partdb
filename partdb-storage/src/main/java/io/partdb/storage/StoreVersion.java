@@ -22,7 +22,7 @@ final class StoreVersion {
     private boolean retired;
     private boolean cleanupRunning;
     private boolean cleanupCompleted;
-    private List<Runnable> cleanupActions;
+    private VersionRetirement retirement;
 
     StoreVersion(SSTableManifest manifest, List<SSTableReader> readers) {
         this.manifest = Objects.requireNonNull(manifest, "manifest");
@@ -30,7 +30,7 @@ final class StoreVersion {
         this.readersById = indexReaders(this.readers);
         this.lifecycleLock = new ReentrantLock();
         this.drained = lifecycleLock.newCondition();
-        this.cleanupActions = List.of();
+        this.retirement = VersionRetirement.none();
     }
 
     Lease tryAcquire() {
@@ -47,7 +47,7 @@ final class StoreVersion {
         }
     }
 
-    void retire(List<Runnable> cleanupActions) {
+    void retire(VersionRetirement retirement) {
         CleanupWork cleanup = null;
         lifecycleLock.lock();
         try {
@@ -56,7 +56,7 @@ final class StoreVersion {
             }
 
             retired = true;
-            this.cleanupActions = List.copyOf(Objects.requireNonNull(cleanupActions, "cleanupActions"));
+            this.retirement = Objects.requireNonNull(retirement, "retirement");
             cleanup = maybeStartCleanup();
         } finally {
             lifecycleLock.unlock();
@@ -96,7 +96,7 @@ final class StoreVersion {
                 return;
             }
             cleanupRunning = true;
-            cleanup = new CleanupWork(cleanupActions);
+            cleanup = new CleanupWork(retirement);
         } finally {
             lifecycleLock.unlock();
         }
@@ -154,7 +154,7 @@ final class StoreVersion {
         }
 
         cleanupRunning = true;
-        return new CleanupWork(cleanupActions);
+        return new CleanupWork(retirement);
     }
 
     private void runCleanup(CleanupWork cleanup) {
@@ -163,8 +163,8 @@ final class StoreVersion {
         }
 
         try {
-            for (Runnable action : cleanup.actions()) {
-                action.run();
+            if (cleanup.retirement() != null) {
+                cleanup.retirement().execute();
             }
         } finally {
             lifecycleLock.lock();
@@ -186,7 +186,7 @@ final class StoreVersion {
         return Map.copyOf(readersById);
     }
 
-    private record CleanupWork(List<Runnable> actions) {}
+    private record CleanupWork(VersionRetirement retirement) {}
 
     static final class Lease implements AutoCloseable {
         private final StoreVersion version;

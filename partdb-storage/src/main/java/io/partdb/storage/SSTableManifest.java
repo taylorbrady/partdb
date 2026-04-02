@@ -15,7 +15,7 @@ import java.util.zip.CRC32C;
 
 record SSTableManifest(
     long nextSSTableId,
-    long appliedThroughRevision,
+    long durableThroughRevision,
     List<SSTableMetadata> sstables
 ) {
 
@@ -32,8 +32,8 @@ record SSTableManifest(
         if (nextSSTableId < 0) {
             throw new IllegalArgumentException("nextSSTableId must be non-negative");
         }
-        if (appliedThroughRevision < 0) {
-            throw new IllegalArgumentException("appliedThroughRevision must be non-negative");
+        if (durableThroughRevision < 0) {
+            throw new IllegalArgumentException("durableThroughRevision must be non-negative");
         }
     }
 
@@ -106,7 +106,7 @@ record SSTableManifest(
         buffer.putInt(MAGIC_NUMBER);
         buffer.putInt(VERSION);
         buffer.putLong(nextSSTableId);
-        buffer.putLong(appliedThroughRevision);
+        buffer.putLong(durableThroughRevision);
         buffer.putInt(sstables.size());
 
         for (SSTableMetadata sst : sstables) {
@@ -154,7 +154,7 @@ record SSTableManifest(
             }
 
             long nextSSTableId = buffer.getLong();
-            long appliedThroughRevision = buffer.getLong();
+            long durableThroughRevision = buffer.getLong();
             int sstableCount = buffer.getInt();
             if (sstableCount < 0) {
                 throw new StorageException.Corruption("Negative SSTable manifest entry count");
@@ -169,7 +169,7 @@ record SSTableManifest(
                 throw new StorageException.Corruption("Trailing SSTable manifest data");
             }
 
-            return new SSTableManifest(nextSSTableId, appliedThroughRevision, sstables);
+            return new SSTableManifest(nextSSTableId, durableThroughRevision, sstables);
         } catch (BufferUnderflowException | IllegalArgumentException e) {
             throw new StorageException.Corruption("Malformed SSTable manifest", e);
         }

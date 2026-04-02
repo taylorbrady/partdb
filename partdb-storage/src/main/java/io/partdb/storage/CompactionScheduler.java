@@ -16,16 +16,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 final class CompactionScheduler implements AutoCloseable {
 
     private final LeveledCompactionPlanner planner;
     private final Compactor compactor;
-    private final Supplier<SSTableManifest> manifestSupplier;
+    private final SstableStore sstableStore;
+    private final VersionSet versionSet;
     private final StorageRuntimeStats stats;
-    private volatile Consumer<CompactionResult> resultHandler;
     private final ReservationLedger reservations;
     private final int maxConcurrentCompactions;
 
@@ -43,16 +41,16 @@ final class CompactionScheduler implements AutoCloseable {
 
     CompactionScheduler(
         Compactor compactor,
+        SstableStore sstableStore,
+        VersionSet versionSet,
         LsmConfig config,
-        StorageRuntimeStats stats,
-        Supplier<SSTableManifest> manifestSupplier,
-        Consumer<CompactionResult> resultHandler
+        StorageRuntimeStats stats
     ) {
         this.planner = new LeveledCompactionPlanner(config);
         this.compactor = Objects.requireNonNull(compactor, "compactor");
-        this.manifestSupplier = manifestSupplier;
-        this.stats = stats;
-        this.resultHandler = Objects.requireNonNull(resultHandler, "resultHandler");
+        this.sstableStore = Objects.requireNonNull(sstableStore, "sstableStore");
+        this.versionSet = Objects.requireNonNull(versionSet, "versionSet");
+        this.stats = Objects.requireNonNull(stats, "stats");
         this.reservations = new ReservationLedger();
         this.maxConcurrentCompactions = config.maxConcurrentCompactions();
 
@@ -78,10 +76,6 @@ final class CompactionScheduler implements AutoCloseable {
         } finally {
             lock.unlock();
         }
-    }
-
-    void setResultHandler(Consumer<CompactionResult> resultHandler) {
-        this.resultHandler = Objects.requireNonNull(resultHandler, "resultHandler");
     }
 
     Pause pauseAndAwaitIdle(Duration timeout) {
@@ -193,7 +187,7 @@ final class CompactionScheduler implements AutoCloseable {
                 lock.unlock();
             }
 
-            SSTableManifest plannedManifest = manifestSupplier.get();
+            SSTableManifest plannedManifest = versionSet.manifest();
             List<CompactionTask> plannedTasks = planner.selectCompactions(plannedManifest, reservedIds);
             List<CompactionLaunch> launches = new ArrayList<>();
 
@@ -205,7 +199,7 @@ final class CompactionScheduler implements AutoCloseable {
                 if (paused || activeTasks >= maxConcurrentCompactions) {
                     continue;
                 }
-                if (!plannedManifest.equals(manifestSupplier.get())) {
+                if (!plannedManifest.equals(versionSet.manifest())) {
                     continue;
                 }
 
@@ -266,21 +260,12 @@ final class CompactionScheduler implements AutoCloseable {
         stats.compactionStarted();
         long startNanos = System.nanoTime();
         try {
-            CompactionResult result = compactor.compact(task);
-            resultHandler.accept(result);
-            switch (result) {
-                case CompactionResult.Success(_, var outputs) -> {
-                    event.outputTableCount = outputs.size();
-                    event.outputBytes = outputs.stream().mapToLong(SSTableMetadata::fileSizeBytes).sum();
-                    event.success = true;
-                    stats.compactionFinished(true, (System.nanoTime() - startNanos) / 1_000_000);
-                }
-                case CompactionResult.Failure(_, var cause) -> {
-                    event.success = false;
-                    event.error = cause.getClass().getSimpleName();
-                    stats.compactionFinished(false, (System.nanoTime() - startNanos) / 1_000_000);
-                }
-            }
+            List<SSTableMetadata> outputs = compactor.compact(task);
+            publishCompaction(task, outputs);
+            event.outputTableCount = outputs.size();
+            event.outputBytes = outputs.stream().mapToLong(SSTableMetadata::fileSizeBytes).sum();
+            event.success = true;
+            stats.compactionFinished(true, (System.nanoTime() - startNanos) / 1_000_000);
         } catch (RuntimeException e) {
             event.success = false;
             event.error = e.getClass().getSimpleName();
@@ -326,6 +311,21 @@ final class CompactionScheduler implements AutoCloseable {
 
     private boolean isIdleLocked() {
         return activeTasks == 0 && requestedVersion == processedVersion;
+    }
+
+    private void publishCompaction(CompactionTask task, List<SSTableMetadata> outputs) {
+        List<SSTableReader> outputReaders = sstableStore.openReaders(outputs);
+        try {
+            List<InstalledTable> installed = new ArrayList<>(outputs.size());
+            for (int i = 0; i < outputs.size(); i++) {
+                installed.add(new InstalledTable(outputs.get(i), outputReaders.get(i)));
+            }
+            versionSet.apply(new VersionEdit.Compaction(task.inputs(), installed));
+        } catch (RuntimeException e) {
+            sstableStore.closeReaders(outputReaders);
+            sstableStore.deleteTables(outputs);
+            throw e;
+        }
     }
 
     private void signalIdleIfNeededLocked() {
