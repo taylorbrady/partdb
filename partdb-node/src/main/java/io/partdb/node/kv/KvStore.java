@@ -7,13 +7,13 @@ import io.partdb.node.lease.LeaseRegistry;
 import io.partdb.node.raft.StateMachine;
 import io.partdb.storage.EntryRecord;
 import io.partdb.storage.KeyRange;
-import io.partdb.storage.LsmStats;
 import io.partdb.storage.Mutation;
 import io.partdb.storage.Revision;
 import io.partdb.storage.Scan;
 import io.partdb.storage.StorageOptions;
 import io.partdb.storage.StorageCheckpoint;
 import io.partdb.storage.StorageEngine;
+import io.partdb.storage.StorageStats;
 import io.partdb.storage.ValueRecord;
 import io.partdb.storage.WriteBatch;
 
@@ -200,7 +200,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         byte[] leaseData = new byte[leaseLen];
         buffer.get(leaseData);
 
-        store.restoreInPlace(new StorageCheckpoint(Bytes.copyOf(storageData)));
+        store.restore(new StorageCheckpoint(Bytes.copyOf(storageData)));
         leaseRegistry.restoreSnapshot(leaseData);
         rebuildLeaseAttachments();
 
@@ -215,7 +215,7 @@ public final class KvStore implements StateMachine, AutoCloseable {
         return leaseRegistry;
     }
 
-    public LsmStats storageStats() {
+    public StorageStats storageStats() {
         return store.stats();
     }
 

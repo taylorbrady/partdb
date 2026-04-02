@@ -160,7 +160,7 @@ class CompactorTest {
     private CompactorFixture openFixture(LsmConfig config) {
         ManifestStore manifestStore = new ManifestStore(tempDir);
         SstableStore sstableStore = new SstableStore(tempDir, config, NoOpBlockCache.INSTANCE);
-        StorageRuntimeStats stats = new StorageRuntimeStats();
+        StorageStatsCollector stats = new StorageStatsCollector();
         LoadedStoreVersion initialState = sstableStore.openState(manifestStore);
         VersionSet versionSet = VersionSet.open(manifestStore, sstableStore, initialState, stats);
         return new CompactorFixture(

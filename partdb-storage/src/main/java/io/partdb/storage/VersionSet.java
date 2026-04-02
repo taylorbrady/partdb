@@ -17,7 +17,7 @@ final class VersionSet {
 
     private final ManifestStore manifestStore;
     private final SstableStore sstableStore;
-    private final StorageRuntimeStats stats;
+    private final StorageStatsCollector stats;
     private final AtomicLong nextSstableId;
     private final ReentrantLock changeLock;
     private final Condition versionChanged;
@@ -34,7 +34,7 @@ final class VersionSet {
         ManifestStore manifestStore,
         SstableStore sstableStore,
         StoreVersion initialVersion,
-        StorageRuntimeStats stats,
+        StorageStatsCollector stats,
         long nextSstableId
     ) {
         this.manifestStore = manifestStore;
@@ -51,7 +51,7 @@ final class VersionSet {
         ManifestStore manifestStore,
         SstableStore sstableStore,
         LoadedStoreVersion initialState,
-        StorageRuntimeStats stats
+        StorageStatsCollector stats
     ) {
         Objects.requireNonNull(manifestStore, "manifestStore");
         Objects.requireNonNull(sstableStore, "sstableStore");

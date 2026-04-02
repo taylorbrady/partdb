@@ -2,7 +2,6 @@ package io.partdb.storage;
 
 import org.junit.jupiter.api.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -15,17 +14,20 @@ class StorageEngineInternalsCompactionTest extends StorageEngineInternalTestSupp
 
     @Test
     void l0TriggersAtThreshold() {
-        LsmConfig config = smallMemtableConfig(1024);
+        StorageOptions options = smallWriteBufferOptions(1024);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int i = 0; i < 100; i++) {
                 put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
 
-            tree.flush();
-            awaitCompaction(tree);
+            drainToDurableState(tree);
+            awaitCompaction(tree, () -> {
+                SSTableManifest manifest = readManifest(tempDir);
+                return manifest.level(0).size() < 4 && !manifest.level(1).isEmpty();
+            });
 
-            SSTableManifest manifest = tree.manifest();
+            SSTableManifest manifest = readManifest(tempDir);
             List<SSTableMetadata> l0Files = manifest.level(0);
             List<SSTableMetadata> l1Files = manifest.level(1);
 
@@ -36,68 +38,91 @@ class StorageEngineInternalsCompactionTest extends StorageEngineInternalTestSupp
 
     @Test
     void mergesOverlappingKeys() {
-        LsmConfig config = smallMemtableConfig(1024);
+        StorageOptions options = smallWriteBufferOptions(1024);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int version = 0; version < 5; version++) {
                 for (int i = 0; i < 20; i++) {
                     put(tree, key(String.format("key-%02d", i)), value("v" + version + "-" + i), nextRevision());
                 }
-                tree.flush();
+                drainToDurableState(tree);
             }
 
-            awaitCompaction(tree);
+            awaitCompaction(tree, () -> {
+                for (int i = 0; i < 20; i++) {
+                    Optional<ValueRecord> result = get(tree, key(String.format("key-%02d", i)));
+                    if (result.isEmpty() || !result.get().value().utf8().startsWith("v4")) {
+                        return false;
+                    }
+                }
+                return true;
+            });
 
             for (int i = 0; i < 20; i++) {
-                Optional<StoredEntry.Value> result = tree.get(key(String.format("key-%02d", i)));
+                Optional<ValueRecord> result = get(tree, key(String.format("key-%02d", i)));
                 assertTrue(result.isPresent());
-                assertTrue(new String(result.get().value().toByteArray(), StandardCharsets.UTF_8).startsWith("v4"));
+                assertTrue(result.get().value().utf8().startsWith("v4"));
             }
         }
     }
 
     @Test
     void tombstonesResultInEmptyGet() {
-        LsmConfig config = smallMemtableConfig(1024);
+        StorageOptions options = smallWriteBufferOptions(1024);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int i = 0; i < 50; i++) {
                 put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
-            tree.flush();
+            drainToDurableState(tree);
 
             for (int i = 0; i < 50; i++) {
                 delete(tree, key(String.format("key-%03d", i)), nextRevision());
             }
-            tree.flush();
+            drainToDurableState(tree);
 
-            awaitCompaction(tree);
+            awaitCompaction(tree, () -> {
+                for (int i = 0; i < 50; i++) {
+                    if (get(tree, key(String.format("key-%03d", i))).isPresent()) {
+                        return false;
+                    }
+                }
+                return true;
+            });
 
             for (int i = 0; i < 50; i++) {
-                assertTrue(tree.get(key(String.format("key-%03d", i))).isEmpty());
+                assertTrue(get(tree, key(String.format("key-%03d", i))).isEmpty());
             }
         }
     }
 
     @Test
     void levelSizeRespected() {
-        LsmConfig config = smallMemtableConfig(2048);
+        StorageOptions options = smallWriteBufferOptions(2048);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int batch = 0; batch < 20; batch++) {
                 for (int i = 0; i < 100; i++) {
                     put(tree, key(String.format("key-%05d", batch * 100 + i)), largeValue(100), nextRevision());
                 }
-                tree.flush();
+                drainToDurableState(tree);
             }
 
-            awaitCompaction(tree);
+            awaitCompaction(tree, () -> {
+                SSTableManifest manifest = readManifest(tempDir);
+                for (int level = 1; level < manifest.maxLevel(); level++) {
+                    if (manifest.levelSize(level) > maxBytesForLevel(options, level) * 2) {
+                        return false;
+                    }
+                }
+                return true;
+            });
 
-            SSTableManifest manifest = tree.manifest();
+            SSTableManifest manifest = readManifest(tempDir);
 
             for (int level = 1; level < manifest.maxLevel(); level++) {
                 long levelSize = manifest.levelSize(level);
-                long maxSize = config.maxBytesForLevel(level);
+                long maxSize = maxBytesForLevel(options, level);
 
                 assertTrue(levelSize <= maxSize * 2);
             }
@@ -106,9 +131,9 @@ class StorageEngineInternalsCompactionTest extends StorageEngineInternalTestSupp
 
     @Test
     void preservesNewestVersions() {
-        LsmConfig config = smallMemtableConfig(1024);
+        StorageOptions options = smallWriteBufferOptions(1024);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             List<String> expectedValues = new ArrayList<>();
 
             for (int i = 0; i < 30; i++) {
@@ -117,33 +142,41 @@ class StorageEngineInternalsCompactionTest extends StorageEngineInternalTestSupp
                 put(tree, key(String.format("key-%02d", i)), value(val), nextRevision());
 
                 if (i % 10 == 9) {
-                    tree.flush();
+                    drainToDurableState(tree);
                 }
             }
 
-            awaitCompaction(tree);
+            awaitCompaction(tree, () -> {
+                for (int i = 0; i < 30; i++) {
+                    Optional<ValueRecord> result = get(tree, key(String.format("key-%02d", i)));
+                    if (result.isEmpty() || !expectedValues.get(i).equals(result.get().value().utf8())) {
+                        return false;
+                    }
+                }
+                return true;
+            });
 
             for (int i = 0; i < 30; i++) {
-                Optional<StoredEntry.Value> result = tree.get(key(String.format("key-%02d", i)));
+                Optional<ValueRecord> result = get(tree, key(String.format("key-%02d", i)));
                 assertTrue(result.isPresent());
-                assertEquals(expectedValues.get(i), new String(result.get().value().toByteArray(), StandardCharsets.UTF_8));
+                assertEquals(expectedValues.get(i), result.get().value().utf8());
             }
         }
     }
 
     @Test
     void manifestConsistency() {
-        LsmConfig config = smallMemtableConfig(1024);
+        StorageOptions options = smallWriteBufferOptions(1024);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int i = 0; i < 80; i++) {
                 put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
-            tree.flush();
+            drainToDurableState(tree);
 
-            awaitCompaction(tree);
+            awaitCompaction(tree, () -> !readManifest(tempDir).sstables().isEmpty());
 
-            SSTableManifest manifest = tree.manifest();
+            SSTableManifest manifest = readManifest(tempDir);
 
             long totalEntries = 0;
             for (SSTableMetadata desc : manifest.sstables()) {
@@ -161,12 +194,12 @@ class StorageEngineInternalsCompactionTest extends StorageEngineInternalTestSupp
 
     @Test
     void reopenAfterCompaction() {
-        LsmConfig config = smallMemtableConfig(1024);
+        StorageOptions options = smallWriteBufferOptions(1024);
 
         List<Slice> keys = new ArrayList<>();
         List<Slice> values = new ArrayList<>();
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int i = 0; i < 60; i++) {
                 Slice k = key(String.format("key-%03d", i));
                 Slice v = value("value-" + i);
@@ -174,40 +207,40 @@ class StorageEngineInternalsCompactionTest extends StorageEngineInternalTestSupp
                 values.add(v);
                 put(tree, k, v, nextRevision());
             }
-            tree.flush();
-            awaitCompaction(tree);
+            drainToDurableState(tree);
+            awaitCompaction(tree, () -> true);
         }
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int i = 0; i < keys.size(); i++) {
-                Optional<StoredEntry.Value> result = tree.get(keys.get(i));
+                Optional<ValueRecord> result = get(tree, keys.get(i));
                 assertTrue(result.isPresent());
-                assertEquals(values.get(i), result.get().value());
+                assertEquals(bytes(values.get(i)), result.get().value());
             }
         }
     }
 
     @Test
     void scanAfterCompaction() {
-        LsmConfig config = smallMemtableConfig(1024);
+        StorageOptions options = smallWriteBufferOptions(1024);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int i = 0; i < 100; i++) {
                 put(tree, key(String.format("key-%03d", i)), value("value-" + i), nextRevision());
             }
-            tree.flush();
+            drainToDurableState(tree);
 
-            awaitCompaction(tree);
+            awaitCompaction(tree, () -> true);
 
             Slice startKey = key("key-020");
             Slice endKey = key("key-030");
 
-            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.between(startKey, endKey)));
+            List<EntryRecord> entries = readAll(tree.scan(KeyRange.between(bytes(startKey), bytes(endKey))));
 
             assertEquals(10, entries.size());
-            for (StoredEntry.Value e : entries) {
-                assertTrue(e.key().compareTo(startKey) >= 0);
-                assertTrue(e.key().compareTo(endKey) < 0);
+            for (EntryRecord e : entries) {
+                assertTrue(e.key().compareTo(bytes(startKey)) >= 0);
+                assertTrue(e.key().compareTo(bytes(endKey)) < 0);
             }
         }
     }

@@ -10,7 +10,7 @@ import io.partdb.node.raft.RaftNode;
 import io.partdb.node.raft.RaftStore;
 import io.partdb.raft.RaftMembership;
 import io.partdb.storage.KeyRange;
-import io.partdb.storage.LsmStats;
+import io.partdb.storage.StorageStats;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -151,7 +151,7 @@ public final class PartDbNode implements AutoCloseable {
         return proposalFailureCount.get();
     }
 
-    public LsmStats storageStats() {
+    public StorageStats storageStats() {
         return kvStore.storageStats();
     }
 

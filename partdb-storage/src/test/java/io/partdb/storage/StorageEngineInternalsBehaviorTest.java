@@ -15,55 +15,55 @@ class StorageEngineInternalsBehaviorTest extends StorageEngineInternalTestSuppor
 
     @Test
     void putAndGet() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             put(tree, key(1), value(10), nextRevision());
 
-            Optional<StoredEntry.Value> result = tree.get(key(1));
+            Optional<ValueRecord> result = get(tree, key(1));
 
             assertTrue(result.isPresent());
-            assertEquals(value(10), result.get().value());
+            assertEquals(bytes(value(10)), result.get().value());
         }
     }
 
     @Test
     void getNonExistentKey() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
-            Optional<StoredEntry.Value> result = tree.get(key(99));
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
+            Optional<ValueRecord> result = get(tree, key(99));
             assertTrue(result.isEmpty());
         }
     }
 
     @Test
     void deleteKey() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             delete(tree, key(1), nextRevision());
 
-            Optional<StoredEntry.Value> result = tree.get(key(1));
+            Optional<ValueRecord> result = get(tree, key(1));
             assertTrue(result.isEmpty());
         }
     }
 
     @Test
     void deleteNonExistentKey() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             delete(tree, key(1), nextRevision());
 
-            Optional<StoredEntry.Value> result = tree.get(key(1));
+            Optional<ValueRecord> result = get(tree, key(1));
             assertTrue(result.isEmpty());
         }
     }
 
     @Test
     void putOverwritesPreviousValue() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(1), value(20), nextRevision());
 
-            Optional<StoredEntry.Value> result = tree.get(key(1));
+            Optional<ValueRecord> result = get(tree, key(1));
 
             assertTrue(result.isPresent());
-            assertEquals(value(20), result.get().value());
+            assertEquals(bytes(value(20)), result.get().value());
         }
     }
 
@@ -89,159 +89,159 @@ class StorageEngineInternalsBehaviorTest extends StorageEngineInternalTestSuppor
 
     @Test
     void entireRange() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), value(20), nextRevision());
             put(tree, key(3), value(30), nextRevision());
 
-            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.all()));
+            List<EntryRecord> entries = readAll(tree.scan(KeyRange.all()));
 
             assertEquals(3, entries.size());
-            assertEquals(key(1), entries.get(0).key());
-            assertEquals(key(2), entries.get(1).key());
-            assertEquals(key(3), entries.get(2).key());
+            assertEquals(bytes(key(1)), entries.get(0).key());
+            assertEquals(bytes(key(2)), entries.get(1).key());
+            assertEquals(bytes(key(3)), entries.get(2).key());
         }
     }
 
     @Test
     void withBounds() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), value(20), nextRevision());
             put(tree, key(3), value(30), nextRevision());
             put(tree, key(4), value(40), nextRevision());
 
-            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.between(key(2), key(4))));
+            List<EntryRecord> entries = readAll(tree.scan(KeyRange.between(bytes(key(2)), bytes(key(4)))));
 
             assertEquals(2, entries.size());
-            assertEquals(key(2), entries.get(0).key());
-            assertEquals(key(3), entries.get(1).key());
+            assertEquals(bytes(key(2)), entries.get(0).key());
+            assertEquals(bytes(key(3)), entries.get(1).key());
         }
     }
 
     @Test
     void excludesDeletedKeys() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), value(20), nextRevision());
             delete(tree, key(2), nextRevision());
             put(tree, key(3), value(30), nextRevision());
 
-            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.all()));
+            List<EntryRecord> entries = readAll(tree.scan(KeyRange.all()));
 
             assertEquals(2, entries.size());
-            assertEquals(key(1), entries.get(0).key());
-            assertEquals(key(3), entries.get(1).key());
+            assertEquals(bytes(key(1)), entries.get(0).key());
+            assertEquals(bytes(key(3)), entries.get(1).key());
         }
     }
 
     @Test
     void mergesFromMultipleSources() {
-        LsmConfig config = smallMemtableConfig(512);
+        StorageOptions options = smallWriteBufferOptions(512);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int i = 0; i < 20; i++) {
                 put(tree, key(i), largeValue(100), nextRevision());
             }
 
-            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.all()));
+            List<EntryRecord> entries = readAll(tree.scan(KeyRange.all()));
 
             assertEquals(20, entries.size());
             for (int i = 0; i < 20; i++) {
-                assertEquals(key(i), entries.get(i).key());
+                assertEquals(bytes(key(i)), entries.get(i).key());
             }
         }
     }
 
     @Test
     void usesLatestValueForDuplicateKeys() {
-        LsmConfig config = smallMemtableConfig(256);
+        StorageOptions options = smallWriteBufferOptions(256);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), largeValue(100), nextRevision());
             put(tree, key(1), value(20), nextRevision());
 
-            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.all()));
+            List<EntryRecord> entries = readAll(tree.scan(KeyRange.all()));
 
-            Optional<StoredEntry.Value> keyEntry = entries.stream()
-                .filter(e -> e.key().equals(key(1)))
+            Optional<EntryRecord> keyEntry = entries.stream()
+                .filter(e -> e.key().equals(bytes(key(1))))
                 .findFirst();
 
             assertTrue(keyEntry.isPresent());
-            assertEquals(value(20), keyEntry.get().value());
+            assertEquals(bytes(value(20)), keyEntry.get().value());
         }
     }
 
     @Test
     void manualFlush() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), value(20), nextRevision());
 
-            tree.flush();
+            drainToDurableState(tree);
 
-            assertTrue(tree.get(key(1)).isPresent());
-            assertTrue(tree.get(key(2)).isPresent());
+            assertTrue(get(tree, key(1)).isPresent());
+            assertTrue(get(tree, key(2)).isPresent());
         }
     }
 
     @Test
     void automaticOnMemtableSize() {
-        LsmConfig config = smallMemtableConfig(1024);
+        StorageOptions options = smallWriteBufferOptions(1024);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int i = 0; i < 10; i++) {
                 put(tree, key(i), largeValue(200), nextRevision());
             }
 
             for (int i = 0; i < 10; i++) {
-                assertTrue(tree.get(key(i)).isPresent());
+                assertTrue(get(tree, key(i)).isPresent());
             }
         }
     }
 
     @Test
     void fromSSTables() {
-        LsmConfig config = LsmConfig.defaults();
+        StorageOptions options = StorageOptions.defaults();
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             put(tree, key(1), value(10), nextRevision());
             put(tree, key(2), value(20), nextRevision());
-            tree.flush();
+            drainToDurableState(tree);
         }
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
-            Optional<StoredEntry.Value> result1 = tree.get(key(1));
-            Optional<StoredEntry.Value> result2 = tree.get(key(2));
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
+            Optional<ValueRecord> result1 = get(tree, key(1));
+            Optional<ValueRecord> result2 = get(tree, key(2));
 
             assertTrue(result1.isPresent());
-            assertEquals(value(10), result1.get().value());
+            assertEquals(bytes(value(10)), result1.get().value());
 
             assertTrue(result2.isPresent());
-            assertEquals(value(20), result2.get().value());
+            assertEquals(bytes(value(20)), result2.get().value());
         }
     }
 
     @Test
     void readPathPriority() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             put(tree, key(1), value(10), nextRevision());
-            tree.flush();
+            drainToDurableState(tree);
             put(tree, key(1), value(20), nextRevision());
 
-            Optional<StoredEntry.Value> result = tree.get(key(1));
+            Optional<ValueRecord> result = get(tree, key(1));
 
             assertTrue(result.isPresent());
-            assertEquals(value(20), result.get().value());
+            assertEquals(bytes(value(20)), result.get().value());
         }
     }
 
     @Test
     void rejectsOlderRevisionThanPersistedValue() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             put(tree, key(1), value(10), 10);
-            tree.flush();
+            drainToDurableState(tree);
 
             StorageException.InvalidRevision error = assertThrows(
                 StorageException.InvalidRevision.class,
@@ -249,31 +249,31 @@ class StorageEngineInternalsBehaviorTest extends StorageEngineInternalTestSuppor
             );
 
             assertTrue(error.getMessage().contains("older"));
-            assertEquals(value(10), tree.get(key(1)).orElseThrow().value());
+            assertEquals(bytes(value(10)), get(tree, key(1)).orElseThrow().value());
         }
     }
 
     @Test
     void multipleSSTables() {
-        LsmConfig config = smallMemtableConfig(512);
+        StorageOptions options = smallWriteBufferOptions(512);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int i = 0; i < 30; i++) {
                 put(tree, key(i), largeValue(100), nextRevision());
             }
 
-            tree.flush();
+            drainToDurableState(tree);
 
             for (int i = 0; i < 30; i++) {
-                assertTrue(tree.get(key(i)).isPresent());
+                assertTrue(get(tree, key(i)).isPresent());
             }
         }
     }
 
     @Test
     void emptyManifestLoad() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
-            SSTableManifest manifest = tree.manifest();
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
+            SSTableManifest manifest = readManifest(tempDir);
             assertNotNull(manifest);
             assertTrue(manifest.sstables().isEmpty());
         }

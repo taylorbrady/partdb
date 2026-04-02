@@ -28,7 +28,7 @@ public final class StorageEngine implements AutoCloseable {
     private final CheckpointInstaller checkpointInstaller;
     private final RevisionState revisionState;
     private final MemtableFlusher memtableFlusher;
-    private final StorageRuntimeStats runtimeStats;
+    private final StorageStatsCollector runtimeStats;
 
     private StorageEngine(
         LsmConfig lsmConfig,
@@ -37,7 +37,7 @@ public final class StorageEngine implements AutoCloseable {
         CompactionScheduler compactionScheduler,
         long appliedThroughRevision,
         CheckpointInstaller checkpointInstaller,
-        StorageRuntimeStats runtimeStats
+        StorageStatsCollector runtimeStats
     ) {
         this.lsmConfig = Objects.requireNonNull(lsmConfig, "lsmConfig must not be null");
         this.sstableStore = Objects.requireNonNull(sstableStore, "sstableStore must not be null");
@@ -69,12 +69,12 @@ public final class StorageEngine implements AutoCloseable {
         return open(dataDirectory, options.toLsmConfig());
     }
 
-    static StorageEngine open(Path dataDirectory, LsmConfig config) {
+    private static StorageEngine open(Path dataDirectory, LsmConfig config) {
         Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
         Objects.requireNonNull(config, "config must not be null");
         try {
             Files.createDirectories(dataDirectory);
-            StorageRuntimeStats runtimeStats = new StorageRuntimeStats();
+            StorageStatsCollector runtimeStats = new StorageStatsCollector();
             BlockCache blockCache = config.cacheEnabled()
                 ? new S3FifoBlockCache(config.blockCacheMaxBytes())
                 : NoOpBlockCache.INSTANCE;
@@ -106,10 +106,10 @@ public final class StorageEngine implements AutoCloseable {
         }
     }
 
-    public static StorageEngine restore(Path dataDirectory, StorageCheckpoint checkpoint, StorageOptions options) {
+    public static StorageEngine openFromCheckpoint(Path dataDirectory, StorageCheckpoint checkpoint, StorageOptions options) {
         StorageEngine engine = open(dataDirectory, options);
         try {
-            engine.restoreInPlace(checkpoint);
+            engine.restore(checkpoint);
             return engine;
         } catch (RuntimeException e) {
             engine.close();
@@ -135,7 +135,7 @@ public final class StorageEngine implements AutoCloseable {
         apply(entries);
     }
 
-    void apply(List<StoredEntry> entries) {
+    private void apply(List<StoredEntry> entries) {
         if (entries.isEmpty()) {
             return;
         }
@@ -163,7 +163,7 @@ public final class StorageEngine implements AutoCloseable {
             .map(entry -> new ValueRecord(Bytes.copyOf(entry.value().toByteArray()), new Revision(entry.revision())));
     }
 
-    Optional<StoredEntry.Value> get(Slice key) {
+    private Optional<StoredEntry.Value> get(Slice key) {
         try (ReadView view = openReadView()) {
             return view.get(key);
         }
@@ -174,7 +174,7 @@ public final class StorageEngine implements AutoCloseable {
         return new StorageScan(scan(toScanBounds(range)));
     }
 
-    CloseableIterator<StoredEntry.Value> scan(ScanBounds bounds) {
+    private CloseableIterator<StoredEntry.Value> scan(ScanBounds bounds) {
         return openReadView().scan(bounds);
     }
 
@@ -182,14 +182,14 @@ public final class StorageEngine implements AutoCloseable {
         return new StorageCheckpoint(Bytes.copyOf(checkpointBytes()));
     }
 
-    byte[] checkpointBytes() {
+    private byte[] checkpointBytes() {
         StorageCheckpointEvent event = new StorageCheckpointEvent();
         event.phase = "checkpoint";
         event.begin();
 
         long startNanos = System.nanoTime();
         try {
-            flush();
+            drainToDurableState();
             byte[] checkpoint;
             try (VersionLease snapshot = versionSet.acquire(revisionState.durableThroughRevision())) {
                 checkpoint = VersionCheckpoint.capture(snapshot).toBytes();
@@ -207,11 +207,11 @@ public final class StorageEngine implements AutoCloseable {
         }
     }
 
-    public void restoreInPlace(StorageCheckpoint checkpoint) {
+    public void restore(StorageCheckpoint checkpoint) {
         replaceWithCheckpoint(Objects.requireNonNull(checkpoint, "checkpoint must not be null").bytes().toByteArray());
     }
 
-    void replaceWithCheckpoint(byte[] data) {
+    private void replaceWithCheckpoint(byte[] data) {
         VersionCheckpoint checkpoint = VersionCheckpoint.fromBytes(data);
 
         StorageCheckpointEvent event = new StorageCheckpointEvent();
@@ -241,20 +241,12 @@ public final class StorageEngine implements AutoCloseable {
         return new StorageMetadata(new Revision(revisionState.appliedThroughRevision()));
     }
 
-    public LsmStats stats() {
+    public StorageStats stats() {
         refreshMemtableStats();
         return runtimeStats.snapshot();
     }
 
-    SSTableManifest manifest() {
-        return versionSet.manifest();
-    }
-
-    void awaitCompactionIdle(Duration timeout) {
-        compactionScheduler.awaitIdle(timeout);
-    }
-
-    void flush() {
+    private void drainToDurableState() {
         memtableFlusher.throwIfFailed();
         rotationLock.lock();
         try {
@@ -277,7 +269,7 @@ public final class StorageEngine implements AutoCloseable {
             return;
         }
 
-        flush();
+        drainToDurableState();
         memtableFlusher.close();
         compactionScheduler.close();
         StoreVersion finalVersion = versionSet.close();

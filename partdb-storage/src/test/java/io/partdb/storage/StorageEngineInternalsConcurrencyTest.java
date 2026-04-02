@@ -16,11 +16,11 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
 
     @Test
     void concurrentReads() throws Exception {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             for (int i = 0; i < 100; i++) {
                 put(tree, key(i), value(i), nextRevision());
             }
-            tree.flush();
+            drainToDurableState(tree);
 
             int threadCount = 10;
             int readsPerThread = 100;
@@ -31,8 +31,8 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
                     executor.submit(() -> {
                         for (int i = 0; i < readsPerThread; i++) {
                             int keyIndex = i % 100;
-                            Optional<StoredEntry.Value> result = tree.get(key(keyIndex));
-                            if (result.isEmpty() || !result.get().value().equals(value(keyIndex))) {
+                            Optional<ValueRecord> result = get(tree, key(keyIndex));
+                            if (result.isEmpty() || !result.get().value().equals(bytes(value(keyIndex)))) {
                                 failed.set(true);
                             }
                         }
@@ -50,7 +50,7 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
 
     @Test
     void concurrentWrites() throws Exception {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             int threadCount = 10;
             int writesPerThread = 100;
 
@@ -70,16 +70,16 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
                     "Concurrent write tasks did not complete in time");
             }
 
-            tree.flush();
+            drainToDurableState(tree);
 
-            List<StoredEntry.Value> entries = readAll(tree.scan(ScanBounds.all()));
+            List<EntryRecord> entries = readAll(tree.scan(KeyRange.all()));
             assertFalse(entries.isEmpty());
         }
     }
 
     @Test
     void concurrentReadsAndWrites() throws Exception {
-        try (StorageEngine tree = StorageEngine.open(tempDir, LsmConfig.defaults())) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             for (int i = 0; i < 50; i++) {
                 put(tree, key(i), value(i), nextRevision());
             }
@@ -102,7 +102,7 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
                     executor.submit(() -> {
                         try {
                             for (int i = 0; i < 100; i++) {
-                                tree.get(key(i % 50));
+                                get(tree, key(i % 50));
                             }
                         } catch (Exception e) {
                             failed.set(true);
@@ -121,9 +121,9 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
 
     @Test
     void readsWhileFlushing() throws Exception {
-        LsmConfig config = smallMemtableConfig(1024);
+        StorageOptions options = smallWriteBufferOptions(1024);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int i = 0; i < 50; i++) {
                 put(tree, key(i), value(i), nextRevision());
             }
@@ -138,7 +138,7 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
                         try {
                             startLatch.await();
                             for (int i = 0; i < 200; i++) {
-                                tree.get(key(i % 50));
+                                get(tree, key(i % 50));
                             }
                         } catch (Exception e) {
                             failed.set(true);
@@ -153,7 +153,7 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
                             for (int i = 0; i < 20; i++) {
                                 put(tree, key((100 + round * 20 + i) & 0xFF), largeValue(100), nextRevision());
                             }
-                            tree.flush();
+                            drainToDurableState(tree);
                         }
                     } catch (Exception e) {
                         failed.set(true);
@@ -172,14 +172,14 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
 
     @Test
     void readsWhileCompacting() throws Exception {
-        LsmConfig config = smallMemtableConfig(1024);
+        StorageOptions options = smallWriteBufferOptions(1024);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int batch = 0; batch < 5; batch++) {
                 for (int i = 0; i < 50; i++) {
                     put(tree, key(String.format("key-%03d", i)), value("v" + batch + "-" + i), nextRevision());
                 }
-                tree.flush();
+                drainToDurableState(tree);
             }
 
             int readerCount = 5;
@@ -191,7 +191,7 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
                         try {
                             for (int round = 0; round < 50; round++) {
                                 for (int i = 0; i < 50; i++) {
-                                    Optional<StoredEntry.Value> result = tree.get(key(String.format("key-%03d", i)));
+                                    Optional<ValueRecord> result = get(tree, key(String.format("key-%03d", i)));
                                     if (result.isEmpty()) {
                                         failed.set(true);
                                     }
@@ -215,9 +215,9 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
 
     @Test
     void scanWhileFlushing() throws Exception {
-        LsmConfig config = smallMemtableConfig(1024);
+        StorageOptions options = smallWriteBufferOptions(1024);
 
-        try (StorageEngine tree = StorageEngine.open(tempDir, config)) {
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
             for (int i = 0; i < 50; i++) {
                 put(tree, key(i), value(i), nextRevision());
             }
@@ -230,9 +230,9 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
                     try {
                         startLatch.await();
                         for (int round = 0; round < 10; round++) {
-                            try (CloseableIterator<StoredEntry.Value> cursor = tree.scan(ScanBounds.all())) {
-                                while (cursor.hasNext()) {
-                                    cursor.next();
+                            try (Scan cursor = tree.scan(KeyRange.all())) {
+                                for (EntryRecord ignored : cursor) {
+                                    // drain
                                 }
                             }
                         }
@@ -248,7 +248,7 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
                             for (int i = 0; i < 20; i++) {
                                 put(tree, key((100 + round * 20 + i) & 0xFF), largeValue(100), nextRevision());
                             }
-                            tree.flush();
+                            drainToDurableState(tree);
                         }
                     } catch (Exception e) {
                         failed.set(true);

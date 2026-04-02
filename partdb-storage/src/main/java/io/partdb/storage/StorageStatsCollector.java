@@ -3,7 +3,7 @@ package io.partdb.storage;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-final class StorageRuntimeStats {
+final class StorageStatsCollector {
     private final AtomicLong activeMemtableBytes = new AtomicLong();
     private final AtomicInteger immutableMemtableCount = new AtomicInteger();
     private final AtomicInteger sstableCount = new AtomicInteger();
@@ -55,8 +55,8 @@ final class StorageRuntimeStats {
         lastRestoreDurationMillis.set(durationMillis);
     }
 
-    LsmStats snapshot() {
-        return new LsmStats(
+    StorageStats snapshot() {
+        return new StorageStats(
             activeMemtableBytes.get(),
             immutableMemtableCount.get(),
             sstableCount.get(),

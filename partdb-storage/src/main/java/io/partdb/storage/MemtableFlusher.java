@@ -19,7 +19,7 @@ final class MemtableFlusher implements AutoCloseable {
     private final MemtableSet memtables;
     private final RevisionState revisionState;
     private final CompactionScheduler compactionScheduler;
-    private final StorageRuntimeStats stats;
+    private final StorageStatsCollector stats;
     private final Semaphore flushPermits;
     private final ExecutorService flushExecutor;
     private final AtomicReference<StorageException.IO> backgroundFailure;
@@ -30,7 +30,7 @@ final class MemtableFlusher implements AutoCloseable {
         MemtableSet memtables,
         RevisionState revisionState,
         CompactionScheduler compactionScheduler,
-        StorageRuntimeStats stats
+        StorageStatsCollector stats
     ) {
         this.sstableStore = sstableStore;
         this.versionSet = versionSet;

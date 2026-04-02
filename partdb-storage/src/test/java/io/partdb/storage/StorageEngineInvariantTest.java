@@ -133,7 +133,7 @@ class StorageEngineInvariantTest {
                 }
             }
 
-            holder.restoreInPlace(checkpoint);
+            holder.restore(checkpoint);
             operations.add("restore-in-place");
             assertScanMatches(snapshotState, holder.store, 0, 25, operations);
 
@@ -199,7 +199,7 @@ class StorageEngineInvariantTest {
                     assertScanMatches(expected, holder.store, 0, 25, operations);
                 } else if (op < 96) {
                     SnapshotState snapshot = snapshots.get(random.nextInt(snapshots.size()));
-                    holder.restoreInPlace(snapshot.snapshot());
+                    holder.restore(snapshot.snapshot());
                     expected = copyState(snapshot.visibleState());
                     operations.add("restore-in-place step=%d".formatted(step));
                     assertScanMatches(expected, holder.store, 0, 25, operations);
@@ -258,10 +258,9 @@ class StorageEngineInvariantTest {
         assertEquals(
             expectedRange.size(),
             actualEntries.size(),
-            "expectedKeys=%s actualKeys=%s manifestTables=%s appliedThrough=%s%n%s".formatted(
+            "expectedKeys=%s actualKeys=%s appliedThrough=%s%n%s".formatted(
                 expectedRange.keySet(),
                 actualEntries.stream().map(entry -> Byte.toUnsignedInt(entry.key().byteAt(0))).toList(),
-                store.manifest().sstables().stream().map(SSTableMetadata::id).toList(),
                 store.metadata().appliedThrough().value(),
                 String.join("\n", operations)
             )
@@ -317,11 +316,11 @@ class StorageEngineInvariantTest {
         void replaceWith(Path directory, StorageCheckpoint checkpoint) {
             store.close();
             this.directory = directory;
-            this.store = StorageEngine.restore(directory, checkpoint, options);
+            this.store = StorageEngine.openFromCheckpoint(directory, checkpoint, options);
         }
 
-        void restoreInPlace(StorageCheckpoint checkpoint) {
-            store.restoreInPlace(checkpoint);
+        void restore(StorageCheckpoint checkpoint) {
+            store.restore(checkpoint);
         }
 
         @Override

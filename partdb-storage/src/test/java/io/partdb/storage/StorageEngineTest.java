@@ -72,7 +72,7 @@ class StorageEngineTest {
             checkpoint = source.checkpoint();
         }
 
-        try (StorageEngine restored = StorageEngine.restore(restoredDir, checkpoint, StorageOptions.defaults())) {
+        try (StorageEngine restored = StorageEngine.openFromCheckpoint(restoredDir, checkpoint, StorageOptions.defaults())) {
 
             Optional<ValueRecord> value1 = restored.get(bytes("key-1"));
             Optional<ValueRecord> value2 = restored.get(bytes("key-2"));
@@ -92,11 +92,11 @@ class StorageEngineTest {
             store.apply(new Revision(1), Mutation.put(bytes("b"), bytes("before")));
             StorageCheckpoint before = store.checkpoint();
 
-            store.restoreInPlace(empty);
+            store.restore(empty);
             store.apply(new Revision(2), Mutation.put(bytes("a"), bytes("after")));
             store.checkpoint();
 
-            store.restoreInPlace(before);
+            store.restore(before);
 
             Optional<ValueRecord> restored = store.get(bytes("b"));
             assertTrue(restored.isPresent());
@@ -141,8 +141,8 @@ class StorageEngineTest {
         try (StorageEngine store0 = StorageEngine.open(dir0, options)) {
             empty = store0.checkpoint();
             store0.apply(new Revision(1), Mutation.put(bytesFromInt(7), bytes("v1")));
-            store0.restoreInPlace(empty);
-            store0.restoreInPlace(empty);
+            store0.restore(empty);
+            store0.restore(empty);
 
             store0.apply(new Revision(2), Mutation.put(bytesFromInt(23), bytes("v23")));
             key23 = store0.checkpoint();
@@ -152,11 +152,11 @@ class StorageEngineTest {
             store0.apply(new Revision(5), Mutation.put(bytesFromInt(14), bytes("v14")));
         }
 
-        try (StorageEngine store1 = StorageEngine.restore(dir1, key23, options)) {
+        try (StorageEngine store1 = StorageEngine.openFromCheckpoint(dir1, key23, options)) {
             store1.apply(new Revision(6), Mutation.delete(bytesFromInt(20)));
         }
 
-        try (StorageEngine store2 = StorageEngine.restore(dir2, empty, options)) {
+        try (StorageEngine store2 = StorageEngine.openFromCheckpoint(dir2, empty, options)) {
             store2.apply(new Revision(7), Mutation.put(bytesFromInt(21), bytes("v21")));
             key21 = store2.checkpoint();
 
@@ -169,7 +169,7 @@ class StorageEngineTest {
             store2.apply(new Revision(14), Mutation.delete(bytesFromInt(15)));
             store2.apply(new Revision(15), Mutation.put(bytesFromInt(12), bytes("v12")));
 
-            store2.restoreInPlace(key23);
+            store2.restore(key23);
 
             Optional<ValueRecord> restored = store2.get(bytesFromInt(23));
             assertTrue(restored.isPresent());
@@ -189,7 +189,7 @@ class StorageEngineTest {
             assertEquals(bytes("v23"), entries.getFirst().value());
             assertEquals(new Revision(2), entries.getFirst().modRevision());
 
-            store2.restoreInPlace(key21);
+            store2.restore(key21);
             assertTrue(store2.get(bytesFromInt(21)).isPresent());
             assertTrue(store2.get(bytesFromInt(23)).isEmpty());
         }
@@ -334,7 +334,7 @@ class StorageEngineTest {
 
             StorageException.Corruption error = assertThrows(
                 StorageException.Corruption.class,
-                () -> store.restoreInPlace(corruptFirstSstableByte(checkpoint))
+                () -> store.restore(corruptFirstSstableByte(checkpoint))
             );
 
             assertTrue(error.getMessage().contains("Checkpoint"));
@@ -363,7 +363,7 @@ class StorageEngineTest {
             assertEquals(new Revision(9), reopened.metadata().appliedThrough());
         }
 
-        try (StorageEngine restored = StorageEngine.restore(restoredDir, checkpoint, StorageOptions.defaults())) {
+        try (StorageEngine restored = StorageEngine.openFromCheckpoint(restoredDir, checkpoint, StorageOptions.defaults())) {
             assertEquals(new Revision(9), restored.metadata().appliedThrough());
         }
     }

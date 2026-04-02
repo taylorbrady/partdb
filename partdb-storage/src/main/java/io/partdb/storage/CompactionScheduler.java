@@ -23,7 +23,7 @@ final class CompactionScheduler implements AutoCloseable {
     private final Compactor compactor;
     private final SstableStore sstableStore;
     private final VersionSet versionSet;
-    private final StorageRuntimeStats stats;
+    private final StorageStatsCollector stats;
     private final ReservationLedger reservations;
     private final int maxConcurrentCompactions;
 
@@ -44,7 +44,7 @@ final class CompactionScheduler implements AutoCloseable {
         SstableStore sstableStore,
         VersionSet versionSet,
         LsmConfig config,
-        StorageRuntimeStats stats
+        StorageStatsCollector stats
     ) {
         this.planner = new LeveledCompactionPlanner(config);
         this.compactor = Objects.requireNonNull(compactor, "compactor");
