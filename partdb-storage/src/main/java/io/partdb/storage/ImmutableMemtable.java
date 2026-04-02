@@ -6,21 +6,21 @@ import java.util.Optional;
 
 final class ImmutableMemtable implements Memtable {
 
-    private final NavigableMap<Slice, StoredEntry> entries;
+    private final NavigableMap<InternalKey, InternalEntry> entries;
     private final long sizeInBytes;
 
-    ImmutableMemtable(NavigableMap<Slice, StoredEntry> entries, long sizeInBytes) {
-        this.entries = entries;
+    ImmutableMemtable(NavigableMap<InternalKey, InternalEntry> entries, long sizeInBytes) {
+        this.entries = java.util.Collections.unmodifiableNavigableMap(entries);
         this.sizeInBytes = sizeInBytes;
     }
 
     @Override
-    public Optional<StoredEntry> get(Slice key) {
-        return Optional.ofNullable(entries.get(key));
+    public Optional<StoredEntry> get(Slice key, long snapshotRevision) {
+        return Memtable.getVisible(entries, key, snapshotRevision);
     }
 
     @Override
-    public Iterator<StoredEntry> scan(ScanBounds bounds) {
+    public Iterator<InternalEntry> scan(ScanBounds bounds) {
         return Memtable.scanEntries(entries, bounds);
     }
 

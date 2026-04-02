@@ -6,7 +6,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.stream.Stream;
 
-final class CatalogRestore {
+final class CheckpointInstaller {
 
     private static final String BACKUP_SUFFIX = ".backup";
     private static final String MANIFEST_FILENAME = "MANIFEST";
@@ -14,29 +14,31 @@ final class CatalogRestore {
     private static final String MANIFEST_BACKUP_FILENAME = MANIFEST_FILENAME + BACKUP_SUFFIX;
 
     private final Path directory;
-    private final CatalogPersistence persistence;
+    private final ManifestStore manifestStore;
+    private final SstableStore sstableStore;
 
-    CatalogRestore(Path directory, CatalogPersistence persistence) {
+    CheckpointInstaller(Path directory, ManifestStore manifestStore, SstableStore sstableStore) {
         this.directory = directory;
-        this.persistence = persistence;
+        this.manifestStore = manifestStore;
+        this.sstableStore = sstableStore;
     }
 
-    void stageAndValidate(CatalogCheckpoint checkpoint) throws IOException {
+    void stageAndValidate(VersionCheckpoint checkpoint) throws IOException {
         checkpoint.stage(directory);
         checkpoint.validate(directory);
     }
 
-    LoadedCatalog activate(CatalogCheckpoint checkpoint) throws IOException {
-        return checkpoint.activate(directory, persistence);
+    LoadedStoreVersion activate(VersionCheckpoint checkpoint) throws IOException {
+        return checkpoint.activate(directory, manifestStore, sstableStore);
     }
 
-    void cleanupStaged(CatalogCheckpoint checkpoint) {
+    void cleanupStaged(VersionCheckpoint checkpoint) {
         checkpoint.cleanup(directory);
     }
 
     void backupCurrentState(SSTableManifest previousManifest) throws IOException {
         for (SSTableMetadata metadata : previousManifest.sstables()) {
-            Path livePath = persistence.sstablePath(metadata.id());
+            Path livePath = sstableStore.sstablePath(metadata.id());
             if (Files.exists(livePath)) {
                 Files.move(
                     livePath,
@@ -60,15 +62,15 @@ final class CatalogRestore {
         Files.deleteIfExists(directory.resolve(MANIFEST_TEMP_FILENAME));
     }
 
-    LoadedCatalog restoreLive(SSTableManifest manifest) {
-        return persistence.loadState(manifest);
+    LoadedStoreVersion restoreLive(SSTableManifest manifest) {
+        return sstableStore.loadState(manifest);
     }
 
-    LoadedCatalog rollback(SSTableManifest previousManifest, boolean backedUpCurrentState) throws IOException {
+    LoadedStoreVersion rollback(SSTableManifest previousManifest, boolean backedUpCurrentState) throws IOException {
         if (backedUpCurrentState) {
             rollbackRestoreFiles(previousManifest);
         }
-        return persistence.loadState(previousManifest);
+        return sstableStore.loadState(previousManifest);
     }
 
     void cleanupBackups(SSTableManifest previousManifest) throws IOException {
@@ -86,7 +88,7 @@ final class CatalogRestore {
             if (Files.exists(backupPath)) {
                 Files.move(
                     backupPath,
-                    persistence.sstablePath(metadata.id()),
+                    sstableStore.sstablePath(metadata.id()),
                     StandardCopyOption.REPLACE_EXISTING,
                     StandardCopyOption.ATOMIC_MOVE
                 );

@@ -5,14 +5,20 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-final class CatalogSnapshot implements AutoCloseable {
+final class VersionLease implements AutoCloseable {
 
-    private final CatalogGeneration.CatalogLease lease;
+    private final StoreVersion.Lease lease;
+    private final Runnable onClose;
     private final SSTableManifest manifest;
     private final int maxLevel;
 
-    CatalogSnapshot(CatalogGeneration.CatalogLease lease) {
+    VersionLease(StoreVersion.Lease lease) {
+        this(lease, () -> {});
+    }
+
+    VersionLease(StoreVersion.Lease lease, Runnable onClose) {
         this.lease = lease;
+        this.onClose = Objects.requireNonNull(onClose, "onClose");
         this.manifest = lease.manifest();
         this.maxLevel = manifest.maxLevel();
     }
@@ -25,22 +31,26 @@ final class CatalogSnapshot implements AutoCloseable {
         return readersFor(manifest.level(level));
     }
 
-    Optional<StoredEntry> get(Slice key) {
+    Optional<StoredEntry> get(Slice key, long snapshotRevision) {
         Objects.requireNonNull(key, "key");
 
-        Optional<StoredEntry> level0 = getFrom(manifest.level(0), key);
+        Optional<StoredEntry> level0 = getFrom(manifest.level(0), key, snapshotRevision);
         if (level0.isPresent()) {
             return level0;
         }
 
         for (int level = 1; level <= maxLevel; level++) {
-            Optional<StoredEntry> result = getFrom(manifest.level(level), key);
+            Optional<StoredEntry> result = getFrom(manifest.level(level), key, snapshotRevision);
             if (result.isPresent()) {
                 return result;
             }
         }
 
         return Optional.empty();
+    }
+
+    Optional<StoredEntry> get(Slice key) {
+        return get(key, Long.MAX_VALUE);
     }
 
     List<SSTableReader> scanTables(ScanBounds bounds) {
@@ -77,16 +87,20 @@ final class CatalogSnapshot implements AutoCloseable {
 
     @Override
     public void close() {
-        lease.close();
+        try {
+            lease.close();
+        } finally {
+            onClose.run();
+        }
     }
 
-    private Optional<StoredEntry> getFrom(List<SSTableMetadata> metadata, Slice key) {
+    private Optional<StoredEntry> getFrom(List<SSTableMetadata> metadata, Slice key, long snapshotRevision) {
         for (SSTableMetadata table : metadata) {
             if (!table.mightContain(key)) {
                 continue;
             }
 
-            Optional<StoredEntry> result = readerFor(table).get(key);
+            Optional<StoredEntry> result = readerFor(table).get(key, snapshotRevision);
             if (result.isPresent()) {
                 return result;
             }

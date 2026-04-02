@@ -258,9 +258,11 @@ class StorageEngineInvariantTest {
         assertEquals(
             expectedRange.size(),
             actualEntries.size(),
-            "expectedKeys=%s actualKeys=%s%n%s".formatted(
+            "expectedKeys=%s actualKeys=%s manifestTables=%s appliedThrough=%s%n%s".formatted(
                 expectedRange.keySet(),
                 actualEntries.stream().map(entry -> Byte.toUnsignedInt(entry.key().byteAt(0))).toList(),
+                store.manifest().sstables().stream().map(SSTableMetadata::id).toList(),
+                store.metadata().appliedThrough().value(),
                 String.join("\n", operations)
             )
         );

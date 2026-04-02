@@ -57,7 +57,7 @@ class DataBlockInvariantTest {
     private static List<StoredEntry> drain(DataBlockCursor cursor) {
         List<StoredEntry> result = new ArrayList<>();
         while (cursor.hasNext()) {
-            result.add(cursor.next());
+            result.add(cursor.next().toStoredEntry());
         }
         return result;
     }

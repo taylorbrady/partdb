@@ -10,7 +10,7 @@ final class MutableMemtable implements Memtable {
 
     private static final int ENTRY_OVERHEAD = 100;
 
-    private final ConcurrentSkipListMap<Slice, StoredEntry> entries;
+    private final ConcurrentSkipListMap<InternalKey, InternalEntry> entries;
     private final AtomicLong sizeInBytes;
     private final ReentrantLock lifecycleLock;
 
@@ -23,7 +23,7 @@ final class MutableMemtable implements Memtable {
         this.immutableView = null;
     }
 
-    WriteResult put(StoredEntry entry) {
+    WriteResult put(InternalEntry entry) {
         lifecycleLock.lock();
         try {
             if (immutableView != null) {
@@ -40,14 +40,7 @@ final class MutableMemtable implements Memtable {
                     return entry;
                 }
 
-                int revisionComparison = Long.compare(entry.revision(), existing.revision());
-                if (revisionComparison > 0) {
-                    delta[0] = estimatedHeapBytes(entry) - estimatedHeapBytes(existing);
-                    result[0] = WriteResult.APPLIED;
-                    return entry;
-                }
-
-                if (revisionComparison == 0 && existing.equals(entry)) {
+                if (existing.equals(entry)) {
                     result[0] = WriteResult.DUPLICATE;
                     return existing;
                 }
@@ -64,6 +57,10 @@ final class MutableMemtable implements Memtable {
         }
     }
 
+    WriteResult put(StoredEntry entry) {
+        return put(InternalEntry.from(entry));
+    }
+
     ImmutableMemtable freeze() {
         lifecycleLock.lock();
         try {
@@ -77,12 +74,12 @@ final class MutableMemtable implements Memtable {
     }
 
     @Override
-    public Optional<StoredEntry> get(Slice key) {
-        return Optional.ofNullable(entries.get(key));
+    public Optional<StoredEntry> get(Slice key, long snapshotRevision) {
+        return Memtable.getVisible(entries, key, snapshotRevision);
     }
 
     @Override
-    public Iterator<StoredEntry> scan(ScanBounds bounds) {
+    public Iterator<InternalEntry> scan(ScanBounds bounds) {
         return Memtable.scanEntries(entries, bounds);
     }
 
@@ -96,24 +93,17 @@ final class MutableMemtable implements Memtable {
         return entries.size();
     }
 
-    private static long estimatedHeapBytes(StoredEntry entry) {
+    private static long estimatedHeapBytes(InternalEntry entry) {
         return switch (entry) {
-            case StoredEntry.Value value -> ENTRY_OVERHEAD + entry.key().length() + value.value().length() + Long.BYTES;
-            case StoredEntry.Tombstone _ -> ENTRY_OVERHEAD + entry.key().length() + Long.BYTES;
+            case InternalEntry.Value value -> ENTRY_OVERHEAD + entry.userKey().length() + value.value().length() + Long.BYTES;
+            case InternalEntry.Tombstone _ -> ENTRY_OVERHEAD + entry.userKey().length() + Long.BYTES;
         };
     }
 
-    private static StorageException.InvalidRevision invalidRevision(StoredEntry attempted, StoredEntry existing) {
-        if (attempted.revision() < existing.revision()) {
-            return new StorageException.InvalidRevision(
-                "Revision %d for key %s is older than current revision %d"
-                    .formatted(attempted.revision(), attempted.key(), existing.revision())
-            );
-        }
-
+    private static StorageException.InvalidRevision invalidRevision(InternalEntry attempted, InternalEntry existing) {
         return new StorageException.InvalidRevision(
             "Conflicting mutation for key %s at revision %d"
-                .formatted(attempted.key(), attempted.revision())
+                .formatted(attempted.userKey(), attempted.revision())
         );
     }
 

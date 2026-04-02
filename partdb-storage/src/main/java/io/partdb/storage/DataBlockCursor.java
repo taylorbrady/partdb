@@ -3,14 +3,14 @@ package io.partdb.storage;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
-final class DataBlockCursor implements Iterator<StoredEntry> {
+final class DataBlockCursor implements Iterator<InternalEntry> {
 
     private final DataBlockReader reader;
     private final long limit;
 
     private long offset;
     private byte[] previousKeyBytes;
-    private StoredEntry next;
+    private InternalEntry next;
 
     DataBlockCursor(DataBlockReader reader, long offset, long limit) {
         this.reader = reader;
@@ -25,18 +25,18 @@ final class DataBlockCursor implements Iterator<StoredEntry> {
     }
 
     @Override
-    public StoredEntry next() {
+    public InternalEntry next() {
         if (next == null) {
             throw new NoSuchElementException();
         }
 
-        StoredEntry result = next;
+        InternalEntry result = next;
         advance();
         return result;
     }
 
     void advanceToAtOrAfter(Slice target) {
-        while (next != null && next.key().compareTo(target) < 0) {
+        while (next != null && next.userKey().compareTo(target) < 0) {
             next();
         }
     }

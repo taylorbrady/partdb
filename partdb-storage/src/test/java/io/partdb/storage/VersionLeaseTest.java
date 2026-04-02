@@ -10,7 +10,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
-class CatalogSnapshotTest {
+class VersionLeaseTest {
 
     @TempDir
     Path tempDir;
@@ -46,15 +46,15 @@ class CatalogSnapshotTest {
         );
 
         SSTableManifest manifest = new SSTableManifest(2, 20, List.of(newerDescriptor, olderDescriptor));
-        CatalogGeneration generation = new CatalogGeneration(manifest, List.of(olderReader, newerReader));
-        CatalogGeneration.CatalogLease lease = generation.tryAcquire();
+        StoreVersion version = new StoreVersion(manifest, List.of(olderReader, newerReader));
+        StoreVersion.Lease lease = version.tryAcquire();
         if (lease == null) {
-            throw new AssertionError("fresh catalog generation should be acquirable");
+            throw new AssertionError("fresh store version should be acquirable");
         }
 
-        generation.retire(List.of());
+        version.retire(List.of());
 
-        try (CatalogSnapshot view = new CatalogSnapshot(lease)) {
+        try (VersionLease view = new VersionLease(lease)) {
             StoredEntry mutation = view.get(slice("shared-key")).orElseThrow();
 
             assertInstanceOf(StoredEntry.Value.class, mutation);
@@ -78,15 +78,15 @@ class CatalogSnapshotTest {
         SSTableReader l1Reader = SSTableReader.open(l1.id(), l1.level(), tablePath(l1.id()), NoOpBlockCache.INSTANCE);
 
         SSTableManifest manifest = new SSTableManifest(3, 30, List.of(newestL0, l1, l2));
-        CatalogGeneration generation = new CatalogGeneration(manifest, List.of(l2Reader, newestL0Reader, l1Reader));
-        CatalogGeneration.CatalogLease lease = generation.tryAcquire();
+        StoreVersion version = new StoreVersion(manifest, List.of(l2Reader, newestL0Reader, l1Reader));
+        StoreVersion.Lease lease = version.tryAcquire();
         if (lease == null) {
-            throw new AssertionError("fresh catalog generation should be acquirable");
+            throw new AssertionError("fresh store version should be acquirable");
         }
 
-        generation.retire(List.of());
+        version.retire(List.of());
 
-        try (CatalogSnapshot view = new CatalogSnapshot(lease)) {
+        try (VersionLease view = new VersionLease(lease)) {
             List<SSTableReader> tables = view.scanTables(ScanBounds.between(slice("a"), slice("z")));
 
             assertEquals(List.of(newestL0Reader, l1Reader, l2Reader), tables);

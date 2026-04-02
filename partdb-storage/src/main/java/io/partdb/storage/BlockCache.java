@@ -2,11 +2,11 @@ package io.partdb.storage;
 
 sealed interface BlockCache permits S3FifoBlockCache, NoOpBlockCache {
 
-    DataBlockReader get(long sstableId, long offset);
+    DataBlockReader get(long cacheId, long offset);
 
-    void put(long sstableId, long offset, DataBlockReader block);
+    void put(long cacheId, long offset, DataBlockReader block);
 
-    void invalidate(long sstableId);
+    void invalidate(long cacheId);
 
     Stats stats();
 

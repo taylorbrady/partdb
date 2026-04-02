@@ -11,10 +11,15 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 final class SSTableReader implements AutoCloseable {
 
+    private static final AtomicLong NEXT_CACHE_ID = new AtomicLong();
+
     private final long id;
+    private final long cacheId;
     private final int level;
     private final Path path;
     private final Arena arena;
@@ -25,9 +30,11 @@ final class SSTableReader implements AutoCloseable {
     private final BlockCache cache;
     private final BlockCodec codec;
     private final long fileSizeBytes;
+    private final AtomicInteger references;
 
     private SSTableReader(
         long id,
+        long cacheId,
         int level,
         Path path,
         Arena arena,
@@ -37,9 +44,11 @@ final class SSTableReader implements AutoCloseable {
         SSTableFooter footer,
         BlockCache cache,
         BlockCodec codec,
-        long fileSizeBytes
+        long fileSizeBytes,
+        AtomicInteger references
     ) {
         this.id = id;
+        this.cacheId = cacheId;
         this.level = level;
         this.path = path;
         this.arena = arena;
@@ -50,6 +59,7 @@ final class SSTableReader implements AutoCloseable {
         this.cache = cache;
         this.codec = codec;
         this.fileSizeBytes = fileSizeBytes;
+        this.references = references;
     }
 
     static SSTableReader open(long id, int level, Path path, BlockCache cache) {
@@ -71,6 +81,7 @@ final class SSTableReader implements AutoCloseable {
 
             return new SSTableReader(
                 id,
+                NEXT_CACHE_ID.incrementAndGet(),
                 level,
                 path,
                 arena,
@@ -80,7 +91,8 @@ final class SSTableReader implements AutoCloseable {
                 footer,
                 cache,
                 codec,
-                fileSize
+                fileSize,
+                new AtomicInteger(1)
             );
         } catch (RuntimeException e) {
             arena.close();
@@ -99,7 +111,7 @@ final class SSTableReader implements AutoCloseable {
         return level;
     }
 
-    Optional<StoredEntry> get(Slice key) {
+    Optional<StoredEntry> get(Slice key, long snapshotRevision) {
         if (!bloomFilter.mightContain(key)) {
             return Optional.empty();
         }
@@ -110,10 +122,10 @@ final class SSTableReader implements AutoCloseable {
         }
 
         DataBlockReader block = loadBlock(blockEntry.get().handle());
-        return block.find(key);
+        return block.findVisible(key, snapshotRevision);
     }
 
-    Iterator<StoredEntry> scan(ScanBounds bounds) {
+    Iterator<InternalEntry> scan(ScanBounds bounds) {
         return new ScanIterator(bounds);
     }
 
@@ -166,14 +178,32 @@ final class SSTableReader implements AutoCloseable {
         return key.compareTo(smallestKey()) >= 0 && key.compareTo(largestKey()) <= 0;
     }
 
+    SSTableReader retain() {
+        while (true) {
+            int current = references.get();
+            if (current <= 0) {
+                throw new StorageException.Closed("SSTable reader is closed");
+            }
+            if (references.compareAndSet(current, current + 1)) {
+                return this;
+            }
+        }
+    }
+
     @Override
     public void close() {
-        cache.invalidate(id);
-        arena.close();
+        int remaining = references.decrementAndGet();
+        if (remaining < 0) {
+            throw new IllegalStateException("SSTable reader over-closed");
+        }
+        if (remaining == 0) {
+            cache.invalidate(cacheId);
+            arena.close();
+        }
     }
 
     private DataBlockReader loadBlock(BlockHandle handle) {
-        DataBlockReader cached = cache.get(id, handle.offset());
+        DataBlockReader cached = cache.get(cacheId, handle.offset());
         if (cached != null) {
             return cached;
         }
@@ -183,7 +213,7 @@ final class SSTableReader implements AutoCloseable {
         byte[] decompressed = codec.decompress(compressed.data(), compressed.uncompressedSize());
         DataBlockReader block = DataBlockReader.from(MemorySegment.ofArray(decompressed));
 
-        cache.put(id, handle.offset(), block);
+        cache.put(cacheId, handle.offset(), block);
 
         return block;
     }
@@ -244,13 +274,13 @@ final class SSTableReader implements AutoCloseable {
         }
     }
 
-    private final class ScanIterator implements Iterator<StoredEntry> {
+    private final class ScanIterator implements Iterator<InternalEntry> {
 
         private final ScanBounds bounds;
         private final List<DataBlockIndex.Entry> blocks;
         private int currentBlockIndex;
         private DataBlockCursor currentBlockCursor;
-        private StoredEntry nextEntry;
+        private InternalEntry nextEntry;
 
         private ScanIterator(ScanBounds bounds) {
             this.bounds = bounds;
@@ -268,11 +298,11 @@ final class SSTableReader implements AutoCloseable {
         }
 
         @Override
-        public StoredEntry next() {
+        public InternalEntry next() {
             if (nextEntry == null) {
                 throw new NoSuchElementException();
             }
-            StoredEntry result = nextEntry;
+            InternalEntry result = nextEntry;
             advance();
             return result;
         }
@@ -280,11 +310,11 @@ final class SSTableReader implements AutoCloseable {
         private void advance() {
             while (true) {
                 if (currentBlockCursor != null && currentBlockCursor.hasNext()) {
-                    StoredEntry entry = currentBlockCursor.next();
+                    InternalEntry entry = currentBlockCursor.next();
 
-                    if (!bounds.includes(entry.key())) {
+                    if (!bounds.includes(entry.userKey())) {
                         Slice endExclusive = bounds.endExclusive();
-                        if (endExclusive != null && entry.key().compareTo(endExclusive) >= 0) {
+                        if (endExclusive != null && entry.userKey().compareTo(endExclusive) >= 0) {
                             nextEntry = null;
                             return;
                         }

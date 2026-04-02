@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-final class CatalogGeneration {
+final class StoreVersion {
 
     private final SSTableManifest manifest;
     private final List<SSTableReader> readers;
@@ -24,7 +24,7 @@ final class CatalogGeneration {
     private boolean cleanupCompleted;
     private List<Runnable> cleanupActions;
 
-    CatalogGeneration(SSTableManifest manifest, List<SSTableReader> readers) {
+    StoreVersion(SSTableManifest manifest, List<SSTableReader> readers) {
         this.manifest = Objects.requireNonNull(manifest, "manifest");
         this.readers = List.copyOf(Objects.requireNonNull(readers, "readers"));
         this.readersById = indexReaders(this.readers);
@@ -33,7 +33,7 @@ final class CatalogGeneration {
         this.cleanupActions = List.of();
     }
 
-    CatalogLease tryAcquire() {
+    Lease tryAcquire() {
         lifecycleLock.lock();
         try {
             if (retired) {
@@ -41,7 +41,7 @@ final class CatalogGeneration {
             }
 
             activeLeases++;
-            return new CatalogLease(this);
+            return new Lease(this);
         } finally {
             lifecycleLock.unlock();
         }
@@ -136,7 +136,7 @@ final class CatalogGeneration {
         lifecycleLock.lock();
         try {
             if (activeLeases <= 0) {
-                throw new IllegalStateException("Catalog generation lease over-released");
+                throw new IllegalStateException("Store version lease over-released");
             }
 
             activeLeases--;
@@ -188,31 +188,31 @@ final class CatalogGeneration {
 
     private record CleanupWork(List<Runnable> actions) {}
 
-    static final class CatalogLease implements AutoCloseable {
-        private final CatalogGeneration generation;
+    static final class Lease implements AutoCloseable {
+        private final StoreVersion version;
         private final AtomicBoolean closed;
 
-        private CatalogLease(CatalogGeneration generation) {
-            this.generation = generation;
+        private Lease(StoreVersion version) {
+            this.version = version;
             this.closed = new AtomicBoolean(false);
         }
 
         SSTableManifest manifest() {
-            return generation.manifest();
+            return version.manifest();
         }
 
         List<SSTableReader> readers() {
-            return generation.readers();
+            return version.readers();
         }
 
         SSTableReader readerFor(long id) {
-            return generation.readerFor(id);
+            return version.readerFor(id);
         }
 
         @Override
         public void close() {
             if (closed.compareAndSet(false, true)) {
-                generation.releaseLease();
+                version.releaseLease();
             }
         }
     }

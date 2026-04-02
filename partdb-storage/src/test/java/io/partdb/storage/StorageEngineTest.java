@@ -85,6 +85,117 @@ class StorageEngineTest {
     }
 
     @Test
+    void restoreInPlaceReplacesReusedSstableIdsForGetAndScan() {
+        try (StorageEngine store = StorageEngine.open(tempDir, StorageOptions.defaults())) {
+            StorageCheckpoint empty = store.checkpoint();
+
+            store.apply(new Revision(1), Mutation.put(bytes("b"), bytes("before")));
+            StorageCheckpoint before = store.checkpoint();
+
+            store.restoreInPlace(empty);
+            store.apply(new Revision(2), Mutation.put(bytes("a"), bytes("after")));
+            store.checkpoint();
+
+            store.restoreInPlace(before);
+
+            Optional<ValueRecord> restored = store.get(bytes("b"));
+            assertTrue(restored.isPresent());
+            assertEquals(bytes("before"), restored.get().value());
+            assertEquals(new Revision(1), restored.get().modRevision());
+            assertTrue(store.get(bytes("a")).isEmpty());
+
+            List<EntryRecord> entries = new ArrayList<>();
+            try (Scan scan = store.scan(KeyRange.all())) {
+                for (EntryRecord entry : scan) {
+                    entries.add(entry);
+                }
+            }
+
+            assertEquals(1, entries.size());
+            assertEquals(bytes("b"), entries.getFirst().key());
+            assertEquals(bytes("before"), entries.getFirst().value());
+            assertEquals(new Revision(1), entries.getFirst().modRevision());
+        }
+    }
+
+    @Test
+    void restoreInPlaceSurfacesCheckpointDataAfterCrossDirectoryHistory() {
+        StorageOptions options = StorageOptions.builder()
+            .writeBufferMaxBytes(192)
+            .compactionOptions(CompactionOptions.builder()
+                .targetTableSizeBytes(192)
+                .l0CompactionTrigger(2)
+                .maxBytesForLevelBase(384)
+                .maxLevels(4)
+                .build())
+            .build();
+
+        Path dir0 = tempDir.resolve("mixed-store-0");
+        Path dir1 = tempDir.resolve("mixed-store-1");
+        Path dir2 = tempDir.resolve("mixed-store-2");
+
+        StorageCheckpoint empty;
+        StorageCheckpoint key23;
+        StorageCheckpoint key21;
+
+        try (StorageEngine store0 = StorageEngine.open(dir0, options)) {
+            empty = store0.checkpoint();
+            store0.apply(new Revision(1), Mutation.put(bytesFromInt(7), bytes("v1")));
+            store0.restoreInPlace(empty);
+            store0.restoreInPlace(empty);
+
+            store0.apply(new Revision(2), Mutation.put(bytesFromInt(23), bytes("v23")));
+            key23 = store0.checkpoint();
+
+            store0.apply(new Revision(3), Mutation.put(bytesFromInt(15), bytes("v15")));
+            store0.apply(new Revision(4), Mutation.put(bytesFromInt(10), bytes("v10")));
+            store0.apply(new Revision(5), Mutation.put(bytesFromInt(14), bytes("v14")));
+        }
+
+        try (StorageEngine store1 = StorageEngine.restore(dir1, key23, options)) {
+            store1.apply(new Revision(6), Mutation.delete(bytesFromInt(20)));
+        }
+
+        try (StorageEngine store2 = StorageEngine.restore(dir2, empty, options)) {
+            store2.apply(new Revision(7), Mutation.put(bytesFromInt(21), bytes("v21")));
+            key21 = store2.checkpoint();
+
+            store2.apply(new Revision(8), Mutation.put(bytesFromInt(13), bytes("v13")));
+            store2.apply(new Revision(9), Mutation.put(bytesFromInt(20), bytes("v20-r9")));
+            store2.apply(new Revision(10), Mutation.put(bytesFromInt(23), bytes("v23-r10")));
+            store2.apply(new Revision(11), Mutation.put(bytesFromInt(8), bytes("v8")));
+            store2.apply(new Revision(12), Mutation.put(bytesFromInt(2), bytes("v2")));
+            store2.apply(new Revision(13), Mutation.put(bytesFromInt(20), bytes("v20-r13")));
+            store2.apply(new Revision(14), Mutation.delete(bytesFromInt(15)));
+            store2.apply(new Revision(15), Mutation.put(bytesFromInt(12), bytes("v12")));
+
+            store2.restoreInPlace(key23);
+
+            Optional<ValueRecord> restored = store2.get(bytesFromInt(23));
+            assertTrue(restored.isPresent());
+            assertEquals(bytes("v23"), restored.get().value());
+            assertEquals(new Revision(2), restored.get().modRevision());
+            assertTrue(store2.get(bytesFromInt(21)).isEmpty());
+
+            List<EntryRecord> entries = new ArrayList<>();
+            try (Scan scan = store2.scan(KeyRange.between(bytesFromInt(0), bytesFromInt(25)))) {
+                for (EntryRecord entry : scan) {
+                    entries.add(entry);
+                }
+            }
+
+            assertEquals(1, entries.size());
+            assertEquals(bytesFromInt(23), entries.getFirst().key());
+            assertEquals(bytes("v23"), entries.getFirst().value());
+            assertEquals(new Revision(2), entries.getFirst().modRevision());
+
+            store2.restoreInPlace(key21);
+            assertTrue(store2.get(bytesFromInt(21)).isPresent());
+            assertTrue(store2.get(bytesFromInt(23)).isEmpty());
+        }
+    }
+
+    @Test
     void rejectsStaleRevisionForExistingValue() {
         try (StorageEngine store = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             Bytes key = bytes("key");
@@ -259,6 +370,10 @@ class StorageEngineTest {
 
     private static Bytes bytes(String value) {
         return Bytes.utf8(value);
+    }
+
+    private static Bytes bytesFromInt(int value) {
+        return Bytes.copyOf(new byte[]{(byte) value});
     }
 
     private static StorageCheckpoint corruptFirstSstableByte(StorageCheckpoint checkpoint) {

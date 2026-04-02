@@ -88,13 +88,25 @@ final class DataBlockReader {
         return new DataBlockReader(segment, entryCount, restartOffsets, restartTableOffset, firstKey, lastKey);
     }
 
-    Optional<StoredEntry> find(Slice key) {
+    Optional<StoredEntry> findVisible(Slice key, long snapshotRevision) {
         DataBlockCursor cursor = cursorAtOrAfter(key);
         if (!cursor.hasNext()) {
             return Optional.empty();
         }
-        StoredEntry candidate = cursor.next();
-        return candidate.key().equals(key) ? Optional.of(candidate) : Optional.empty();
+        while (cursor.hasNext()) {
+            InternalEntry candidate = cursor.next();
+            if (!candidate.userKey().equals(key)) {
+                return Optional.empty();
+            }
+            if (candidate.revision() <= snapshotRevision) {
+                return Optional.of(candidate.toStoredEntry());
+            }
+        }
+        return Optional.empty();
+    }
+
+    Optional<StoredEntry> find(Slice key) {
+        return findVisible(key, Long.MAX_VALUE);
     }
 
     DataBlockCursor cursor() {
@@ -178,22 +190,22 @@ final class DataBlockReader {
             if (encodedValueLength != 0) {
                 throw new StorageException.Corruption("Tombstone data block entry must not carry a value");
             }
-            return new DecodedEntry(new StoredEntry.Tombstone(key, revision), keyBytes, nextOffset);
+            return new DecodedEntry(new InternalEntry.Tombstone(new InternalKey(key, revision)), keyBytes, nextOffset);
         }
 
         Slice value = Slice.wrap(segment.asSlice(valueOffset, encodedValueLength));
-        return new DecodedEntry(new StoredEntry.Value(key, value, revision), keyBytes, nextOffset);
+        return new DecodedEntry(new InternalEntry.Value(new InternalKey(key, revision), value), keyBytes, nextOffset);
     }
 
     private Slice restartKeyAt(int restartIndex) {
-        return decodeEntry(restartOffsets[restartIndex], null, dataLimit).entry().key();
+        return decodeEntry(restartOffsets[restartIndex], null, dataLimit).entry().userKey();
     }
 
     private Slice computeLastKey() {
         DataBlockCursor cursor = new DataBlockCursor(this, restartOffsets[restartOffsets.length - 1], dataLimit);
         Slice last = null;
         while (cursor.hasNext()) {
-            last = cursor.next().key();
+            last = cursor.next().userKey();
         }
         if (last == null) {
             throw new StorageException.Corruption("Data block restart region is empty");
@@ -243,7 +255,7 @@ final class DataBlockReader {
         throw new StorageException.Corruption("Truncated data block " + label + " varint");
     }
 
-    record DecodedEntry(StoredEntry entry, byte[] keyBytes, long nextOffset) {}
+    record DecodedEntry(InternalEntry entry, byte[] keyBytes, long nextOffset) {}
 
     private record VarInt(int value, long nextOffset) {}
 

@@ -3,23 +3,23 @@ package io.partdb.storage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.Objects;
 
-final class CompactionExecutor {
+final class Compactor {
 
-    private static final Logger log = LoggerFactory.getLogger(CompactionExecutor.class);
+    private static final Logger log = LoggerFactory.getLogger(Compactor.class);
     private static final int GRANDPARENT_OVERLAP_MULTIPLIER = 10;
 
-    private final SSTableCatalog sstableCatalog;
+    private final SstableStore sstableStore;
+    private final VersionSet versionSet;
     private final LsmConfig config;
 
-    CompactionExecutor(SSTableCatalog sstableCatalog, LsmConfig config) {
-        this.sstableCatalog = Objects.requireNonNull(sstableCatalog, "sstableCatalog");
+    Compactor(SstableStore sstableStore, VersionSet versionSet, LsmConfig config) {
+        this.sstableStore = Objects.requireNonNull(sstableStore, "sstableStore");
+        this.versionSet = Objects.requireNonNull(versionSet, "versionSet");
         this.config = Objects.requireNonNull(config, "config");
     }
 
@@ -67,7 +67,7 @@ final class CompactionExecutor {
         List<SSTableReader> readers = new ArrayList<>();
         try {
             for (SSTableMetadata table : metadata) {
-                readers.add(sstableCatalog.openCompactionReader(table));
+                readers.add(sstableStore.openCompactionReader(table));
             }
             return readers;
         } catch (Exception e) {
@@ -83,42 +83,44 @@ final class CompactionExecutor {
         List<SSTableMetadata> grandparents,
         List<SSTableMetadata> completedOutputs
     ) {
-        List<Iterator<StoredEntry>> iterators = sources.stream()
+        List<Iterator<InternalEntry>> iterators = sources.stream()
             .map(table -> table.scan(ScanBounds.all()))
             .toList();
 
-        Iterator<StoredEntry> merged = new MergingIterator(iterators);
-        Iterator<StoredEntry> filtered = gcTombstones
-            ? new TombstoneFilter(merged)
-            : merged;
-
-        return writeOutputs(filtered, targetLevel, grandparents, completedOutputs);
+        Iterator<InternalEntry> merged = new CompactionIterator(
+            new InternalEntryMergingIterator(iterators),
+            versionSet.oldestSnapshotRevision(),
+            gcTombstones
+        );
+        return writeOutputs(merged, targetLevel, grandparents, completedOutputs);
     }
 
     private List<SSTableMetadata> writeOutputs(
-        Iterator<StoredEntry> entries,
+        Iterator<InternalEntry> entries,
         int targetLevel,
         List<SSTableMetadata> grandparents,
         List<SSTableMetadata> completedOutputs
     ) {
-        StoredEntry pending = null;
+        InternalEntry pending = null;
 
         while (pending != null || entries.hasNext()) {
-            try (SSTableWriter writer = sstableCatalog.createWriter(targetLevel)) {
-                Slice firstKey = null;
+            try (SSTableWriter writer = sstableStore.createWriter(versionSet.allocateSstableId(), targetLevel)) {
+                Slice firstUserKey = null;
+                Slice lastUserKey = null;
                 while (pending != null || entries.hasNext()) {
-                    StoredEntry next = pending != null ? pending : entries.next();
+                    InternalEntry next = pending != null ? pending : entries.next();
                     pending = null;
 
-                    if (shouldFinishOutput(writer, firstKey, next, grandparents)) {
+                    if (shouldFinishOutput(writer, firstUserKey, lastUserKey, next, grandparents)) {
                         pending = next;
                         break;
                     }
 
                     writer.add(next);
-                    if (firstKey == null) {
-                        firstKey = next.key();
+                    if (firstUserKey == null) {
+                        firstUserKey = next.userKey();
                     }
+                    lastUserKey = next.userKey();
                 }
                 completedOutputs.add(writer.finish());
             }
@@ -129,11 +131,16 @@ final class CompactionExecutor {
 
     private boolean shouldFinishOutput(
         SSTableWriter writer,
-        Slice firstKey,
-        StoredEntry next,
+        Slice firstUserKey,
+        Slice lastUserKey,
+        InternalEntry next,
         List<SSTableMetadata> grandparents
     ) {
-        if (writer.uncompressedBytes() == 0 || firstKey == null) {
+        if (writer.uncompressedBytes() == 0 || firstUserKey == null) {
+            return false;
+        }
+
+        if (lastUserKey != null && lastUserKey.equals(next.userKey())) {
             return false;
         }
 
@@ -141,7 +148,7 @@ final class CompactionExecutor {
             return true;
         }
 
-        return grandparentOverlapBytes(firstKey, next.key(), grandparents) > maxGrandparentOverlapBytes();
+        return grandparentOverlapBytes(firstUserKey, next.userKey(), grandparents) > maxGrandparentOverlapBytes();
     }
 
     private long grandparentOverlapBytes(
@@ -165,64 +172,10 @@ final class CompactionExecutor {
     }
 
     private void cleanupOutputs(List<SSTableMetadata> outputs) {
-        for (SSTableMetadata desc : outputs) {
-            try {
-                sstableCatalog.delete(desc.id());
-            } catch (IOException e) {
-                log.atWarn()
-                    .addKeyValue("sstableId", desc.id())
-                    .setCause(e)
-                    .log("Failed to clean up compaction output");
-            }
-        }
+        sstableStore.deleteTables(outputs);
     }
 
     private void closeAll(List<SSTableReader> tables) {
-        for (SSTableReader table : tables) {
-            try {
-                table.close();
-            } catch (Exception e) {
-                log.atWarn()
-                    .setCause(e)
-                    .log("Failed to close SSTable");
-            }
-        }
-    }
-
-    private static final class TombstoneFilter implements Iterator<StoredEntry> {
-
-        private final Iterator<StoredEntry> source;
-        private StoredEntry next;
-
-        TombstoneFilter(Iterator<StoredEntry> source) {
-            this.source = source;
-            advance();
-        }
-
-        @Override
-        public boolean hasNext() {
-            return next != null;
-        }
-
-        @Override
-        public StoredEntry next() {
-            if (next == null) {
-                throw new NoSuchElementException();
-            }
-            StoredEntry result = next;
-            advance();
-            return result;
-        }
-
-        private void advance() {
-            while (source.hasNext()) {
-                StoredEntry entry = source.next();
-                if (!(entry instanceof StoredEntry.Tombstone)) {
-                    next = entry;
-                    return;
-                }
-            }
-            next = null;
-        }
+        sstableStore.closeReaders(tables);
     }
 }

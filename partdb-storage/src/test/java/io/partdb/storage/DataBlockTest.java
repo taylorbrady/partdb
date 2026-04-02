@@ -42,7 +42,7 @@ class DataBlockTest {
         List<String> keys = new ArrayList<>();
         DataBlockCursor cursor = reader.cursor();
         while (cursor.hasNext()) {
-            keys.add(utf8(cursor.next().key()));
+            keys.add(utf8(cursor.next().userKey()));
         }
         assertEquals(List.of("alpha", "alphabet", "alphanumeric", "beta"), keys);
     }
@@ -60,7 +60,7 @@ class DataBlockTest {
 
         List<String> keys = new ArrayList<>();
         while (cursor.hasNext()) {
-            keys.add(utf8(cursor.next().key()));
+            keys.add(utf8(cursor.next().userKey()));
         }
 
         assertEquals(List.of("alphanumeric", "beta"), keys);

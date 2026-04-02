@@ -15,9 +15,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
-final class CatalogCheckpoint {
+final class VersionCheckpoint {
 
-    private static final Logger log = LoggerFactory.getLogger(CatalogCheckpoint.class);
+    private static final Logger log = LoggerFactory.getLogger(VersionCheckpoint.class);
     private static final int CHECKPOINT_MAGIC = 0x53544350;
     private static final int CHECKPOINT_VERSION = 1;
     private static final String RESTORE_SUFFIX = ".restore";
@@ -25,12 +25,12 @@ final class CatalogCheckpoint {
     private final SSTableManifest manifest;
     private final List<CheckpointSSTable> sstables;
 
-    private CatalogCheckpoint(SSTableManifest manifest, List<CheckpointSSTable> sstables) {
+    private VersionCheckpoint(SSTableManifest manifest, List<CheckpointSSTable> sstables) {
         this.manifest = manifest;
         this.sstables = List.copyOf(sstables);
     }
 
-    static CatalogCheckpoint capture(CatalogSnapshot view) {
+    static VersionCheckpoint capture(VersionLease view) {
         SSTableManifest manifest = view.manifest();
         var readersById = view.all().stream()
             .collect(Collectors.toMap(SSTableReader::id, reader -> reader));
@@ -46,10 +46,10 @@ final class CatalogCheckpoint {
             sstables.add(new CheckpointSSTable(metadata.id(), reader.fileBytes()));
         }
 
-        return new CatalogCheckpoint(manifest, sstables);
+        return new VersionCheckpoint(manifest, sstables);
     }
 
-    static CatalogCheckpoint fromBytes(byte[] data) {
+    static VersionCheckpoint fromBytes(byte[] data) {
         try {
             ByteBuffer buffer = ByteBuffer.wrap(data);
             if (buffer.remaining() < Integer.BYTES * 4) {
@@ -116,7 +116,7 @@ final class CatalogCheckpoint {
                 throw new StorageException.Corruption("Trailing checkpoint data");
             }
 
-            return new CatalogCheckpoint(manifest, sstables);
+            return new VersionCheckpoint(manifest, sstables);
         } catch (BufferUnderflowException | IllegalArgumentException e) {
             throw new StorageException.Corruption("Malformed checkpoint", e);
         }
@@ -188,10 +188,10 @@ final class CatalogCheckpoint {
         }
     }
 
-    LoadedCatalog activate(Path directory, CatalogPersistence persistence) throws IOException {
+    LoadedStoreVersion activate(Path directory, ManifestStore manifestStore, SstableStore sstableStore) throws IOException {
         commitTo(directory);
-        persistence.writeManifest(manifest);
-        return persistence.loadState(manifest);
+        manifestStore.write(manifest);
+        return sstableStore.loadState(manifest);
     }
 
     void cleanup(Path directory) {

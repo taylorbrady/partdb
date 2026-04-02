@@ -21,6 +21,7 @@ final class SSTableWriter implements AutoCloseable {
     private final DataBlockWriter currentBlock;
     private final List<Slice> keys;
 
+    private InternalKey lastInternalKey;
     private Slice lastKey;
     private Slice firstKey;
     private long smallestRevision;
@@ -40,6 +41,7 @@ final class SSTableWriter implements AutoCloseable {
         this.indexEntries = new ArrayList<>();
         this.currentBlock = new DataBlockWriter(config.blockRestartInterval());
         this.keys = new ArrayList<>();
+        this.lastInternalKey = null;
         this.lastKey = null;
         this.firstKey = null;
         this.smallestRevision = 0;
@@ -76,21 +78,22 @@ final class SSTableWriter implements AutoCloseable {
         return level;
     }
 
-    void add(StoredEntry entry) {
+    void add(InternalEntry entry) {
         if (finished) {
             throw new IllegalStateException("Cannot add to finished writer");
         }
 
-        if (lastKey != null && entry.key().compareTo(lastKey) <= 0) {
+        if (lastInternalKey != null && entry.key().compareTo(lastInternalKey) <= 0) {
             throw new IllegalArgumentException(
-                "Entries must be added in strictly ascending key order: last=%s, current=%s"
-                    .formatted(lastKey, entry.key())
+                "Entries must be added in strictly ascending internal-key order: last=%s, current=%s"
+                    .formatted(lastInternalKey, entry.key())
             );
         }
 
-        lastKey = entry.key();
+        lastInternalKey = entry.key();
+        lastKey = entry.userKey();
         if (firstKey == null) {
-            firstKey = entry.key();
+            firstKey = entry.userKey();
         }
 
         if (!hasRevision || entry.revision() < smallestRevision) {
@@ -101,15 +104,21 @@ final class SSTableWriter implements AutoCloseable {
         }
         hasRevision = true;
 
-        keys.add(entry.key());
+        keys.add(entry.userKey());
         totalEntryCount++;
         uncompressedBytes += entry.encodedSizeBytes();
 
-        if (currentBlock.estimatedSizeBytes() > config.blockSize() && !currentBlock.isEmpty()) {
+        if (currentBlock.estimatedSizeBytes() > config.blockSize()
+            && !currentBlock.isEmpty()
+            && !currentBlock.lastKey().equals(entry.userKey())) {
             flushCurrentBlock();
         }
 
         currentBlock.append(entry);
+    }
+
+    void add(StoredEntry entry) {
+        add(InternalEntry.from(entry));
     }
 
     long uncompressedBytes() {

@@ -14,36 +14,59 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
 public final class StorageEngine implements AutoCloseable {
 
     private final LsmConfig lsmConfig;
-    private final AtomicReference<MutableMemtable> activeMemtable;
+    private final MemtableSet memtables;
     private final ReentrantLock rotationLock;
     private final AtomicBoolean closed;
-    private final SSTableCatalog sstableCatalog;
-    private final FlushCoordinator flushCoordinator;
+    private final SstableStore sstableStore;
+    private final VersionSet versionSet;
+    private final CompactionScheduler compactionScheduler;
+    private final AtomicLong appliedThroughRevision;
+    private final MemtableFlusher memtableFlusher;
     private final StorageRuntimeStats runtimeStats;
-    private final ReadCoordinator readCoordinator;
-    private final CheckpointService checkpointService;
+    private final Checkpointer checkpointer;
 
-    private StorageEngine(LsmConfig lsmConfig, SSTableCatalog sstableCatalog, StorageRuntimeStats runtimeStats) {
+    private StorageEngine(
+        LsmConfig lsmConfig,
+        SstableStore sstableStore,
+        VersionSet versionSet,
+        CompactionScheduler compactionScheduler,
+        long appliedThroughRevision,
+        CheckpointInstaller checkpointInstaller,
+        StorageRuntimeStats runtimeStats
+    ) {
         this.lsmConfig = Objects.requireNonNull(lsmConfig, "lsmConfig must not be null");
-        this.sstableCatalog = Objects.requireNonNull(sstableCatalog, "sstableCatalog must not be null");
+        this.sstableStore = Objects.requireNonNull(sstableStore, "sstableStore must not be null");
+        this.versionSet = Objects.requireNonNull(versionSet, "versionSet must not be null");
+        this.compactionScheduler = Objects.requireNonNull(compactionScheduler, "compactionScheduler must not be null");
+        this.appliedThroughRevision = new AtomicLong(appliedThroughRevision);
         this.runtimeStats = Objects.requireNonNull(runtimeStats, "runtimeStats must not be null");
-        this.activeMemtable = new AtomicReference<>(new MutableMemtable());
+        this.memtables = new MemtableSet();
         this.rotationLock = new ReentrantLock();
         this.closed = new AtomicBoolean(false);
-        this.flushCoordinator = new FlushCoordinator(sstableCatalog, this::refreshMemtableStats);
-        this.readCoordinator = new ReadCoordinator(activeMemtable::get, flushCoordinator::immutableMemtables, sstableCatalog);
-        this.checkpointService = new CheckpointService(
-            sstableCatalog,
-            flushCoordinator,
+        this.memtableFlusher = new MemtableFlusher(
+            sstableStore,
+            versionSet,
+            memtables,
+            this.appliedThroughRevision::get,
+            this::refreshMemtableStats,
+            compactionScheduler::requestCompaction
+        );
+        this.checkpointer = new Checkpointer(
+            versionSet,
+            checkpointInstaller,
+            compactionScheduler,
+            memtableFlusher,
             rotationLock,
             this::resetMemtables,
             this::flush,
+            this.appliedThroughRevision::get,
+            this.appliedThroughRevision::set,
             runtimeStats
         );
         refreshMemtableStats();
@@ -64,8 +87,33 @@ public final class StorageEngine implements AutoCloseable {
         try {
             Files.createDirectories(dataDirectory);
             StorageRuntimeStats runtimeStats = new StorageRuntimeStats();
-            SSTableCatalog sstableCatalog = SSTableCatalog.open(dataDirectory, config, runtimeStats);
-            return new StorageEngine(config, sstableCatalog, runtimeStats);
+            BlockCache blockCache = config.cacheEnabled()
+                ? new S3FifoBlockCache(config.blockCacheMaxBytes())
+                : NoOpBlockCache.INSTANCE;
+            ManifestStore manifestStore = new ManifestStore(dataDirectory);
+            SstableStore sstableStore = new SstableStore(dataDirectory, config, blockCache);
+            CheckpointInstaller checkpointInstaller = new CheckpointInstaller(dataDirectory, manifestStore, sstableStore);
+            LoadedStoreVersion initialState = sstableStore.openState(manifestStore);
+            VersionSet versionSet = VersionSet.open(manifestStore, initialState, runtimeStats);
+            Compactor compactor = new Compactor(sstableStore, versionSet, config);
+            CompactionScheduler compactionScheduler = new CompactionScheduler(
+                compactor,
+                config,
+                runtimeStats,
+                versionSet::manifest,
+                result -> {}
+            );
+            StorageEngine engine = new StorageEngine(
+                config,
+                sstableStore,
+                versionSet,
+                compactionScheduler,
+                initialState.manifest().appliedThroughRevision(),
+                checkpointInstaller,
+                runtimeStats
+            );
+            engine.installCompactionResultHandler();
+            return engine;
         } catch (IOException e) {
             throw new StorageException.IO("Failed to open store", e);
         }
@@ -105,17 +153,18 @@ public final class StorageEngine implements AutoCloseable {
             return;
         }
 
+        memtableFlusher.throwIfFailed();
         rotationLock.lock();
         try {
             validateBatch(entries);
             for (StoredEntry entry : entries) {
-                appendValidatedEntry(entry);
+                appendValidatedEntry(InternalEntry.from(entry));
             }
             long maxRevision = entries.stream()
                 .mapToLong(StoredEntry::revision)
                 .max()
                 .orElse(0);
-            sstableCatalog.updateAppliedThrough(maxRevision);
+            appliedThroughRevision.accumulateAndGet(maxRevision, Math::max);
         } finally {
             rotationLock.unlock();
         }
@@ -128,7 +177,9 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     Optional<StoredEntry.Value> get(Slice key) {
-        return readCoordinator.get(key);
+        try (ReadView view = openReadView()) {
+            return view.get(key);
+        }
     }
 
     public Scan scan(KeyRange range) {
@@ -137,7 +188,7 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     CloseableIterator<StoredEntry.Value> scan(ScanBounds bounds) {
-        return readCoordinator.scan(bounds);
+        return openReadView().scan(bounds);
     }
 
     public StorageCheckpoint checkpoint() {
@@ -145,7 +196,7 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     byte[] checkpointBytes() {
-        return checkpointService.checkpoint();
+        return checkpointer.checkpoint();
     }
 
     public void restoreInPlace(StorageCheckpoint checkpoint) {
@@ -153,11 +204,11 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     void replaceWithCheckpoint(byte[] data) {
-        checkpointService.restore(data);
+        checkpointer.restore(data);
     }
 
     public StorageMetadata metadata() {
-        return new StorageMetadata(new Revision(sstableCatalog.appliedThroughRevision()));
+        return new StorageMetadata(new Revision(appliedThroughRevision.get()));
     }
 
     public LsmStats stats() {
@@ -166,19 +217,20 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     SSTableManifest manifest() {
-        return sstableCatalog.manifest();
+        return versionSet.manifest();
     }
 
     void awaitCompactionIdle(Duration timeout) {
-        sstableCatalog.awaitCompactionIdle(timeout);
+        compactionScheduler.awaitIdle(timeout);
     }
 
     void flush() {
+        memtableFlusher.throwIfFailed();
         rotationLock.lock();
         try {
-            MutableMemtable current = activeMemtable.get();
+            MutableMemtable current = memtables.active();
             if (current.entryCount() == 0) {
-                flushCoordinator.awaitIdle();
+                memtableFlusher.awaitIdle();
                 return;
             }
             rotateMemtable(current);
@@ -186,7 +238,7 @@ public final class StorageEngine implements AutoCloseable {
             rotationLock.unlock();
         }
 
-        flushCoordinator.awaitIdle();
+        memtableFlusher.awaitIdle();
     }
 
     @Override
@@ -196,13 +248,17 @@ public final class StorageEngine implements AutoCloseable {
         }
 
         flush();
-        flushCoordinator.close();
-        sstableCatalog.close();
+        memtableFlusher.close();
+        compactionScheduler.close();
+        StoreVersion finalVersion = versionSet.close();
+        if (!finalVersion.awaitDrain(Duration.ofSeconds(30))) {
+            finalVersion.forceDrain();
+        }
     }
 
-    private void appendValidatedEntry(StoredEntry entry) {
+    private void appendValidatedEntry(InternalEntry entry) {
         while (true) {
-            MutableMemtable memtable = activeMemtable.get();
+            MutableMemtable memtable = memtables.active();
             MutableMemtable.WriteResult writeResult = memtable.put(entry);
             if (writeResult == MutableMemtable.WriteResult.DUPLICATE) {
                 return;
@@ -221,12 +277,14 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     private void validateBatch(List<StoredEntry> entries) {
-        Set<Slice> keys = new java.util.HashSet<>(entries.size());
-        for (StoredEntry entry : entries) {
-            if (!keys.add(entry.key())) {
-                throw new IllegalArgumentException("Write batch contains duplicate key: " + entry.key());
+        try (ReadView view = openReadView()) {
+            Set<Slice> keys = new java.util.HashSet<>(entries.size());
+            for (StoredEntry entry : entries) {
+                if (!keys.add(entry.key())) {
+                    throw new IllegalArgumentException("Write batch contains duplicate key: " + entry.key());
+                }
+                validateStoredEntry(entry, view);
             }
-            validateStoredEntry(entry);
         }
     }
 
@@ -235,7 +293,7 @@ public final class StorageEngine implements AutoCloseable {
             return;
         }
         try {
-            MutableMemtable current = activeMemtable.get();
+            MutableMemtable current = memtables.active();
             if (current != fullMemtable) {
                 return;
             }
@@ -249,18 +307,80 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     private void rotateMemtable(MutableMemtable current) {
-        flushCoordinator.enqueue(current.freeze());
-        activeMemtable.set(new MutableMemtable());
-        refreshMemtableStats();
+        memtableFlusher.reserveSlot();
+        ImmutableMemtable frozen = null;
+        boolean scheduled = false;
+        try {
+            frozen = memtables.rotate(current);
+            if (frozen == null) {
+                return;
+            }
+
+            memtableFlusher.schedule(frozen);
+            scheduled = true;
+        } finally {
+            if (!scheduled && frozen == null) {
+                memtableFlusher.releaseReservedSlot();
+            }
+            refreshMemtableStats();
+        }
     }
 
     private void resetMemtables() {
-        activeMemtable.set(new MutableMemtable());
+        memtables.reset();
         refreshMemtableStats();
     }
 
-    private void validateStoredEntry(StoredEntry entry) {
-        Optional<StoredEntry> existing = readCoordinator.lookupLatestEntry(entry.key());
+    private ReadView openReadView() {
+        long snapshotRevision = appliedThroughRevision.get();
+        MemtableView memtableView = memtables.captureView();
+        VersionLease tables = versionSet.acquire(snapshotRevision);
+        try {
+            return new ReadView(memtableView, tables, snapshotRevision);
+        } catch (RuntimeException e) {
+            tables.close();
+            throw e;
+        }
+    }
+
+    private void installCompactionResultHandler() {
+        compactionScheduler.setResultHandler(this::handleCompactionResult);
+    }
+
+    private void handleCompactionResult(CompactionResult result) {
+        switch (result) {
+            case CompactionResult.Success(var task, var outputs) -> applyCompaction(task.inputs(), outputs);
+            case CompactionResult.Failure(var task, var cause) ->
+                org.slf4j.LoggerFactory.getLogger(StorageEngine.class)
+                    .atError()
+                    .addKeyValue("targetLevel", task.targetLevel())
+                    .setCause(cause)
+                    .log("Compaction failed");
+        }
+    }
+
+    private void applyCompaction(List<SSTableMetadata> removed, List<SSTableMetadata> added) {
+        List<SSTableReader> addedReaders = sstableStore.openReaders(added);
+        try {
+            List<Runnable> cleanupActions = removed.isEmpty()
+                ? List.of()
+                : List.of(() -> sstableStore.deleteTables(removed));
+            versionSet.applyCompaction(
+                removed,
+                added,
+                addedReaders,
+                appliedThroughRevision.get(),
+                cleanupActions
+            );
+        } catch (RuntimeException e) {
+            sstableStore.closeReaders(addedReaders);
+            sstableStore.deleteTables(added);
+            throw e;
+        }
+    }
+
+    private void validateStoredEntry(StoredEntry entry, ReadView view) {
+        Optional<StoredEntry> existing = view.lookupLatestEntry(entry.key());
         if (existing.isEmpty()) {
             return;
         }
@@ -288,7 +408,7 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     private void refreshMemtableStats() {
-        runtimeStats.updateMemtables(activeMemtable.get().sizeInBytes(), flushCoordinator.immutableMemtables().size());
+        runtimeStats.updateMemtables(memtables.activeSizeInBytes(), memtables.immutableCount());
     }
 
     private static Slice copy(Bytes bytes) {

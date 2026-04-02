@@ -6,27 +6,39 @@ import java.util.Optional;
 
 sealed interface Memtable permits MutableMemtable, ImmutableMemtable {
 
-    Optional<StoredEntry> get(Slice key);
+    Optional<StoredEntry> get(Slice key, long snapshotRevision);
 
-    Iterator<StoredEntry> scan(ScanBounds bounds);
+    Iterator<InternalEntry> scan(ScanBounds bounds);
 
     long sizeInBytes();
 
     long entryCount();
 
-    static Iterator<StoredEntry> scanEntries(NavigableMap<Slice, StoredEntry> entries, ScanBounds bounds) {
-        NavigableMap<Slice, StoredEntry> range;
+    static Optional<StoredEntry> getVisible(
+        NavigableMap<InternalKey, InternalEntry> entries,
+        Slice key,
+        long snapshotRevision
+    ) {
+        var candidate = entries.ceilingEntry(InternalKey.visibleAt(key, snapshotRevision));
+        if (candidate == null || !candidate.getKey().userKey().equals(key)) {
+            return Optional.empty();
+        }
+        return Optional.of(candidate.getValue().toStoredEntry());
+    }
+
+    static Iterator<InternalEntry> scanEntries(NavigableMap<InternalKey, InternalEntry> entries, ScanBounds bounds) {
+        NavigableMap<InternalKey, InternalEntry> range;
         Slice startKey = bounds.startInclusive();
         Slice endKey = bounds.endExclusive();
 
         if (bounds.isAll()) {
             range = entries;
         } else if (startKey == null) {
-            range = entries.headMap(endKey, false);
+            range = entries.headMap(InternalKey.firstForUser(endKey), false);
         } else if (endKey == null) {
-            range = entries.tailMap(startKey, true);
+            range = entries.tailMap(InternalKey.firstForUser(startKey), true);
         } else {
-            range = entries.subMap(startKey, true, endKey, false);
+            range = entries.subMap(InternalKey.firstForUser(startKey), true, InternalKey.firstForUser(endKey), false);
         }
 
         return range.values().iterator();

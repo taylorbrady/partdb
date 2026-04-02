@@ -76,7 +76,7 @@ class StorageEngineInternalsBehaviorTest extends StorageEngineInternalTestSuppor
         older.put(new StoredEntry.Value(key("key"), value("older"), 1));
         newer.put(new StoredEntry.Value(key("key"), value("newer"), 2));
 
-        Optional<StoredEntry> result = ReadCoordinator.lookupStoredEntry(
+        Optional<StoredEntry> result = ReadView.lookupStoredEntry(
             key("key"),
             active,
             List.of(older.freeze(), newer.freeze())

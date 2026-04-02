@@ -19,13 +19,13 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
-final class CompactionController implements AutoCloseable {
+final class CompactionScheduler implements AutoCloseable {
 
     private final LeveledCompactionPlanner planner;
-    private final CompactionExecutor compactionExecutor;
+    private final Compactor compactor;
     private final Supplier<SSTableManifest> manifestSupplier;
     private final StorageRuntimeStats stats;
-    private final Consumer<CompactionResult> resultHandler;
+    private volatile Consumer<CompactionResult> resultHandler;
     private final ReservationLedger reservations;
     private final int maxConcurrentCompactions;
 
@@ -41,18 +41,18 @@ final class CompactionController implements AutoCloseable {
     private long requestedVersion;
     private long processedVersion;
 
-    CompactionController(
-        SSTableCatalog sstableCatalog,
+    CompactionScheduler(
+        Compactor compactor,
         LsmConfig config,
         StorageRuntimeStats stats,
         Supplier<SSTableManifest> manifestSupplier,
         Consumer<CompactionResult> resultHandler
     ) {
         this.planner = new LeveledCompactionPlanner(config);
-        this.compactionExecutor = new CompactionExecutor(sstableCatalog, config);
+        this.compactor = Objects.requireNonNull(compactor, "compactor");
         this.manifestSupplier = manifestSupplier;
         this.stats = stats;
-        this.resultHandler = resultHandler;
+        this.resultHandler = Objects.requireNonNull(resultHandler, "resultHandler");
         this.reservations = new ReservationLedger();
         this.maxConcurrentCompactions = config.maxConcurrentCompactions();
 
@@ -78,6 +78,10 @@ final class CompactionController implements AutoCloseable {
         } finally {
             lock.unlock();
         }
+    }
+
+    void setResultHandler(Consumer<CompactionResult> resultHandler) {
+        this.resultHandler = Objects.requireNonNull(resultHandler, "resultHandler");
     }
 
     Pause pauseAndAwaitIdle(Duration timeout) {
@@ -262,7 +266,7 @@ final class CompactionController implements AutoCloseable {
         stats.compactionStarted();
         long startNanos = System.nanoTime();
         try {
-            CompactionResult result = compactionExecutor.compact(task);
+            CompactionResult result = compactor.compact(task);
             resultHandler.accept(result);
             switch (result) {
                 case CompactionResult.Success(_, var outputs) -> {
@@ -316,7 +320,7 @@ final class CompactionController implements AutoCloseable {
 
     private void ensureOpen() {
         if (closed) {
-            throw new StorageException.Closed("Compaction controller is closed");
+            throw new StorageException.Closed("Compaction scheduler is closed");
         }
     }
 
@@ -439,10 +443,10 @@ final class CompactionController implements AutoCloseable {
     }
 
     static final class Pause implements AutoCloseable {
-        private final CompactionController controller;
+        private final CompactionScheduler controller;
         private final AtomicBoolean closed;
 
-        private Pause(CompactionController controller) {
+        private Pause(CompactionScheduler controller) {
             this.controller = controller;
             this.closed = new AtomicBoolean(false);
         }

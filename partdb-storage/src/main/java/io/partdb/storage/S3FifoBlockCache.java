@@ -16,7 +16,7 @@ final class S3FifoBlockCache implements BlockCache {
     private static final double SMALL_QUEUE_RATIO = 0.1;
     private static final int GHOST_CAPACITY = 10_000;
 
-    private record CacheKey(long sstableId, long offset) {}
+    private record CacheKey(long cacheId, long offset) {}
 
     private static final class CacheEntry {
         final DataBlockReader block;
@@ -50,7 +50,7 @@ final class S3FifoBlockCache implements BlockCache {
 
     private final LinkedHashSet<CacheKey> ghost = new LinkedHashSet<>();
 
-    private final Map<Long, Set<CacheKey>> sstableIndex = new HashMap<>();
+    private final Map<Long, Set<CacheKey>> cacheIndex = new HashMap<>();
 
     private final AtomicLong hits = new AtomicLong();
     private final AtomicLong misses = new AtomicLong();
@@ -68,8 +68,8 @@ final class S3FifoBlockCache implements BlockCache {
     }
 
     @Override
-    public DataBlockReader get(long sstableId, long offset) {
-        CacheKey key = new CacheKey(sstableId, offset);
+    public DataBlockReader get(long cacheId, long offset) {
+        CacheKey key = new CacheKey(cacheId, offset);
 
         lock.readLock().lock();
         try {
@@ -95,8 +95,8 @@ final class S3FifoBlockCache implements BlockCache {
     }
 
     @Override
-    public void put(long sstableId, long offset, DataBlockReader block) {
-        CacheKey key = new CacheKey(sstableId, offset);
+    public void put(long cacheId, long offset, DataBlockReader block) {
+        CacheKey key = new CacheKey(cacheId, offset);
         long blockSize = block.sizeInBytes();
 
         if (blockSize > maxTotalBytes) {
@@ -115,17 +115,17 @@ final class S3FifoBlockCache implements BlockCache {
                 insertToSmall(key, new CacheEntry(block));
             }
 
-            sstableIndex.computeIfAbsent(sstableId, _ -> new HashSet<>()).add(key);
+            cacheIndex.computeIfAbsent(cacheId, _ -> new HashSet<>()).add(key);
         } finally {
             lock.writeLock().unlock();
         }
     }
 
     @Override
-    public void invalidate(long sstableId) {
+    public void invalidate(long cacheId) {
         lock.writeLock().lock();
         try {
-            Set<CacheKey> keys = sstableIndex.remove(sstableId);
+            Set<CacheKey> keys = cacheIndex.remove(cacheId);
             if (keys == null) {
                 return;
             }
@@ -199,7 +199,7 @@ final class S3FifoBlockCache implements BlockCache {
             if (entry.frequency > 0) {
                 entry.frequency = 0;
                 insertToMain(key, entry);
-                sstableIndex.computeIfAbsent(key.sstableId(), _ -> new HashSet<>()).add(key);
+                cacheIndex.computeIfAbsent(key.cacheId(), _ -> new HashSet<>()).add(key);
             } else {
                 addToGhost(key);
                 evictions.incrementAndGet();
@@ -231,11 +231,11 @@ final class S3FifoBlockCache implements BlockCache {
     }
 
     private void removeFromIndex(CacheKey key) {
-        Set<CacheKey> keys = sstableIndex.get(key.sstableId());
+        Set<CacheKey> keys = cacheIndex.get(key.cacheId());
         if (keys != null) {
             keys.remove(key);
             if (keys.isEmpty()) {
-                sstableIndex.remove(key.sstableId());
+                cacheIndex.remove(key.cacheId());
             }
         }
     }

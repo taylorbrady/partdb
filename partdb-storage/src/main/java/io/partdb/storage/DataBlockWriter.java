@@ -16,6 +16,7 @@ final class DataBlockWriter {
 
     private Slice firstKey;
     private Slice lastKey;
+    private InternalKey lastInternalKey;
     private byte[] lastKeyBytes;
     private int entriesSinceRestart;
     private int entryCount;
@@ -29,18 +30,22 @@ final class DataBlockWriter {
         this.restartOffsets = new ArrayList<>();
     }
 
-    void append(StoredEntry entry) {
-        if (lastKey != null && entry.key().compareTo(lastKey) <= 0) {
+    void append(InternalEntry entry) {
+        if (lastInternalKey != null && entry.key().compareTo(lastInternalKey) <= 0) {
+            throw new IllegalArgumentException("Internal key ordering must be strictly increasing");
+        }
+
+        if (lastKey != null && entry.userKey().compareTo(lastKey) < 0) {
             throw new IllegalArgumentException(
-                "Entries must be added in strictly ascending key order: last=%s, current=%s"
-                    .formatted(lastKey, entry.key())
+                "Entries must be added in ascending user-key order: last=%s, current=%s"
+                    .formatted(lastKey, entry.userKey())
             );
         }
 
-        byte[] keyBytes = entry.key().toByteArray();
+        byte[] keyBytes = entry.userKey().toByteArray();
         byte[] valueBytes = switch (entry) {
-            case StoredEntry.Tombstone _ -> null;
-            case StoredEntry.Value value -> value.value().toByteArray();
+            case InternalEntry.Tombstone _ -> null;
+            case InternalEntry.Value value -> value.value().toByteArray();
         };
 
         int sharedPrefixLength = 0;
@@ -55,7 +60,7 @@ final class DataBlockWriter {
         writeUnsignedVarInt(data, sharedPrefixLength);
         writeUnsignedVarInt(data, unsharedKeyLength);
         writeUnsignedVarInt(data, valueBytes == null ? 0 : valueBytes.length);
-        data.write(entry instanceof StoredEntry.Tombstone ? 0x01 : 0x00);
+        data.write(entry instanceof InternalEntry.Tombstone ? 0x01 : 0x00);
         writeLong(data, entry.revision());
         data.write(keyBytes, sharedPrefixLength, unsharedKeyLength);
         if (valueBytes != null) {
@@ -63,12 +68,17 @@ final class DataBlockWriter {
         }
 
         if (firstKey == null) {
-            firstKey = entry.key();
+            firstKey = entry.userKey();
         }
-        lastKey = entry.key();
+        lastKey = entry.userKey();
+        lastInternalKey = entry.key();
         lastKeyBytes = keyBytes;
         entryCount++;
         entriesSinceRestart++;
+    }
+
+    void append(StoredEntry entry) {
+        append(InternalEntry.from(entry));
     }
 
     boolean isEmpty() {
@@ -113,6 +123,7 @@ final class DataBlockWriter {
         restartOffsets.clear();
         firstKey = null;
         lastKey = null;
+        lastInternalKey = null;
         lastKeyBytes = null;
         entriesSinceRestart = 0;
         entryCount = 0;
