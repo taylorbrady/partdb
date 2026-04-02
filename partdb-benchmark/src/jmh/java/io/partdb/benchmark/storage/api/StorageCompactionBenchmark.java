@@ -5,11 +5,11 @@ import io.partdb.benchmark.support.BenchmarkKeys;
 import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
-import io.partdb.storage.LsmStats;
 import io.partdb.storage.Mutation;
 import io.partdb.storage.Revision;
 import io.partdb.storage.SstableOptions;
 import io.partdb.storage.StorageOptions;
+import io.partdb.storage.StorageStats;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -99,12 +99,12 @@ public class StorageCompactionBenchmark {
             }
         }
 
-        LsmStats awaitCompactionCatchup(long completedBefore) {
+        StorageStats awaitCompactionCatchup(long completedBefore) {
             long deadline = System.nanoTime() + QUIESCE_TIMEOUT_NANOS;
             boolean sawCompaction = false;
 
             while (System.nanoTime() < deadline) {
-                LsmStats stats = store().stats();
+                StorageStats stats = store().stats();
                 if (stats.activeCompactions() > 0 || stats.completedCompactions() > completedBefore) {
                     sawCompaction = true;
                 }

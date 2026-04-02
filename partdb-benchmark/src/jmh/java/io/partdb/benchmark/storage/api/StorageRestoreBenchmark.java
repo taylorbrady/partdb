@@ -68,7 +68,7 @@ public class StorageRestoreBenchmark {
         }
 
         public void restoreIntoNewStore() {
-            try (StorageEngine ignored = StorageEngine.restore(targetDir, checkpoint, options)) {
+            try (StorageEngine ignored = StorageEngine.openFromCheckpoint(targetDir, checkpoint, options)) {
                 // Benchmark the direct restore path into a new store directory.
             }
         }

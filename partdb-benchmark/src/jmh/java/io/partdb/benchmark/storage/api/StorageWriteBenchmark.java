@@ -164,7 +164,7 @@ public class StorageWriteBenchmark {
         @Setup(Level.Iteration)
         public void openIterationStore() throws IOException {
             openStore("partdb-steady-write", options);
-            store().restoreInPlace(baselineCheckpoint);
+            store().restore(baselineCheckpoint);
             revisionCounter = baselineRevision;
             nextAppendKeyIndex = 0;
             randomIndex = 0;
