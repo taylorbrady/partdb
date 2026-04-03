@@ -2,13 +2,15 @@ package io.partdb.node.state;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.consensus.ApplyResult;
+import io.partdb.consensus.ReplicatedStateMachine;
 import io.partdb.node.internal.command.PartDbCommand;
 import io.partdb.node.internal.command.PartDbCommandCodec;
 import io.partdb.node.internal.command.PartDbCommandResult;
 import io.partdb.node.internal.command.PartDbCommandResultCodec;
+import io.partdb.node.kv.WriteBatchOperation;
+import io.partdb.node.lease.LeaseId;
 import io.partdb.node.lease.LeaseRegistry;
 import io.partdb.node.recovery.RecoveryResult;
-import io.partdb.consensus.ReplicatedStateMachine;
 import io.partdb.storage.EntryRecord;
 import io.partdb.storage.KeyRange;
 import io.partdb.storage.Mutation;
@@ -25,6 +27,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -72,6 +75,40 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
                 detachKeyFromLease(key);
                 store.apply(new Revision(index), Mutation.delete(key));
                 yield applied(new PartDbCommandResult.DeleteApplied(index));
+            }
+            case PartDbCommand.BatchWrite(var batch) -> {
+                for (WriteBatchOperation operation : batch.operations()) {
+                    if (operation instanceof WriteBatchOperation.Put put
+                        && put.leaseId().isPresent()
+                        && !leaseRegistry.isLeaseActive(put.leaseId().orElseThrow().value())) {
+                        yield rejected(new PartDbCommandResult.LeaseNotFound(put.leaseId().orElseThrow().value()));
+                    }
+                }
+
+                WriteBatch.Builder storageBatch = WriteBatch.builder();
+                var attachments = new ArrayList<LeaseAttachment>(batch.operations().size());
+
+                for (WriteBatchOperation operation : batch.operations()) {
+                    detachKeyFromLease(operation.key());
+                    switch (operation) {
+                        case WriteBatchOperation.Put(var key, var value, var leaseId) -> {
+                            long storedLeaseId = leaseId.map(LeaseId::value).orElse(0L);
+                            StoredValue stored = new StoredValue(value.toByteArray(), storedLeaseId);
+                            storageBatch.put(key, Bytes.copyOf(stored.encode()));
+                            if (storedLeaseId != 0) {
+                                attachments.add(new LeaseAttachment(storedLeaseId, key));
+                            }
+                        }
+                        case WriteBatchOperation.Delete(var key) -> storageBatch.delete(key);
+                    }
+                }
+
+                store.apply(new Revision(index), storageBatch.build());
+                for (LeaseAttachment attachment : attachments) {
+                    leaseRegistry.attachKey(attachment.leaseId(), attachment.key());
+                }
+
+                yield applied(new PartDbCommandResult.BatchWriteApplied(index));
             }
             case PartDbCommand.GrantLease(long ttlNanos) -> {
                 leaseRegistry.grant(index, ttlNanos);
@@ -190,6 +227,8 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
     public record KvEntry(Bytes key, Bytes value, long version, long leaseId) {}
 
     public record LocalValue(Bytes value, long modRevision, long leaseId) {}
+
+    private record LeaseAttachment(long leaseId, Bytes key) {}
 
     @Override
     public Bytes snapshot() {

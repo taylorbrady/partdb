@@ -4,6 +4,7 @@ import io.partdb.bytes.Bytes;
 import io.partdb.node.cluster.NodeRole;
 import io.partdb.node.lease.LeaseGrant;
 import io.partdb.node.lease.LeaseId;
+import io.partdb.node.kv.WriteBatch;
 import io.partdb.node.replication.ReplicationRpc;
 import io.partdb.node.replication.ReplicationTransport;
 import org.junit.jupiter.api.Test;
@@ -146,6 +147,59 @@ class PartDbNodeTest {
                 bytes("plain-value"),
                 node.keyValues().get(bytes("key")).toCompletableFuture().get(5, TimeUnit.SECONDS).orElseThrow().value()
             );
+        }
+    }
+
+    @Test
+    void writeBatchAppliesAllWritesAtSingleRevision() throws Exception {
+        var config = PartDbNodeConfig.builder("node-1", tempDir.resolve("node-1"))
+            .tickInterval(Duration.ofMillis(1))
+            .build();
+
+        try (var node = PartDbNode.open(config, new NoOpReplicationTransport())) {
+            awaitLeader(node);
+
+            long revision = node.keyValues()
+                .writeBatch(WriteBatch.builder()
+                    .put(bytes("key-1"), bytes("value-1"))
+                    .put(bytes("key-2"), bytes("value-2"))
+                    .build())
+                .toCompletableFuture()
+                .get(5, TimeUnit.SECONDS)
+                .modRevision();
+
+            assertEquals(revision, node.keyValues().get(bytes("key-1")).toCompletableFuture().get(5, TimeUnit.SECONDS)
+                .orElseThrow()
+                .modRevision());
+            assertEquals(revision, node.keyValues().get(bytes("key-2")).toCompletableFuture().get(5, TimeUnit.SECONDS)
+                .orElseThrow()
+                .modRevision());
+        }
+    }
+
+    @Test
+    void writeBatchRejectsMissingLeaseAtomically() throws Exception {
+        var config = PartDbNodeConfig.builder("node-1", tempDir.resolve("node-1"))
+            .tickInterval(Duration.ofMillis(1))
+            .build();
+
+        try (var node = PartDbNode.open(config, new NoOpReplicationTransport())) {
+            awaitLeader(node);
+
+            var error = assertThrows(
+                ExecutionException.class,
+                () -> node.keyValues()
+                    .writeBatch(WriteBatch.builder()
+                        .put(bytes("key-1"), bytes("value-1"))
+                        .put(bytes("key-2"), bytes("value-2"), LeaseId.of(42))
+                        .build())
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS)
+            );
+
+            assertEquals(42, assertInstanceOf(PartDbException.LeaseNotFound.class, error.getCause()).leaseId());
+            assertTrue(node.keyValues().getLocal(bytes("key-1")).isEmpty());
+            assertTrue(node.keyValues().getLocal(bytes("key-2")).isEmpty());
         }
     }
 

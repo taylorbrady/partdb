@@ -35,6 +35,7 @@ import io.partdb.node.kv.KeyValueEntry;
 import io.partdb.node.kv.PutResult;
 import io.partdb.node.kv.ScanCursor;
 import io.partdb.node.kv.VersionedValue;
+import io.partdb.node.kv.WriteBatch;
 import io.partdb.node.lease.LeaseId;
 
 import java.time.Duration;
@@ -224,47 +225,24 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     @Override
     public void batchWrite(BatchWriteRequest request, StreamObserver<BatchWriteResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
-
-        List<CompletableFuture<Long>> futures = new ArrayList<>();
-
-        for (KvProto.WriteOp writeOp : request.getOpsList()) {
-            CompletableFuture<Long> opFuture = switch (writeOp.getOpCase()) {
-                case PUT -> {
-                    KvProto.PutOp put = writeOp.getPut();
-                    yield put.getLeaseId() == 0
-                        ? node.keyValues().put(toBytes(put.getKey()), toBytes(put.getValue()))
-                            .thenApply(PutResult::modRevision)
-                            .toCompletableFuture()
-                        : node.keyValues().put(
-                            toBytes(put.getKey()),
-                            toBytes(put.getValue()),
-                            LeaseId.of(put.getLeaseId())
-                        ).thenApply(PutResult::modRevision).toCompletableFuture();
-                }
-                case DELETE -> {
-                    KvProto.DeleteOp del = writeOp.getDelete();
-                    yield node.keyValues().delete(toBytes(del.getKey()))
-                        .thenApply(result -> result.modRevision())
-                        .toCompletableFuture();
-                }
-                case OP_NOT_SET -> CompletableFuture.failedFuture(
-                    new IllegalArgumentException("WriteOp type not set"));
-            };
-            futures.add(opFuture);
+        CompletableFuture<Long> future;
+        try {
+            future = node.keyValues()
+                .writeBatch(toWriteBatch(request))
+                .thenApply(result -> result.modRevision())
+                .toCompletableFuture();
+        } catch (RuntimeException e) {
+            future = CompletableFuture.failedFuture(e);
         }
 
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+        future
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((_, ex) -> {
+            .whenComplete((revision, ex) -> {
                 if (ex != null) {
                     responseObserver.onNext(BatchWriteResponse.newBuilder()
                         .setError(toProtoError(ex))
                         .build());
                 } else {
-                    long revision = futures.stream()
-                        .map(CompletableFuture::join)
-                        .max(Long::compare)
-                        .orElse(0L);
                     responseObserver.onNext(BatchWriteResponse.newBuilder()
                         .setError(okError())
                         .setRevision(revision)
@@ -409,6 +387,25 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
             ? Optional.empty()
             : Optional.of(toBytes(request.getEndKey()));
         return new KeyRange(startKey, endKey);
+    }
+
+    private static WriteBatch toWriteBatch(BatchWriteRequest request) {
+        var builder = WriteBatch.builder();
+        for (KvProto.WriteOp writeOp : request.getOpsList()) {
+            switch (writeOp.getOpCase()) {
+                case PUT -> {
+                    KvProto.PutOp put = writeOp.getPut();
+                    if (put.getLeaseId() == 0) {
+                        builder.put(toBytes(put.getKey()), toBytes(put.getValue()));
+                    } else {
+                        builder.put(toBytes(put.getKey()), toBytes(put.getValue()), LeaseId.of(put.getLeaseId()));
+                    }
+                }
+                case DELETE -> builder.delete(toBytes(writeOp.getDelete().getKey()));
+                case OP_NOT_SET -> throw new IllegalArgumentException("WriteOp type not set");
+            }
+        }
+        return builder.build();
     }
 
     private CompletableFuture<List<KeyValue>> readBatchLinearizable(BatchGetRequest request) {

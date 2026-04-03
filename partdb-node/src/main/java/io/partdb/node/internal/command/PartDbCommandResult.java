@@ -7,6 +7,7 @@ public sealed interface PartDbCommandResult
     sealed interface AppliedCommandResult extends PartDbCommandResult
         permits PartDbCommandResult.PutApplied,
                 PartDbCommandResult.DeleteApplied,
+                PartDbCommandResult.BatchWriteApplied,
                 PartDbCommandResult.LeaseGranted,
                 PartDbCommandResult.LeaseKeptAlive,
                 PartDbCommandResult.LeaseRevoked {
@@ -26,6 +27,14 @@ public sealed interface PartDbCommandResult
 
     record DeleteApplied(long modRevision) implements AppliedCommandResult {
         public DeleteApplied {
+            if (modRevision <= 0) {
+                throw new IllegalArgumentException("modRevision must be positive");
+            }
+        }
+    }
+
+    record BatchWriteApplied(long modRevision) implements AppliedCommandResult {
+        public BatchWriteApplied {
             if (modRevision <= 0) {
                 throw new IllegalArgumentException("modRevision must be positive");
             }

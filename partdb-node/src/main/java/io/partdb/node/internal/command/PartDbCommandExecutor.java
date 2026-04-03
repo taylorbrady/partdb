@@ -1,29 +1,21 @@
 package io.partdb.node.internal.command;
 
-import io.partdb.bytes.Bytes;
 import io.partdb.consensus.CommitResult;
 import io.partdb.consensus.ConsensusNode;
 
 import java.util.concurrent.CompletableFuture;
 
-public final class CommandProposer {
+public final class PartDbCommandExecutor {
     private final ConsensusNode consensus;
 
-    public CommandProposer(ConsensusNode consensus) {
+    public PartDbCommandExecutor(ConsensusNode consensus) {
         this.consensus = consensus;
     }
 
-    public CompletableFuture<PartDbCommandResult> put(Bytes key, Bytes value, long leaseId) {
-        return propose(new PartDbCommand.Put(key, value, leaseId));
-    }
-
-    public CompletableFuture<PartDbCommandResult> delete(Bytes key) {
-        return propose(new PartDbCommand.Delete(key));
-    }
-
-    public CompletableFuture<PartDbCommandResult> propose(PartDbCommand command) {
-        return consensus.commit(PartDbCommandCodec.encode(command))
-            .thenApply(CommandProposer::decode);
+    public <R> CompletableFuture<R> execute(ReplicatedCommand<R> command) {
+        return consensus.commit(PartDbCommandCodec.encode(command.payload()))
+            .thenApply(PartDbCommandExecutor::decode)
+            .thenApply(command::mapResult);
     }
 
     private static PartDbCommandResult decode(CommitResult result) {

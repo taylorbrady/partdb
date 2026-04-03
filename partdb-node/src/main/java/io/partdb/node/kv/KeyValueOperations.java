@@ -30,4 +30,6 @@ public interface KeyValueOperations {
     }
 
     CompletionStage<DeleteResult> delete(Bytes key);
+
+    CompletionStage<WriteBatchResult> writeBatch(WriteBatch batch);
 }

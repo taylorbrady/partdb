@@ -3,12 +3,13 @@ package io.partdb.node;
 import io.partdb.bytes.Bytes;
 import io.partdb.consensus.ConsensusException;
 import io.partdb.consensus.ConsensusNode;
+import io.partdb.consensus.ConsensusRole;
 import io.partdb.node.cluster.ClusterMembership;
 import io.partdb.node.cluster.ClusterView;
 import io.partdb.node.cluster.NodeRole;
 import io.partdb.node.cluster.NodeStatus;
-import io.partdb.node.internal.command.CommandProposer;
-import io.partdb.node.internal.command.PartDbCommandResult;
+import io.partdb.node.internal.command.PartDbCommands;
+import io.partdb.node.internal.command.PartDbCommandExecutor;
 import io.partdb.node.internal.replication.ConsensusTransportAdapter;
 import io.partdb.node.kv.DeleteResult;
 import io.partdb.node.kv.KeyRange;
@@ -19,6 +20,8 @@ import io.partdb.node.kv.PutResult;
 import io.partdb.node.kv.ReadConsistency;
 import io.partdb.node.kv.ScanCursor;
 import io.partdb.node.kv.VersionedValue;
+import io.partdb.node.kv.WriteBatch;
+import io.partdb.node.kv.WriteBatchResult;
 import io.partdb.node.lease.LeaseGrant;
 import io.partdb.node.lease.LeaseId;
 import io.partdb.node.lease.LeaseKeepAliveResult;
@@ -51,7 +54,7 @@ public final class PartDbNode implements AutoCloseable {
 
     private final PartDbStateMachine stateMachine;
     private final ConsensusNode consensus;
-    private final CommandProposer proposer;
+    private final PartDbCommandExecutor commandExecutor;
     private final LeaseService leaseService;
     private final AtomicLong proposalCount = new AtomicLong();
     private final AtomicLong proposalFailureCount = new AtomicLong();
@@ -77,8 +80,8 @@ public final class PartDbNode implements AutoCloseable {
             stateMachine
         );
 
-        this.proposer = new CommandProposer(consensus);
-        this.leaseService = new LeaseService(consensus, proposer, stateMachine.leaseRegistry());
+        this.commandExecutor = new PartDbCommandExecutor(consensus);
+        this.leaseService = new LeaseService(consensus, commandExecutor, stateMachine.leaseRegistry());
     }
 
     public static PartDbNode open(PartDbNodeConfig config) {
@@ -171,16 +174,22 @@ public final class PartDbNode implements AutoCloseable {
         @Override
         public CompletionStage<PutResult> put(PutRequest request) {
             Objects.requireNonNull(request, "request must not be null");
-            CompletableFuture<PartDbCommandResult> proposal = request.leaseId().isPresent()
-                ? proposer.put(request.key(), request.value(), request.leaseId().orElseThrow().value())
-                : proposer.put(request.key(), request.value(), 0);
-            return mapFailure(trackProposal(proposal).thenApply(PartDbNode::toPutResult));
+            CompletableFuture<PutResult> proposal = request.leaseId()
+                .map(leaseId -> commandExecutor.execute(PartDbCommands.put(request.key(), request.value(), leaseId)))
+                .orElseGet(() -> commandExecutor.execute(PartDbCommands.put(request.key(), request.value())));
+            return mapFailure(trackProposal(proposal));
         }
 
         @Override
         public CompletionStage<DeleteResult> delete(Bytes key) {
             Objects.requireNonNull(key, "key must not be null");
-            return mapFailure(trackProposal(proposer.delete(key)).thenApply(PartDbNode::toDeleteResult));
+            return mapFailure(trackProposal(commandExecutor.execute(PartDbCommands.delete(key))));
+        }
+
+        @Override
+        public CompletionStage<WriteBatchResult> writeBatch(WriteBatch batch) {
+            Objects.requireNonNull(batch, "batch must not be null");
+            return mapFailure(trackProposal(commandExecutor.execute(PartDbCommands.writeBatch(batch))));
         }
     }
 
@@ -191,22 +200,19 @@ public final class PartDbNode implements AutoCloseable {
             if (ttl.isZero() || ttl.isNegative()) {
                 throw new IllegalArgumentException("ttl must be positive");
             }
-            return mapFailure(trackProposal(leaseService.grant(ttl))
-                .thenApply(PartDbNode::toLeaseGrant));
+            return mapFailure(trackProposal(leaseService.grant(ttl)));
         }
 
         @Override
         public CompletionStage<LeaseKeepAliveResult> keepAlive(LeaseId leaseId) {
             Objects.requireNonNull(leaseId, "leaseId must not be null");
-            return mapFailure(trackProposal(leaseService.keepAlive(leaseId))
-                .thenApply(PartDbNode::toLeaseKeepAliveResult));
+            return mapFailure(trackProposal(leaseService.keepAlive(leaseId)));
         }
 
         @Override
         public CompletionStage<LeaseRevokeResult> revoke(LeaseId leaseId) {
             Objects.requireNonNull(leaseId, "leaseId must not be null");
-            return mapFailure(trackProposal(leaseService.revoke(leaseId))
-                .thenApply(PartDbNode::toLeaseRevokeResult));
+            return mapFailure(trackProposal(leaseService.revoke(leaseId)));
         }
     }
 
@@ -297,52 +303,7 @@ public final class PartDbNode implements AutoCloseable {
         );
     }
 
-    private static PutResult toPutResult(PartDbCommandResult result) {
-        return switch (result) {
-            case PartDbCommandResult.PutApplied(long modRevision) -> new PutResult(modRevision);
-            case PartDbCommandResult.LeaseNotFound(long leaseId) -> throw new PartDbException.LeaseNotFound(leaseId);
-            default -> throw unexpectedResult("put", result);
-        };
-    }
-
-    private static DeleteResult toDeleteResult(PartDbCommandResult result) {
-        return switch (result) {
-            case PartDbCommandResult.DeleteApplied(long modRevision) -> new DeleteResult(modRevision);
-            default -> throw unexpectedResult("delete", result);
-        };
-    }
-
-    private static LeaseGrant toLeaseGrant(PartDbCommandResult result) {
-        return switch (result) {
-            case PartDbCommandResult.LeaseGranted(long modRevision, long leaseId, long ttlNanos) ->
-                new LeaseGrant(LeaseId.of(leaseId), Duration.ofNanos(ttlNanos), modRevision);
-            default -> throw unexpectedResult("grantLease", result);
-        };
-    }
-
-    private static LeaseKeepAliveResult toLeaseKeepAliveResult(PartDbCommandResult result) {
-        return switch (result) {
-            case PartDbCommandResult.LeaseKeptAlive(long modRevision, long leaseId, long ttlNanos) ->
-                new LeaseKeepAliveResult(LeaseId.of(leaseId), Duration.ofNanos(ttlNanos), modRevision);
-            case PartDbCommandResult.LeaseNotFound(long leaseId) -> throw new PartDbException.LeaseNotFound(leaseId);
-            default -> throw unexpectedResult("keepAliveLease", result);
-        };
-    }
-
-    private static LeaseRevokeResult toLeaseRevokeResult(PartDbCommandResult result) {
-        return switch (result) {
-            case PartDbCommandResult.LeaseRevoked(long modRevision, long leaseId, long deletedKeyCount) ->
-                new LeaseRevokeResult(LeaseId.of(leaseId), modRevision, deletedKeyCount);
-            case PartDbCommandResult.LeaseNotFound(long leaseId) -> throw new PartDbException.LeaseNotFound(leaseId);
-            default -> throw unexpectedResult("revokeLease", result);
-        };
-    }
-
-    private static IllegalStateException unexpectedResult(String operation, PartDbCommandResult result) {
-        return new IllegalStateException("Unexpected command result for " + operation + ": " + result);
-    }
-
-    private static NodeRole toNodeRole(io.partdb.consensus.ConsensusRole role) {
+    private static NodeRole toNodeRole(ConsensusRole role) {
         return switch (role) {
             case FOLLOWER -> NodeRole.FOLLOWER;
             case PRE_CANDIDATE -> NodeRole.PRE_CANDIDATE;
