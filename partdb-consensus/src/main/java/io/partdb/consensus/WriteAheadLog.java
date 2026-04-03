@@ -1,8 +1,7 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.LogEntry;
-import io.partdb.storage.StorageException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-public final class WriteAheadLog implements AutoCloseable {
+final class WriteAheadLog implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(WriteAheadLog.class);
     private static final long DEFAULT_SEGMENT_SIZE = 64 * 1024 * 1024;
@@ -51,7 +50,7 @@ public final class WriteAheadLog implements AutoCloseable {
         try {
             Files.createDirectories(directory);
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to create WAL directory: " + directory, e);
+            throw new ConsensusStorageException.IO("Failed to create WAL directory: " + directory, e);
         }
 
         WriteAheadLog wal = new WriteAheadLog(directory, segmentSize);
@@ -94,7 +93,7 @@ public final class WriteAheadLog implements AutoCloseable {
 
     public List<LogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
         if (fromIndex < firstIndex) {
-            throw new RaftException.Compaction(fromIndex, firstIndex);
+            throw new ConsensusException.Compaction(fromIndex, firstIndex);
         }
         List<LogEntry> result = new ArrayList<>();
         long bytes = 0;
@@ -121,7 +120,7 @@ public final class WriteAheadLog implements AutoCloseable {
 
     public long term(long idx) {
         if (idx > 0 && idx < firstIndex) {
-            throw new RaftException.Compaction(idx, firstIndex);
+            throw new ConsensusException.Compaction(idx, firstIndex);
         }
         EntryLocation loc = index.get(idx);
         if (loc == null) {
@@ -166,7 +165,7 @@ public final class WriteAheadLog implements AutoCloseable {
                 segment.close();
                 Files.deleteIfExists(segment.path());
             } catch (IOException e) {
-                throw new StorageException.IO("Failed to delete WAL segment: " + segment.path(), e);
+                throw new ConsensusStorageException.IO("Failed to delete WAL segment: " + segment.path(), e);
             }
 
             for (long i = segment.firstIndex(); i <= segment.lastIndex(); i++) {
@@ -245,7 +244,7 @@ public final class WriteAheadLog implements AutoCloseable {
 
         switch (result) {
             case SegmentScanner.ScanResult.Incomplete incomplete ->
-                    throw new StorageException.Corruption(
+                    throw new ConsensusStorageException.Corruption(
                             "Sealed segment " + path + " is corrupt: " + incomplete.reason() +
                             " at offset " + incomplete.problemOffset());
             case SegmentScanner.ScanResult.Complete _ -> {}
@@ -303,7 +302,7 @@ public final class WriteAheadLog implements AutoCloseable {
                     .sorted(Comparator.comparing(p -> p.getFileName().toString()))
                     .toList();
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to list WAL segment files in: " + directory, e);
+            throw new ConsensusStorageException.IO("Failed to list WAL segment files in: " + directory, e);
         }
     }
 

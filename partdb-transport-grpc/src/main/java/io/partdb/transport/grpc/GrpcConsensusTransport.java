@@ -13,8 +13,8 @@ import io.grpc.Server;
 import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
-import io.partdb.node.transport.ConsensusMessage;
-import io.partdb.node.transport.ConsensusTransport;
+import io.partdb.consensus.transport.ConsensusRpc;
+import io.partdb.consensus.transport.ConsensusTransport;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 import io.partdb.transport.grpc.raft.proto.RaftServiceGrpc;
 import org.slf4j.Logger;
@@ -61,7 +61,7 @@ final class GrpcConsensusTransport implements ConsensusTransport {
     }
 
     @Override
-    public CompletableFuture<ConsensusMessage.Response> send(String to, ConsensusMessage.Request request) {
+    public CompletableFuture<ConsensusRpc.Response> send(String to, ConsensusRpc.Request request) {
         var stub = getOrCreateStub(to);
         if (stub == null) {
             return CompletableFuture.failedFuture(
@@ -70,11 +70,11 @@ final class GrpcConsensusTransport implements ConsensusTransport {
         }
 
         return switch (request) {
-            case ConsensusMessage.RequestVote msg -> sendRequestVote(stub, msg);
-            case ConsensusMessage.PreVote msg -> sendPreVote(stub, msg);
-            case ConsensusMessage.AppendEntries msg -> sendAppendEntries(stub, msg);
-            case ConsensusMessage.InstallSnapshot msg -> sendInstallSnapshot(stub, msg);
-            case ConsensusMessage.ReadIndex msg -> sendReadIndex(stub, msg);
+            case ConsensusRpc.RequestVote msg -> sendRequestVote(stub, msg);
+            case ConsensusRpc.PreVote msg -> sendPreVote(stub, msg);
+            case ConsensusRpc.AppendEntries msg -> sendAppendEntries(stub, msg);
+            case ConsensusRpc.InstallSnapshot msg -> sendInstallSnapshot(stub, msg);
+            case ConsensusRpc.ReadIndex msg -> sendReadIndex(stub, msg);
         };
     }
 
@@ -150,10 +150,10 @@ final class GrpcConsensusTransport implements ConsensusTransport {
         });
     }
 
-    private CompletableFuture<ConsensusMessage.Response> sendRequestVote(
+    private CompletableFuture<ConsensusRpc.Response> sendRequestVote(
             RaftServiceGrpc.RaftServiceStub stub,
-            ConsensusMessage.RequestVote msg) {
-        var future = new CompletableFuture<ConsensusMessage.Response>();
+            ConsensusRpc.RequestVote msg) {
+        var future = new CompletableFuture<ConsensusRpc.Response>();
         stub.requestVote(ConsensusProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.RequestVoteResponse response) {
@@ -171,10 +171,10 @@ final class GrpcConsensusTransport implements ConsensusTransport {
         return future;
     }
 
-    private CompletableFuture<ConsensusMessage.Response> sendPreVote(
+    private CompletableFuture<ConsensusRpc.Response> sendPreVote(
             RaftServiceGrpc.RaftServiceStub stub,
-            ConsensusMessage.PreVote msg) {
-        var future = new CompletableFuture<ConsensusMessage.Response>();
+            ConsensusRpc.PreVote msg) {
+        var future = new CompletableFuture<ConsensusRpc.Response>();
         stub.preVote(ConsensusProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.PreVoteResponse response) {
@@ -192,10 +192,10 @@ final class GrpcConsensusTransport implements ConsensusTransport {
         return future;
     }
 
-    private CompletableFuture<ConsensusMessage.Response> sendAppendEntries(
+    private CompletableFuture<ConsensusRpc.Response> sendAppendEntries(
             RaftServiceGrpc.RaftServiceStub stub,
-            ConsensusMessage.AppendEntries msg) {
-        var future = new CompletableFuture<ConsensusMessage.Response>();
+            ConsensusRpc.AppendEntries msg) {
+        var future = new CompletableFuture<ConsensusRpc.Response>();
         stub.appendEntries(ConsensusProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.AppendEntriesResponse response) {
@@ -213,10 +213,10 @@ final class GrpcConsensusTransport implements ConsensusTransport {
         return future;
     }
 
-    private CompletableFuture<ConsensusMessage.Response> sendInstallSnapshot(
+    private CompletableFuture<ConsensusRpc.Response> sendInstallSnapshot(
             RaftServiceGrpc.RaftServiceStub stub,
-            ConsensusMessage.InstallSnapshot msg) {
-        var future = new CompletableFuture<ConsensusMessage.Response>();
+            ConsensusRpc.InstallSnapshot msg) {
+        var future = new CompletableFuture<ConsensusRpc.Response>();
 
         var responseObserver = new StreamObserver<RaftProto.InstallSnapshotResponse>() {
             @Override
@@ -260,10 +260,10 @@ final class GrpcConsensusTransport implements ConsensusTransport {
         return future;
     }
 
-    private CompletableFuture<ConsensusMessage.Response> sendReadIndex(
+    private CompletableFuture<ConsensusRpc.Response> sendReadIndex(
             RaftServiceGrpc.RaftServiceStub stub,
-            ConsensusMessage.ReadIndex msg) {
-        var future = new CompletableFuture<ConsensusMessage.Response>();
+            ConsensusRpc.ReadIndex msg) {
+        var future = new CompletableFuture<ConsensusRpc.Response>();
         stub.readIndex(ConsensusProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.ReadIndexResponse response) {

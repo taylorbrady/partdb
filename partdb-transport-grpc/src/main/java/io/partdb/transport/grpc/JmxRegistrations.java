@@ -105,7 +105,7 @@ final class JmxRegistrations implements AutoCloseable {
 
         @Override
         public long getAppliedIndex() {
-            return node.status().lastAppliedIndex();
+            return node.status().appliedIndex();
         }
 
         @Override

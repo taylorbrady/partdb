@@ -1,4 +1,4 @@
-package io.partdb.node;
+package io.partdb.consensus;
 
 import io.partdb.raft.RaftMembership;
 
@@ -6,11 +6,11 @@ import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 
-public record NodeMembership(
+public record ClusterMembership(
     Set<String> voters,
     Set<String> learners
 ) {
-    public NodeMembership {
+    public ClusterMembership {
         voters = normalizeIds(voters, "voters");
         learners = normalizeIds(learners, "learners");
         if (voters.isEmpty()) {
@@ -21,9 +21,9 @@ public record NodeMembership(
         }
     }
 
-    public static NodeMembership ofVoters(String... voters) {
+    public static ClusterMembership ofVoters(String... voters) {
         Objects.requireNonNull(voters, "voters must not be null");
-        return new NodeMembership(Set.of(voters), Set.of());
+        return new ClusterMembership(Set.of(voters), Set.of());
     }
 
     public boolean isVoter(String nodeId) {
@@ -45,18 +45,18 @@ public record NodeMembership(
         return Set.copyOf(members);
     }
 
-    public NodeMembership addLearner(String nodeId) {
+    public ClusterMembership addLearner(String nodeId) {
         requireNonBlank(nodeId, "nodeId");
         if (isMember(nodeId)) {
             throw new IllegalArgumentException("Node already a member: " + nodeId);
         }
         var updatedLearners = new LinkedHashSet<>(learners);
         updatedLearners.add(nodeId);
-        return new NodeMembership(voters, updatedLearners);
+        return new ClusterMembership(voters, updatedLearners);
     }
 
-    static NodeMembership fromRaftMembership(RaftMembership membership) {
-        return new NodeMembership(membership.voters(), membership.learners());
+    static ClusterMembership fromRaftMembership(RaftMembership membership) {
+        return new ClusterMembership(membership.voters(), membership.learners());
     }
 
     RaftMembership toRaftMembership() {

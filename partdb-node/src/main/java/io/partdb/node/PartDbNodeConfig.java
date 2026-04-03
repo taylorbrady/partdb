@@ -1,72 +1,47 @@
 package io.partdb.node;
 
-import io.partdb.raft.RaftConfig;
-import io.partdb.raft.RaftMembership;
+import io.partdb.consensus.ClusterMembership;
+import io.partdb.consensus.ConsensusConfig;
 import io.partdb.storage.StorageOptions;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 
 public final class PartDbNodeConfig {
-    private static final Duration DEFAULT_TICK_INTERVAL = Duration.ofMillis(10);
-
-    private final String nodeId;
-    private final NodeMembership membership;
     private final Path dataDirectory;
     private final StorageOptions storageOptions;
-    private final RaftConfig raftConfig;
-    private final Duration tickInterval;
+    private final ConsensusConfig consensusConfig;
 
     private PartDbNodeConfig(Builder builder) {
-        this.nodeId = requireNonBlank(builder.nodeId, "nodeId");
         this.dataDirectory = Objects.requireNonNull(builder.dataDirectory, "dataDirectory must not be null");
         this.storageOptions = Objects.requireNonNull(builder.storageOptions, "storageOptions must not be null");
-        this.raftConfig = Objects.requireNonNull(builder.raftConfig, "raftConfig must not be null");
-        this.tickInterval = Objects.requireNonNull(builder.tickInterval, "tickInterval must not be null");
-        if (tickInterval.isNegative() || tickInterval.isZero()) {
-            throw new IllegalArgumentException("tickInterval must be positive");
-        }
-        this.membership = builder.membership != null
-            ? Objects.requireNonNull(builder.membership, "membership must not be null")
-            : NodeMembership.ofVoters(nodeId);
-        if (!membership.isMember(nodeId)) {
-            throw new IllegalArgumentException("membership must include nodeId");
-        }
+        this.consensusConfig = builder.consensusConfigBuilder.build();
     }
 
     public String nodeId() {
-        return nodeId;
+        return consensusConfig.nodeId();
     }
 
-    public NodeMembership membership() {
-        return membership;
+    public ClusterMembership membership() {
+        return consensusConfig.membership();
     }
 
     public Set<String> memberIds() {
-        return membership.memberIds();
+        return consensusConfig.membership().memberIds();
     }
 
-    Path dataDirectory() {
+    public Path dataDirectory() {
         return dataDirectory;
     }
 
-    StorageOptions storageOptions() {
+    public StorageOptions storageOptions() {
         return storageOptions;
     }
 
-    RaftConfig raftConfig() {
-        return raftConfig;
-    }
-
-    RaftMembership raftMembership() {
-        return membership.toRaftMembership();
-    }
-
-    Duration tickInterval() {
-        return tickInterval;
+    public ConsensusConfig consensusConfig() {
+        return consensusConfig;
     }
 
     public static Builder builder(String nodeId, Path dataDirectory) {
@@ -81,77 +56,88 @@ public final class PartDbNodeConfig {
         if (!(obj instanceof PartDbNodeConfig other)) {
             return false;
         }
-        return nodeId.equals(other.nodeId)
-            && membership.equals(other.membership)
+        return consensusConfig.equals(other.consensusConfig)
             && dataDirectory.equals(other.dataDirectory)
-            && storageOptions.equals(other.storageOptions)
-            && raftConfig.equals(other.raftConfig)
-            && tickInterval.equals(other.tickInterval);
+            && storageOptions.equals(other.storageOptions);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(nodeId, membership, dataDirectory, storageOptions, raftConfig, tickInterval);
+        return Objects.hash(nodeId(), consensusConfig, dataDirectory, storageOptions);
     }
 
     @Override
     public String toString() {
         return "PartDbNodeConfig{"
-            + "nodeId='" + nodeId + '\''
-            + ", membership=" + membership
+            + "nodeId='" + nodeId() + '\''
+            + ", membership=" + membership()
             + ", dataDirectory=" + dataDirectory
             + ", storageOptions=" + storageOptions
-            + ", raftConfig=" + raftConfig
-            + ", tickInterval=" + tickInterval
+            + ", consensusConfig=" + consensusConfig
             + '}';
     }
 
     public static final class Builder {
         private final String nodeId;
         private final Path dataDirectory;
-        private NodeMembership membership;
         private StorageOptions storageOptions = StorageOptions.defaults();
-        private RaftConfig raftConfig = RaftConfig.defaults();
-        private Duration tickInterval = DEFAULT_TICK_INTERVAL;
+        private final ConsensusConfig.Builder consensusConfigBuilder;
+        private ClusterMembership membership;
 
         private Builder(String nodeId, Path dataDirectory) {
             this.nodeId = nodeId;
             this.dataDirectory = dataDirectory;
+            this.consensusConfigBuilder = ConsensusConfig.builder(nodeId);
+            this.membership = ClusterMembership.ofVoters(nodeId);
         }
 
         public Builder voters(String... voterIds) {
-            var learners = membership != null ? membership.learners() : Set.<String>of();
-            this.membership = new NodeMembership(toIdSet(voterIds, "voterIds"), learners);
+            membership = new ClusterMembership(toIdSet(voterIds, "voterIds"), membership.learners());
             return this;
         }
 
         public Builder learners(String... learnerIds) {
-            var voters = membership != null ? membership.voters() : Set.of(nodeId);
-            this.membership = new NodeMembership(voters, toIdSet(learnerIds, "learnerIds"));
+            membership = new ClusterMembership(membership.voters(), toIdSet(learnerIds, "learnerIds"));
             return this;
         }
 
-        public Builder membership(NodeMembership membership) {
+        public Builder membership(ClusterMembership membership) {
             this.membership = Objects.requireNonNull(membership, "membership must not be null");
             return this;
         }
 
-        Builder storageOptions(StorageOptions storageOptions) {
+        public Builder storageOptions(StorageOptions storageOptions) {
             this.storageOptions = Objects.requireNonNull(storageOptions, "storageOptions must not be null");
             return this;
         }
 
-        Builder raftConfig(RaftConfig raftConfig) {
-            this.raftConfig = Objects.requireNonNull(raftConfig, "raftConfig must not be null");
+        public Builder tickInterval(java.time.Duration tickInterval) {
+            consensusConfigBuilder.tickInterval(tickInterval);
             return this;
         }
 
-        public Builder tickInterval(Duration tickInterval) {
-            this.tickInterval = Objects.requireNonNull(tickInterval, "tickInterval must not be null");
+        public Builder electionTimeoutMinTicks(int ticks) {
+            consensusConfigBuilder.electionTimeoutMinTicks(ticks);
+            return this;
+        }
+
+        public Builder electionTimeoutMaxTicks(int ticks) {
+            consensusConfigBuilder.electionTimeoutMaxTicks(ticks);
+            return this;
+        }
+
+        public Builder heartbeatIntervalTicks(int ticks) {
+            consensusConfigBuilder.heartbeatIntervalTicks(ticks);
+            return this;
+        }
+
+        public Builder maxEntriesPerAppend(int count) {
+            consensusConfigBuilder.maxEntriesPerAppend(count);
             return this;
         }
 
         public PartDbNodeConfig build() {
+            consensusConfigBuilder.membership(membership);
             return new PartDbNodeConfig(this);
         }
     }

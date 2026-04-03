@@ -1,8 +1,8 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import java.nio.file.Path;
 
-public sealed interface LogSegment extends AutoCloseable permits ActiveSegment, SealedSegment {
+sealed interface LogSegment extends AutoCloseable permits ActiveSegment, SealedSegment {
 
     int RECORD_HEADER_SIZE = 9;
 

@@ -1,6 +1,7 @@
 package io.partdb.node;
 
-import io.partdb.raft.RaftConfig;
+import io.partdb.consensus.ClusterMembership;
+import io.partdb.consensus.ConsensusConfig;
 import io.partdb.storage.StorageOptions;
 import org.junit.jupiter.api.Test;
 
@@ -20,28 +21,32 @@ class PartDbNodeConfigTest {
 
         assertEquals("node1", config.nodeId());
         assertEquals(Path.of("data/node1"), config.dataDirectory());
-        assertEquals(NodeMembership.ofVoters("node1"), config.membership());
+        assertEquals(ClusterMembership.ofVoters("node1"), config.membership());
         assertEquals(Set.of("node1"), config.memberIds());
         assertEquals(StorageOptions.defaults(), config.storageOptions());
-        assertEquals(RaftConfig.defaults(), config.raftConfig());
-        assertEquals(Duration.ofMillis(10), config.tickInterval());
+        assertEquals(ConsensusConfig.builder("node1").build(), config.consensusConfig());
     }
 
     @Test
     void builderSupportsAdvancedOverrides() {
         var storageOptions = StorageOptions.defaults();
-        var raftConfig = new RaftConfig(20, 40, 5, 250);
         var config = PartDbNodeConfig.builder("node2", Path.of("data/node2"))
             .voters("node1", "node2")
             .tickInterval(Duration.ofMillis(25))
             .storageOptions(storageOptions)
-            .raftConfig(raftConfig)
+            .electionTimeoutMinTicks(20)
+            .electionTimeoutMaxTicks(40)
+            .heartbeatIntervalTicks(5)
+            .maxEntriesPerAppend(250)
             .build();
 
         assertEquals(Set.of("node1", "node2"), config.memberIds());
         assertEquals(storageOptions, config.storageOptions());
-        assertEquals(raftConfig, config.raftConfig());
-        assertEquals(Duration.ofMillis(25), config.tickInterval());
+        assertEquals(Duration.ofMillis(25), config.consensusConfig().tickInterval());
+        assertEquals(20, config.consensusConfig().electionTimeoutMinTicks());
+        assertEquals(40, config.consensusConfig().electionTimeoutMaxTicks());
+        assertEquals(5, config.consensusConfig().heartbeatIntervalTicks());
+        assertEquals(250, config.consensusConfig().maxEntriesPerAppend());
     }
 
     @Test
@@ -57,7 +62,7 @@ class PartDbNodeConfigTest {
     @Test
     void builderSupportsAdvancedMembershipOverrides() {
         var config = PartDbNodeConfig.builder("node3", Path.of("data/node3"))
-            .membership(NodeMembership.ofVoters("node1", "node2").addLearner("node3"))
+            .membership(ClusterMembership.ofVoters("node1", "node2").addLearner("node3"))
             .build();
 
         assertEquals(Set.of("node1", "node2", "node3"), config.memberIds());

@@ -7,8 +7,8 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.stub.StreamObserver;
-import io.partdb.node.transport.ConsensusMessage;
-import io.partdb.node.transport.ConsensusTransport;
+import io.partdb.consensus.transport.ConsensusRpc;
+import io.partdb.consensus.transport.ConsensusTransport;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 import io.partdb.transport.grpc.raft.proto.RaftServiceGrpc;
 import org.slf4j.Logger;
@@ -53,7 +53,7 @@ final class ConsensusServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void requestVote(RaftProto.RequestVoteRequest request,
                             StreamObserver<RaftProto.RequestVoteResponse> responseObserver) {
         String from = getSenderId();
-        ConsensusMessage.RequestVote msg = ConsensusProtoConverters.fromProto(request);
+        ConsensusRpc.RequestVote msg = ConsensusProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -65,7 +65,7 @@ final class ConsensusServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                         .log("RPC failed");
                     responseObserver.onError(ex);
                 } else {
-                    var resp = (ConsensusMessage.RequestVoteResponse) response;
+                    var resp = (ConsensusRpc.RequestVoteResponse) response;
                     responseObserver.onNext(ConsensusProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }
@@ -76,7 +76,7 @@ final class ConsensusServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void preVote(RaftProto.PreVoteRequest request,
                         StreamObserver<RaftProto.PreVoteResponse> responseObserver) {
         String from = getSenderId();
-        ConsensusMessage.PreVote msg = ConsensusProtoConverters.fromProto(request);
+        ConsensusRpc.PreVote msg = ConsensusProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -88,7 +88,7 @@ final class ConsensusServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                         .log("RPC failed");
                     responseObserver.onError(ex);
                 } else {
-                    var resp = (ConsensusMessage.PreVoteResponse) response;
+                    var resp = (ConsensusRpc.PreVoteResponse) response;
                     responseObserver.onNext(ConsensusProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }
@@ -99,7 +99,7 @@ final class ConsensusServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void appendEntries(RaftProto.AppendEntriesRequest request,
                               StreamObserver<RaftProto.AppendEntriesResponse> responseObserver) {
         String from = getSenderId();
-        ConsensusMessage.AppendEntries msg = ConsensusProtoConverters.fromProto(request);
+        ConsensusRpc.AppendEntries msg = ConsensusProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -111,7 +111,7 @@ final class ConsensusServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                         .log("RPC failed");
                     responseObserver.onError(ex);
                 } else {
-                    var resp = (ConsensusMessage.AppendEntriesResponse) response;
+                    var resp = (ConsensusRpc.AppendEntriesResponse) response;
                     responseObserver.onNext(ConsensusProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }
@@ -157,7 +157,7 @@ final class ConsensusServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                     return;
                 }
 
-                ConsensusMessage.InstallSnapshot snapshot = ConsensusProtoConverters.fromSnapshotHeader(
+                ConsensusRpc.InstallSnapshot snapshot = ConsensusProtoConverters.fromSnapshotHeader(
                     header,
                     dataBuffer.toByteArray()
                 );
@@ -172,7 +172,7 @@ final class ConsensusServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                                 .log("RPC failed");
                             responseObserver.onError(ex);
                         } else {
-                            var resp = (ConsensusMessage.InstallSnapshotResponse) response;
+                            var resp = (ConsensusRpc.InstallSnapshotResponse) response;
                             responseObserver.onNext(ConsensusProtoConverters.toProto(resp));
                             responseObserver.onCompleted();
                         }
@@ -185,7 +185,7 @@ final class ConsensusServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void readIndex(RaftProto.ReadIndexRequest request,
                           StreamObserver<RaftProto.ReadIndexResponse> responseObserver) {
         String from = getSenderId();
-        ConsensusMessage.ReadIndex msg = ConsensusProtoConverters.fromProto(request);
+        ConsensusRpc.ReadIndex msg = ConsensusProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
@@ -197,7 +197,7 @@ final class ConsensusServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
                         .log("RPC failed");
                     responseObserver.onError(ex);
                 } else {
-                    var resp = (ConsensusMessage.ReadIndexResponse) response;
+                    var resp = (ConsensusRpc.ReadIndexResponse) response;
                     responseObserver.onNext(ConsensusProtoConverters.toProto(resp));
                     responseObserver.onCompleted();
                 }

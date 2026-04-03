@@ -1,4 +1,4 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.LogEntry;
@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-public final class DurableRaftStore implements RaftStore {
+final class DurableRaftStore implements RaftStore {
 
     private final WriteAheadLog wal;
     private final SnapshotStore snapshots;

@@ -1,10 +1,10 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import io.partdb.raft.RaftMessage;
 
 import java.util.concurrent.CompletableFuture;
 
-public interface RaftTransport extends AutoCloseable {
+interface RaftTransport extends AutoCloseable {
     void start(RpcHandler handler);
 
     CompletableFuture<RaftMessage.Response> send(String to, RaftMessage.Request request);

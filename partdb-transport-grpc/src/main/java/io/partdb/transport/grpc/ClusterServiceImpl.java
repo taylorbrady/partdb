@@ -8,11 +8,11 @@ import io.partdb.grpc.cluster.proto.ClusterProto.MemberListRequest;
 import io.partdb.grpc.cluster.proto.ClusterProto.MemberListResponse;
 import io.partdb.grpc.cluster.proto.ClusterProto.MemberRole;
 import io.partdb.grpc.cluster.proto.ClusterProto.NodeRole;
-import io.partdb.node.NodeMembership;
+import io.partdb.consensus.ClusterMembership;
 import io.partdb.grpc.cluster.proto.ClusterProto.StatusRequest;
 import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
 import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
-import io.partdb.node.NodeStatus;
+import io.partdb.consensus.ConsensusStatus;
 import io.partdb.node.PartDbNode;
 
 import java.util.Map;
@@ -31,7 +31,7 @@ final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase
 
     @Override
     public void status(StatusRequest request, StreamObserver<StatusResponse> responseObserver) {
-        NodeStatus status = node.status();
+        ConsensusStatus status = node.status();
         var response = StatusResponse.newBuilder()
             .setError(okError())
             .setNodeId(status.nodeId())
@@ -39,7 +39,7 @@ final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase
             .setTerm(status.term())
             .setLeaderId(status.leaderId().orElse(""))
             .setCommitIndex(status.commitIndex())
-            .setLastAppliedIndex(status.lastAppliedIndex())
+            .setLastAppliedIndex(status.appliedIndex())
             .setIsRunning(status.running())
             .build();
         responseObserver.onNext(response);
@@ -48,7 +48,7 @@ final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase
 
     @Override
     public void memberList(MemberListRequest request, StreamObserver<MemberListResponse> responseObserver) {
-        NodeMembership membership = node.membership();
+        ClusterMembership membership = node.membership();
         String leaderId = node.leaderId().orElse("");
         String selfId = node.nodeId();
 
@@ -80,7 +80,7 @@ final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase
             .build();
     }
 
-    private static NodeRole toProtoRole(io.partdb.node.NodeRole role) {
+    private static NodeRole toProtoRole(io.partdb.consensus.ConsensusRole role) {
         return switch (role) {
             case FOLLOWER -> NodeRole.FOLLOWER;
             case PRE_CANDIDATE -> NodeRole.PRE_CANDIDATE;

@@ -5,8 +5,8 @@ plugins {
 
 dependencies {
     api(project(":partdb-bytes"))
+    implementation(project(":partdb-consensus"))
     implementation(project(":partdb-storage"))
-    implementation(project(":partdb-raft"))
 
     val protobufVersion = "4.34.0"
 

@@ -1,19 +1,16 @@
 package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.consensus.ClusterMembership;
+import io.partdb.consensus.ConsensusNode;
+import io.partdb.consensus.ConsensusStatus;
+import io.partdb.consensus.transport.ConsensusTransport;
 import io.partdb.node.command.CommandProposer;
 import io.partdb.node.kv.KvStore;
 import io.partdb.node.lease.LeaseManager;
-import io.partdb.node.transport.ConsensusTransport;
-import io.partdb.node.raft.DurableRaftStore;
-import io.partdb.node.raft.RaftNode;
-import io.partdb.node.raft.RaftStore;
-import io.partdb.raft.RaftMembership;
 import io.partdb.storage.KeyRange;
 import io.partdb.storage.StorageStats;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -23,7 +20,7 @@ import java.util.stream.Stream;
 public final class PartDbNode implements AutoCloseable {
 
     private final KvStore kvStore;
-    private final RaftNode raftNode;
+    private final ConsensusNode consensus;
     private final CommandProposer proposer;
     private final LeaseManager leaseManager;
     private final AtomicLong proposalCount = new AtomicLong();
@@ -38,21 +35,15 @@ public final class PartDbNode implements AutoCloseable {
             config.storageOptions()
         );
 
-        var membership = config.raftMembership();
-        var raftStore = createDefaultRaftStore(config.dataDirectory(), membership);
+        this.consensus = ConsensusNode.open(
+            config.dataDirectory().resolve("consensus"),
+            config.consensusConfig(),
+            transport,
+            kvStore
+        );
 
-        this.raftNode = RaftNode.builder()
-            .nodeId(config.nodeId())
-            .membership(membership)
-            .config(config.raftConfig())
-            .transport(new ConsensusTransportAdapter(transport))
-            .store(raftStore)
-            .stateMachine(kvStore)
-            .tickInterval(config.tickInterval())
-            .build();
-
-        this.proposer = new CommandProposer(raftNode);
-        this.leaseManager = new LeaseManager(raftNode, proposer, kvStore.leaseRegistry());
+        this.proposer = new CommandProposer(consensus);
+        this.leaseManager = new LeaseManager(consensus, proposer, kvStore.leaseRegistry());
     }
 
     public Optional<Bytes> get(Bytes key) {
@@ -112,35 +103,27 @@ public final class PartDbNode implements AutoCloseable {
     }
 
     public CompletableFuture<Long> linearizableBarrier() {
-        return raftNode.linearizableBarrier();
+        return consensus.linearizableBarrier();
     }
 
-    public NodeMembership membership() {
-        return NodeMembership.fromRaftMembership(raftNode.membership());
+    public ClusterMembership membership() {
+        return consensus.membership();
     }
 
-    public NodeStatus status() {
-        return new NodeStatus(
-            raftNode.nodeId(),
-            NodeRole.fromRaftRole(raftNode.role()),
-            raftNode.currentTerm(),
-            raftNode.leaderId(),
-            raftNode.commitIndex(),
-            raftNode.lastAppliedIndex(),
-            raftNode.isRunning()
-        );
+    public ConsensusStatus status() {
+        return consensus.status();
     }
 
     public String nodeId() {
-        return raftNode.nodeId();
+        return consensus.status().nodeId();
     }
 
     public Optional<String> leaderId() {
-        return raftNode.leaderId();
+        return consensus.status().leaderId();
     }
 
     public long lastLeaderChangeEpochMillis() {
-        return raftNode.lastLeaderChangeEpochMillis();
+        return consensus.status().lastLeaderChangeEpochMillis();
     }
 
     public long proposalCount() {
@@ -206,16 +189,8 @@ public final class PartDbNode implements AutoCloseable {
     @Override
     public void close() {
         leaseManager.close();
-        raftNode.close();
+        consensus.close();
         kvStore.close();
-    }
-
-    private static RaftStore createDefaultRaftStore(Path dataDirectory, RaftMembership membership) {
-        Path raftDir = dataDirectory.resolve("raft");
-        if (Files.exists(raftDir.resolve("wal"))) {
-            return DurableRaftStore.open(raftDir);
-        }
-        return DurableRaftStore.create(raftDir, membership);
     }
 
     private CompletableFuture<Long> trackProposal(CompletableFuture<Long> future) {

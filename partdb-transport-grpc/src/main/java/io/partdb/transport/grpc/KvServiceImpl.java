@@ -30,7 +30,7 @@ import io.partdb.grpc.kv.proto.KvProto.ScanResponse;
 import io.partdb.grpc.kv.proto.KvServiceGrpc;
 import io.partdb.node.KeyValueEntry;
 import io.partdb.node.PartDbNode;
-import io.partdb.node.raft.RaftException;
+import io.partdb.consensus.ConsensusException;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -347,12 +347,12 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         Throwable cause = unwrap(ex);
 
         return switch (cause) {
-            case RaftException.NotLeader e -> Error.newBuilder()
+            case ConsensusException.NotLeader e -> Error.newBuilder()
                 .setCode(ErrorCode.NOT_LEADER)
                 .setMessage("Not the leader")
-                .setLeaderHint("")
+                .setLeaderHint(e.leaderId().orElse(""))
                 .build();
-            case RaftException.Shutdown _ -> Error.newBuilder()
+            case ConsensusException.Shutdown _ -> Error.newBuilder()
                 .setCode(ErrorCode.INTERNAL_ERROR)
                 .setMessage("Server shutting down")
                 .build();

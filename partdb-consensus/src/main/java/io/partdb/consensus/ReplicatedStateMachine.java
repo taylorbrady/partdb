@@ -1,8 +1,8 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import io.partdb.bytes.Bytes;
 
-public interface StateMachine {
+public interface ReplicatedStateMachine {
     void apply(long index, Bytes data);
 
     Bytes snapshot();

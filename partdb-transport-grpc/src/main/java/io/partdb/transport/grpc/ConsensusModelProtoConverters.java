@@ -2,8 +2,8 @@ package io.partdb.transport.grpc;
 
 import com.google.protobuf.ByteString;
 import io.partdb.bytes.Bytes;
-import io.partdb.node.NodeMembership;
-import io.partdb.node.transport.ConsensusLogEntry;
+import io.partdb.consensus.ClusterMembership;
+import io.partdb.consensus.transport.ConsensusLogEntry;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 
 import java.util.Set;
@@ -44,14 +44,14 @@ final class ConsensusModelProtoConverters {
         return builder.build();
     }
 
-    static NodeMembership fromProto(RaftProto.Membership proto) {
-        return new NodeMembership(
+    static ClusterMembership fromProto(RaftProto.Membership proto) {
+        return new ClusterMembership(
             Set.copyOf(proto.getVotersList()),
             Set.copyOf(proto.getLearnersList())
         );
     }
 
-    static RaftProto.Membership toProto(NodeMembership membership) {
+    static RaftProto.Membership toProto(ClusterMembership membership) {
         return RaftProto.Membership.newBuilder()
             .addAllVoters(membership.voters())
             .addAllLearners(membership.learners())

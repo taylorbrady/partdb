@@ -1,9 +1,9 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.LogEntry;
 
-public sealed interface LogRecord {
+sealed interface LogRecord {
 
     byte TYPE_ENTRY = 0;
     byte TYPE_STATE = 1;

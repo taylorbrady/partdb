@@ -1,4 +1,4 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.raft.RaftPersistentState;
@@ -11,7 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Set;
 
-public final class LogCodec {
+final class LogCodec {
 
     public static final ByteOrder BYTE_ORDER = ByteOrder.LITTLE_ENDIAN;
 

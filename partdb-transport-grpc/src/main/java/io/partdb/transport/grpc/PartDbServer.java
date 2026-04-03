@@ -1,7 +1,7 @@
 package io.partdb.transport.grpc;
 
 import io.partdb.node.PartDbNode;
-import io.partdb.node.transport.ConsensusTransport;
+import io.partdb.consensus.transport.ConsensusTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

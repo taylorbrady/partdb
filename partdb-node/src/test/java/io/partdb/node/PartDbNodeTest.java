@@ -1,8 +1,9 @@
 package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.transport.ConsensusMessage;
-import io.partdb.node.transport.ConsensusTransport;
+import io.partdb.consensus.ConsensusRole;
+import io.partdb.consensus.transport.ConsensusRpc;
+import io.partdb.consensus.transport.ConsensusTransport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -40,7 +41,7 @@ class PartDbNodeTest {
     private static void awaitLeader(PartDbNode node) throws Exception {
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadlineNanos) {
-            if (node.status().role() == NodeRole.LEADER) {
+            if (node.status().role() == ConsensusRole.LEADER) {
                 return;
             }
             Thread.sleep(5);
@@ -58,7 +59,7 @@ class PartDbNodeTest {
         }
 
         @Override
-        public CompletableFuture<ConsensusMessage.Response> send(String to, ConsensusMessage.Request request) {
+        public CompletableFuture<ConsensusRpc.Response> send(String to, ConsensusRpc.Request request) {
             return CompletableFuture.failedFuture(new UnsupportedOperationException("single-node transport"));
         }
 

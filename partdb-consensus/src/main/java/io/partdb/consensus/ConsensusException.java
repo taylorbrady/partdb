@@ -1,23 +1,23 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import java.util.Optional;
 
-public sealed class RaftException extends RuntimeException
-    permits RaftException.NotLeader,
-            RaftException.Shutdown,
-            RaftException.Compaction,
-            RaftException.StorageFailure,
-            RaftException.RpcTimeout {
+public sealed class ConsensusException extends RuntimeException
+    permits ConsensusException.NotLeader,
+            ConsensusException.Shutdown,
+            ConsensusException.Compaction,
+            ConsensusException.StorageFailure,
+            ConsensusException.RpcTimeout {
 
-    protected RaftException(String message) {
+    protected ConsensusException(String message) {
         super(message);
     }
 
-    protected RaftException(String message, Throwable cause) {
+    protected ConsensusException(String message, Throwable cause) {
         super(message, cause);
     }
 
-    public static final class NotLeader extends RaftException {
+    public static final class NotLeader extends ConsensusException {
         private final String leaderId;
 
         public NotLeader(String leaderId) {
@@ -32,13 +32,13 @@ public sealed class RaftException extends RuntimeException
         }
     }
 
-    public static final class Shutdown extends RaftException {
+    public static final class Shutdown extends ConsensusException {
         public Shutdown() {
-            super("Raft node has been shut down");
+            super("Consensus node has been shut down");
         }
     }
 
-    public static final class Compaction extends RaftException {
+    public static final class Compaction extends ConsensusException {
         private final long requestedIndex;
         private final long firstAvailableIndex;
 
@@ -58,13 +58,13 @@ public sealed class RaftException extends RuntimeException
         }
     }
 
-    public static final class StorageFailure extends RaftException {
+    public static final class StorageFailure extends ConsensusException {
         public StorageFailure(String message, Throwable cause) {
             super("Storage operation failed: " + message, cause);
         }
     }
 
-    public static final class RpcTimeout extends RaftException {
+    public static final class RpcTimeout extends ConsensusException {
         private final String peerId;
 
         public RpcTimeout(String peerId) {

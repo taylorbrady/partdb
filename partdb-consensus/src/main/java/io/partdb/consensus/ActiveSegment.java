@@ -1,8 +1,7 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.LogEntry;
-import io.partdb.storage.StorageException;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -11,9 +10,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.zip.CRC32C;
 
-import static io.partdb.node.raft.LogCodec.BYTE_ORDER;
+import static io.partdb.consensus.LogCodec.BYTE_ORDER;
 
-public final class ActiveSegment implements LogSegment {
+final class ActiveSegment implements LogSegment {
 
     private static final int WRITE_BUFFER_SIZE = 64 * 1024;
 
@@ -47,7 +46,7 @@ public final class ActiveSegment implements LogSegment {
                     StandardOpenOption.READ);
             return new ActiveSegment(path, sequence, firstIndex, channel);
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to create WAL segment: " + path, e);
+            throw new ConsensusStorageException.IO("Failed to create WAL segment: " + path, e);
         }
     }
 
@@ -62,7 +61,7 @@ public final class ActiveSegment implements LogSegment {
             channel.position(segment.fileSize);
             return segment;
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to open WAL segment for append: " + path, e);
+            throw new ConsensusStorageException.IO("Failed to open WAL segment for append: " + path, e);
         }
     }
 
@@ -97,7 +96,7 @@ public final class ActiveSegment implements LogSegment {
         try {
             channel.close();
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to close WAL segment: " + path, e);
+            throw new ConsensusStorageException.IO("Failed to close WAL segment: " + path, e);
         }
     }
 
@@ -147,7 +146,7 @@ public final class ActiveSegment implements LogSegment {
             channel.write(ByteBuffer.wrap(payload));
             fileSize += RECORD_HEADER_SIZE + payload.length;
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to write to WAL segment: " + path, e);
+            throw new ConsensusStorageException.IO("Failed to write to WAL segment: " + path, e);
         }
     }
 
@@ -199,7 +198,7 @@ public final class ActiveSegment implements LogSegment {
                 channel.write(writeBuffer);
             }
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to flush WAL segment: " + path, e);
+            throw new ConsensusStorageException.IO("Failed to flush WAL segment: " + path, e);
         }
         writeBuffer.clear();
     }
@@ -209,7 +208,7 @@ public final class ActiveSegment implements LogSegment {
         try {
             channel.force(false);
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to sync WAL segment: " + path, e);
+            throw new ConsensusStorageException.IO("Failed to sync WAL segment: " + path, e);
         }
     }
 
@@ -218,7 +217,7 @@ public final class ActiveSegment implements LogSegment {
         try {
             channel.close();
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to seal WAL segment: " + path, e);
+            throw new ConsensusStorageException.IO("Failed to seal WAL segment: " + path, e);
         }
         return SealedSegment.open(path, sequence, firstIndex, lastIndex);
     }

@@ -1,7 +1,7 @@
-package io.partdb.node.transport;
+package io.partdb.consensus.transport;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.NodeMembership;
+import io.partdb.consensus.ClusterMembership;
 
 import java.util.Objects;
 
@@ -23,7 +23,7 @@ public sealed interface ConsensusLogEntry {
         }
     }
 
-    record Config(long index, long term, NodeMembership membership) implements ConsensusLogEntry {
+    record Config(long index, long term, ClusterMembership membership) implements ConsensusLogEntry {
         public Config {
             validateIndexAndTerm(index, term);
             Objects.requireNonNull(membership, "membership must not be null");

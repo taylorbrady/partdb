@@ -1,14 +1,14 @@
-package io.partdb.node;
+package io.partdb.consensus;
 
 import io.partdb.raft.RaftRole;
 
-public enum NodeRole {
+public enum ConsensusRole {
     FOLLOWER,
     PRE_CANDIDATE,
     CANDIDATE,
     LEADER;
 
-    static NodeRole fromRaftRole(RaftRole role) {
+    static ConsensusRole fromRaftRole(RaftRole role) {
         return switch (role) {
             case FOLLOWER -> FOLLOWER;
             case PRE_CANDIDATE -> PRE_CANDIDATE;

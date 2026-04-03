@@ -4,7 +4,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import io.partdb.bytes.Bytes;
 import io.partdb.node.command.proto.CommandProto.Command;
 import io.partdb.node.lease.LeaseRegistry;
-import io.partdb.node.raft.StateMachine;
+import io.partdb.consensus.ReplicatedStateMachine;
 import io.partdb.storage.EntryRecord;
 import io.partdb.storage.KeyRange;
 import io.partdb.storage.Mutation;
@@ -29,7 +29,7 @@ import java.util.Spliterators;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
-public final class KvStore implements StateMachine, AutoCloseable {
+public final class KvStore implements ReplicatedStateMachine, AutoCloseable {
 
     private final StorageEngine store;
     private final LeaseRegistry leaseRegistry;

@@ -1,9 +1,8 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.raft.RaftMembership;
 import io.partdb.raft.RaftSnapshot;
-import io.partdb.storage.StorageException;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -18,9 +17,9 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.zip.CRC32C;
 
-import static io.partdb.node.raft.LogCodec.BYTE_ORDER;
+import static io.partdb.consensus.LogCodec.BYTE_ORDER;
 
-public final class SnapshotStore implements AutoCloseable {
+final class SnapshotStore implements AutoCloseable {
 
     private static final int MAGIC = 0x534E4150;
     private static final int VERSION = 1;
@@ -36,7 +35,7 @@ public final class SnapshotStore implements AutoCloseable {
         try {
             Files.createDirectories(directory);
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to create snapshot directory: " + directory, e);
+            throw new ConsensusStorageException.IO("Failed to create snapshot directory: " + directory, e);
         }
         return new SnapshotStore(directory);
     }
@@ -80,13 +79,13 @@ public final class SnapshotStore implements AutoCloseable {
             channel.force(true);
 
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to write snapshot: " + tempPath, e);
+            throw new ConsensusStorageException.IO("Failed to write snapshot: " + tempPath, e);
         }
 
         try {
             Files.move(tempPath, finalPath, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to finalize snapshot: " + finalPath, e);
+            throw new ConsensusStorageException.IO("Failed to finalize snapshot: " + finalPath, e);
         }
     }
 
@@ -113,7 +112,7 @@ public final class SnapshotStore implements AutoCloseable {
                     .sorted(Comparator.comparingLong(SnapshotInfo::index))
                     .toList();
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to list snapshots in: " + directory, e);
+            throw new ConsensusStorageException.IO("Failed to list snapshots in: " + directory, e);
         }
     }
 
@@ -123,7 +122,7 @@ public final class SnapshotStore implements AutoCloseable {
                 try {
                     Files.deleteIfExists(info.path());
                 } catch (IOException e) {
-                    throw new StorageException.IO("Failed to delete snapshot: " + info.path(), e);
+                    throw new ConsensusStorageException.IO("Failed to delete snapshot: " + info.path(), e);
                 }
             }
         }
@@ -143,12 +142,12 @@ public final class SnapshotStore implements AutoCloseable {
 
             int magic = headerBuf.getInt();
             if (magic != MAGIC) {
-                throw new StorageException.Corruption("Invalid snapshot magic: " + Integer.toHexString(magic));
+                throw new ConsensusStorageException.Corruption("Invalid snapshot magic: " + Integer.toHexString(magic));
             }
 
             int version = headerBuf.getInt();
             if (version != VERSION) {
-                throw new StorageException.Corruption("Unsupported snapshot version: " + version);
+                throw new ConsensusStorageException.Corruption("Unsupported snapshot version: " + version);
             }
 
             long term = headerBuf.getLong();
@@ -178,13 +177,13 @@ public final class SnapshotStore implements AutoCloseable {
             crc.update(data);
 
             if ((int) crc.getValue() != storedCrc) {
-                throw new StorageException.Corruption("RaftSnapshot CRC mismatch: " + path);
+                throw new ConsensusStorageException.Corruption("RaftSnapshot CRC mismatch: " + path);
             }
 
             return new RaftSnapshot(index, term, membership, Bytes.copyOf(data));
 
         } catch (IOException e) {
-            throw new StorageException.IO("Failed to load snapshot: " + path, e);
+            throw new ConsensusStorageException.IO("Failed to load snapshot: " + path, e);
         }
     }
 

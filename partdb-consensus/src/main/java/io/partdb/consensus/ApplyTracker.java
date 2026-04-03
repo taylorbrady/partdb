@@ -1,4 +1,4 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 
-public final class ApplyTracker {
+final class ApplyTracker {
     private final AtomicLong lastApplied = new AtomicLong();
     private final ConcurrentNavigableMap<Long, List<CompletableFuture<Long>>> waiters =
         new ConcurrentSkipListMap<>();

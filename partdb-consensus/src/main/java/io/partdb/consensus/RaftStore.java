@@ -1,4 +1,4 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import io.partdb.raft.LogEntry;
 import io.partdb.raft.RaftLogView;
@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-public interface RaftStore extends RaftLogView, AutoCloseable {
+interface RaftStore extends RaftLogView, AutoCloseable {
 
     Bootstrap bootstrap();
 

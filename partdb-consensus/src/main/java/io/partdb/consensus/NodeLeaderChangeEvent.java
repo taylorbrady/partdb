@@ -1,4 +1,4 @@
-package io.partdb.node.raft;
+package io.partdb.consensus;
 
 import jdk.jfr.Category;
 import jdk.jfr.Event;

@@ -1,17 +1,17 @@
-package io.partdb.node.transport;
+package io.partdb.consensus.transport;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.NodeMembership;
+import io.partdb.consensus.ClusterMembership;
 
 import java.util.List;
 import java.util.Objects;
 
-public sealed interface ConsensusMessage {
+public sealed interface ConsensusRpc {
     long term();
 
-    sealed interface Request extends ConsensusMessage {}
+    sealed interface Request extends ConsensusRpc {}
 
-    sealed interface Response extends ConsensusMessage {}
+    sealed interface Response extends ConsensusRpc {}
 
     record AppendEntries(
         long term,
@@ -64,7 +64,7 @@ public sealed interface ConsensusMessage {
         String leaderId,
         long lastIncludedIndex,
         long lastIncludedTerm,
-        NodeMembership membership,
+        ClusterMembership membership,
         Bytes data
     ) implements Request {
         public InstallSnapshot {

@@ -1,11 +1,12 @@
 package io.partdb.node.lease;
 
+import io.partdb.consensus.ConsensusNode;
+import io.partdb.consensus.ConsensusRole;
 import io.partdb.node.command.CommandProposer;
 import io.partdb.node.command.proto.CommandProto.Command;
 import io.partdb.node.command.proto.CommandProto.GrantLease;
 import io.partdb.node.command.proto.CommandProto.KeepAliveLease;
 import io.partdb.node.command.proto.CommandProto.RevokeLease;
-import io.partdb.node.raft.RaftNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,15 +18,15 @@ public final class LeaseManager implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(LeaseManager.class);
     private static final int MAX_REVOCATIONS_PER_BATCH = 500;
 
-    private final RaftNode raftNode;
+    private final ConsensusNode consensus;
     private final CommandProposer proposer;
     private final LeaseRegistry leaseRegistry;
     private final AtomicLong nextLeaseId = new AtomicLong(1);
     private final Thread expirerThread;
     private volatile boolean running = true;
 
-    public LeaseManager(RaftNode raftNode, CommandProposer proposer, LeaseRegistry leaseRegistry) {
-        this.raftNode = raftNode;
+    public LeaseManager(ConsensusNode consensus, CommandProposer proposer, LeaseRegistry leaseRegistry) {
+        this.consensus = consensus;
         this.proposer = proposer;
         this.leaseRegistry = leaseRegistry;
         this.expirerThread = Thread.ofVirtual()
@@ -57,7 +58,7 @@ public final class LeaseManager implements AutoCloseable {
     private void runExpirer() {
         while (running) {
             try {
-                if (!raftNode.isLeader()) {
+                if (consensus.status().role() != ConsensusRole.LEADER) {
                     Thread.sleep(Duration.ofMillis(500));
                     continue;
                 }
