@@ -326,7 +326,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         node.leases().keepAlive(LeaseId.of(request.getLeaseId()))
             .toCompletableFuture()
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((_, ex) -> {
+            .whenComplete((result, ex) -> {
                 if (ex != null) {
                     responseObserver.onNext(KeepAliveLeaseResponse.newBuilder()
                         .setError(toProtoError(ex))
@@ -334,6 +334,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                 } else {
                     responseObserver.onNext(KeepAliveLeaseResponse.newBuilder()
                         .setError(okError())
+                        .setTtlMillis(result.ttl().toMillis())
                         .build());
                 }
                 responseObserver.onCompleted();

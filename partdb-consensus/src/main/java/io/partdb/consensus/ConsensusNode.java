@@ -63,8 +63,8 @@ public final class ConsensusNode implements AutoCloseable {
 
     private final AtomicLong tickCount = new AtomicLong();
     private final AtomicLong proposalCounter = new AtomicLong();
-    private final ConcurrentHashMap<Long, CompletableFuture<ProposalResult>> pendingProposals = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, CompletableFuture<ProposalResult>> pendingCommits = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<CommitResult>> pendingProposals = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<CommitResult>> pendingCommits = new ConcurrentHashMap<>();
 
     private final AtomicLong readContextCounter = new AtomicLong();
     private final ConcurrentHashMap<Long, CompletableFuture<ReadResult>> pendingReads = new ConcurrentHashMap<>();
@@ -140,9 +140,9 @@ public final class ConsensusNode implements AutoCloseable {
         );
     }
 
-    public CompletableFuture<Long> commit(Bytes data) {
+    public CompletableFuture<CommitResult> commit(Bytes data) {
         Objects.requireNonNull(data, "data must not be null");
-        return proposeInternal(data).thenCompose(result -> waitForAppliedInternal(result.index()));
+        return proposeInternal(data);
     }
 
     public CompletableFuture<Long> linearizableBarrier() {
@@ -380,11 +380,16 @@ public final class ConsensusNode implements AutoCloseable {
         }
 
         for (var entry : ready.application().entries()) {
+            ApplyResult application = stateMachine.apply(entry.index(), entry.data());
             var commitFuture = pendingCommits.remove(entry.index());
             if (commitFuture != null) {
-                commitFuture.complete(new ProposalResult(entry.index(), entry.term()));
+                switch (application) {
+                    case ApplyResult.Applied(var result) ->
+                        commitFuture.complete(new CommitResult.Applied(entry.index(), entry.term(), result));
+                    case ApplyResult.Rejected(var result) ->
+                        commitFuture.complete(new CommitResult.Rejected(entry.index(), entry.term(), result));
+                }
             }
-            stateMachine.apply(entry.index(), entry.data());
         }
         long appliedThroughIndex = ready.application().appliedThroughIndex();
         if (appliedThroughIndex > 0) {
@@ -481,12 +486,12 @@ public final class ConsensusNode implements AutoCloseable {
         return ByteBuffer.wrap(bytes.toByteArray()).getLong();
     }
 
-    private CompletableFuture<ProposalResult> proposeInternal(Bytes data) {
+    private CompletableFuture<CommitResult> proposeInternal(Bytes data) {
         if (!running) {
             return CompletableFuture.failedFuture(new ConsensusException.Shutdown());
         }
         long id = proposalCounter.incrementAndGet();
-        var future = new CompletableFuture<ProposalResult>();
+        var future = new CompletableFuture<CommitResult>();
         pendingProposals.put(id, future);
         events.offer(new NodeEvent.Proposal(id, data));
         return future;

@@ -2,8 +2,9 @@ package io.partdb.node.lease;
 
 import io.partdb.consensus.ConsensusNode;
 import io.partdb.consensus.ConsensusRole;
-import io.partdb.node.command.CommandProposer;
-import io.partdb.node.command.PartDbCommand;
+import io.partdb.node.internal.command.CommandProposer;
+import io.partdb.node.internal.command.PartDbCommand;
+import io.partdb.node.internal.command.PartDbCommandResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,15 +30,15 @@ public final class LeaseService implements AutoCloseable {
             .start(this::runExpirer);
     }
 
-    public CompletableFuture<Long> grant(Duration ttl) {
+    public CompletableFuture<PartDbCommandResult> grant(Duration ttl) {
         return proposer.propose(new PartDbCommand.GrantLease(ttl.toNanos()));
     }
 
-    public CompletableFuture<Long> revoke(LeaseId leaseId) {
+    public CompletableFuture<PartDbCommandResult> revoke(LeaseId leaseId) {
         return proposer.propose(new PartDbCommand.RevokeLease(leaseId.value()));
     }
 
-    public CompletableFuture<Long> keepAlive(LeaseId leaseId) {
+    public CompletableFuture<PartDbCommandResult> keepAlive(LeaseId leaseId) {
         return proposer.propose(new PartDbCommand.KeepAliveLease(leaseId.value()));
     }
 

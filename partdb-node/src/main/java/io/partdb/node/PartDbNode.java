@@ -3,13 +3,13 @@ package io.partdb.node;
 import io.partdb.bytes.Bytes;
 import io.partdb.consensus.ConsensusException;
 import io.partdb.consensus.ConsensusNode;
-import io.partdb.consensus.transport.ConsensusRpc;
-import io.partdb.consensus.transport.ConsensusTransport;
 import io.partdb.node.cluster.ClusterMembership;
 import io.partdb.node.cluster.ClusterView;
 import io.partdb.node.cluster.NodeRole;
 import io.partdb.node.cluster.NodeStatus;
-import io.partdb.node.command.CommandProposer;
+import io.partdb.node.internal.command.CommandProposer;
+import io.partdb.node.internal.command.PartDbCommandResult;
+import io.partdb.node.internal.replication.ConsensusTransportAdapter;
 import io.partdb.node.kv.DeleteResult;
 import io.partdb.node.kv.KeyRange;
 import io.partdb.node.kv.KeyValueEntry;
@@ -28,6 +28,8 @@ import io.partdb.node.lease.LeaseService;
 import io.partdb.node.metrics.MaintenanceOperations;
 import io.partdb.node.metrics.NodeMetrics;
 import io.partdb.node.metrics.StorageMetrics;
+import io.partdb.node.replication.ReplicationRpc;
+import io.partdb.node.replication.ReplicationTransport;
 import io.partdb.node.recovery.LogicalBackup;
 import io.partdb.node.state.PartDbStateMachine;
 import io.partdb.storage.StorageStats;
@@ -59,7 +61,7 @@ public final class PartDbNode implements AutoCloseable {
     private final ClusterView cluster = new ClusterViewImpl();
     private final MaintenanceOperations maintenance = new MaintenanceView();
 
-    private PartDbNode(PartDbNodeConfig config, ConsensusTransport transport) {
+    private PartDbNode(PartDbNodeConfig config, ReplicationTransport transport) {
         Objects.requireNonNull(config, "config must not be null");
         Objects.requireNonNull(transport, "transport must not be null");
 
@@ -71,7 +73,7 @@ public final class PartDbNode implements AutoCloseable {
         this.consensus = ConsensusNode.open(
             config.dataDirectory().resolve("consensus"),
             config.toConsensusConfig(),
-            transport,
+            new ConsensusTransportAdapter(transport),
             stateMachine
         );
 
@@ -87,7 +89,7 @@ public final class PartDbNode implements AutoCloseable {
         return new PartDbNode(config, new SingleNodeTransport());
     }
 
-    public static PartDbNode open(PartDbNodeConfig config, ConsensusTransport transport) {
+    public static PartDbNode open(PartDbNodeConfig config, ReplicationTransport transport) {
         return new PartDbNode(config, transport);
     }
 
@@ -169,16 +171,16 @@ public final class PartDbNode implements AutoCloseable {
         @Override
         public CompletionStage<PutResult> put(PutRequest request) {
             Objects.requireNonNull(request, "request must not be null");
-            CompletableFuture<Long> proposal = request.leaseId().isPresent()
+            CompletableFuture<PartDbCommandResult> proposal = request.leaseId().isPresent()
                 ? proposer.put(request.key(), request.value(), request.leaseId().orElseThrow().value())
                 : proposer.put(request.key(), request.value(), 0);
-            return mapFailure(trackProposal(proposal).thenApply(PutResult::new));
+            return mapFailure(trackProposal(proposal).thenApply(PartDbNode::toPutResult));
         }
 
         @Override
         public CompletionStage<DeleteResult> delete(Bytes key) {
             Objects.requireNonNull(key, "key must not be null");
-            return mapFailure(trackProposal(proposer.delete(key)).thenApply(DeleteResult::new));
+            return mapFailure(trackProposal(proposer.delete(key)).thenApply(PartDbNode::toDeleteResult));
         }
     }
 
@@ -190,21 +192,21 @@ public final class PartDbNode implements AutoCloseable {
                 throw new IllegalArgumentException("ttl must be positive");
             }
             return mapFailure(trackProposal(leaseService.grant(ttl))
-                .thenApply(index -> new LeaseGrant(LeaseId.of(index), ttl, index)));
+                .thenApply(PartDbNode::toLeaseGrant));
         }
 
         @Override
         public CompletionStage<LeaseKeepAliveResult> keepAlive(LeaseId leaseId) {
             Objects.requireNonNull(leaseId, "leaseId must not be null");
             return mapFailure(trackProposal(leaseService.keepAlive(leaseId))
-                .thenApply(index -> new LeaseKeepAliveResult(leaseId, index)));
+                .thenApply(PartDbNode::toLeaseKeepAliveResult));
         }
 
         @Override
         public CompletionStage<LeaseRevokeResult> revoke(LeaseId leaseId) {
             Objects.requireNonNull(leaseId, "leaseId must not be null");
             return mapFailure(trackProposal(leaseService.revoke(leaseId))
-                .thenApply(index -> new LeaseRevokeResult(leaseId, index)));
+                .thenApply(PartDbNode::toLeaseRevokeResult));
         }
     }
 
@@ -295,6 +297,51 @@ public final class PartDbNode implements AutoCloseable {
         );
     }
 
+    private static PutResult toPutResult(PartDbCommandResult result) {
+        return switch (result) {
+            case PartDbCommandResult.PutApplied(long modRevision) -> new PutResult(modRevision);
+            case PartDbCommandResult.LeaseNotFound(long leaseId) -> throw new PartDbException.LeaseNotFound(leaseId);
+            default -> throw unexpectedResult("put", result);
+        };
+    }
+
+    private static DeleteResult toDeleteResult(PartDbCommandResult result) {
+        return switch (result) {
+            case PartDbCommandResult.DeleteApplied(long modRevision) -> new DeleteResult(modRevision);
+            default -> throw unexpectedResult("delete", result);
+        };
+    }
+
+    private static LeaseGrant toLeaseGrant(PartDbCommandResult result) {
+        return switch (result) {
+            case PartDbCommandResult.LeaseGranted(long modRevision, long leaseId, long ttlNanos) ->
+                new LeaseGrant(LeaseId.of(leaseId), Duration.ofNanos(ttlNanos), modRevision);
+            default -> throw unexpectedResult("grantLease", result);
+        };
+    }
+
+    private static LeaseKeepAliveResult toLeaseKeepAliveResult(PartDbCommandResult result) {
+        return switch (result) {
+            case PartDbCommandResult.LeaseKeptAlive(long modRevision, long leaseId, long ttlNanos) ->
+                new LeaseKeepAliveResult(LeaseId.of(leaseId), Duration.ofNanos(ttlNanos), modRevision);
+            case PartDbCommandResult.LeaseNotFound(long leaseId) -> throw new PartDbException.LeaseNotFound(leaseId);
+            default -> throw unexpectedResult("keepAliveLease", result);
+        };
+    }
+
+    private static LeaseRevokeResult toLeaseRevokeResult(PartDbCommandResult result) {
+        return switch (result) {
+            case PartDbCommandResult.LeaseRevoked(long modRevision, long leaseId, long deletedKeyCount) ->
+                new LeaseRevokeResult(LeaseId.of(leaseId), modRevision, deletedKeyCount);
+            case PartDbCommandResult.LeaseNotFound(long leaseId) -> throw new PartDbException.LeaseNotFound(leaseId);
+            default -> throw unexpectedResult("revokeLease", result);
+        };
+    }
+
+    private static IllegalStateException unexpectedResult(String operation, PartDbCommandResult result) {
+        return new IllegalStateException("Unexpected command result for " + operation + ": " + result);
+    }
+
     private static NodeRole toNodeRole(io.partdb.consensus.ConsensusRole role) {
         return switch (role) {
             case FOLLOWER -> NodeRole.FOLLOWER;
@@ -378,13 +425,13 @@ public final class PartDbNode implements AutoCloseable {
         }
     }
 
-    private static final class SingleNodeTransport implements ConsensusTransport {
+    private static final class SingleNodeTransport implements ReplicationTransport {
         @Override
         public void start(RpcHandler handler) {
         }
 
         @Override
-        public CompletableFuture<ConsensusRpc.Response> send(String to, ConsensusRpc.Request request) {
+        public CompletableFuture<ReplicationRpc.Response> send(String to, ReplicationRpc.Request request) {
             return CompletableFuture.failedFuture(new UnsupportedOperationException("single-node transport"));
         }
 

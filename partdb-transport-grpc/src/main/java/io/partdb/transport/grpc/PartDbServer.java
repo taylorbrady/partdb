@@ -1,7 +1,7 @@
 package io.partdb.transport.grpc;
 
 import io.partdb.node.PartDbNode;
-import io.partdb.consensus.transport.ConsensusTransport;
+import io.partdb.node.replication.ReplicationTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,10 +20,10 @@ public final class PartDbServer implements AutoCloseable {
         this(config, null);
     }
 
-    PartDbServer(PartDbServerConfig config, ConsensusTransport transport) {
+    PartDbServer(PartDbServerConfig config, ReplicationTransport transport) {
         this.config = config;
-        ConsensusTransport raftTransport = transport != null ? transport : createDefaultTransport();
-        this.node = PartDbNode.open(config.nodeConfig(), raftTransport);
+        ReplicationTransport replicationTransport = transport != null ? transport : createDefaultTransport();
+        this.node = PartDbNode.open(config.nodeConfig(), replicationTransport);
         this.grpcServer = new GrpcServer(
             node,
             config.raftPeerAddresses(),
@@ -33,13 +33,13 @@ public final class PartDbServer implements AutoCloseable {
         this.jmxRegistrations = new JmxRegistrations(node);
     }
 
-    private ConsensusTransport createDefaultTransport() {
-        var transportConfig = GrpcConsensusTransportConfig.create(
+    private ReplicationTransport createDefaultTransport() {
+        var transportConfig = GrpcReplicationTransportConfig.create(
             config.nodeId(),
             config.raftPort(),
             config.raftPeerAddresses()
         );
-        return new GrpcConsensusTransport(transportConfig);
+        return new GrpcReplicationTransport(transportConfig);
     }
 
     public void start() throws IOException {

@@ -2,26 +2,26 @@ package io.partdb.transport.grpc;
 
 import com.google.protobuf.ByteString;
 import io.partdb.bytes.Bytes;
-import io.partdb.consensus.ClusterMembership;
-import io.partdb.consensus.transport.ConsensusLogEntry;
+import io.partdb.node.cluster.ClusterMembership;
+import io.partdb.node.replication.ReplicationLogEntry;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 
 import java.util.Set;
 
-final class ConsensusModelProtoConverters {
+final class ReplicationModelProtoConverters {
 
-    static ConsensusLogEntry fromProto(RaftProto.LogEntry proto) {
+    static ReplicationLogEntry fromProto(RaftProto.LogEntry proto) {
         return switch (proto.getEntryCase()) {
-            case DATA -> new ConsensusLogEntry.Data(
+            case DATA -> new ReplicationLogEntry.Data(
                 proto.getIndex(),
                 proto.getTerm(),
                 Bytes.copyOf(proto.getData().toByteArray())
             );
-            case NO_OP -> new ConsensusLogEntry.NoOp(
+            case NO_OP -> new ReplicationLogEntry.NoOp(
                 proto.getIndex(),
                 proto.getTerm()
             );
-            case CONFIG -> new ConsensusLogEntry.Config(
+            case CONFIG -> new ReplicationLogEntry.Config(
                 proto.getIndex(),
                 proto.getTerm(),
                 fromProto(proto.getConfig())
@@ -30,15 +30,15 @@ final class ConsensusModelProtoConverters {
         };
     }
 
-    static RaftProto.LogEntry toProto(ConsensusLogEntry entry) {
+    static RaftProto.LogEntry toProto(ReplicationLogEntry entry) {
         var builder = RaftProto.LogEntry.newBuilder()
             .setIndex(entry.index())
             .setTerm(entry.term());
 
         switch (entry) {
-            case ConsensusLogEntry.Data data -> builder.setData(ByteString.copyFrom(data.data().asReadOnlyByteBuffer()));
-            case ConsensusLogEntry.NoOp _ -> builder.setNoOp(true);
-            case ConsensusLogEntry.Config config -> builder.setConfig(toProto(config.membership()));
+            case ReplicationLogEntry.Data data -> builder.setData(ByteString.copyFrom(data.data().asReadOnlyByteBuffer()));
+            case ReplicationLogEntry.NoOp _ -> builder.setNoOp(true);
+            case ReplicationLogEntry.Config config -> builder.setConfig(toProto(config.membership()));
         }
 
         return builder.build();

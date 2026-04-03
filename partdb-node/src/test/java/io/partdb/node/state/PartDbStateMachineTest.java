@@ -1,8 +1,8 @@
 package io.partdb.node.state;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.command.PartDbCommand;
-import io.partdb.node.command.PartDbCommandCodec;
+import io.partdb.node.internal.command.PartDbCommand;
+import io.partdb.node.internal.command.PartDbCommandCodec;
 import io.partdb.storage.StorageOptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

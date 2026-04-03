@@ -1,10 +1,10 @@
 package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.consensus.transport.ConsensusRpc;
-import io.partdb.consensus.transport.ConsensusTransport;
 import io.partdb.node.cluster.NodeRole;
 import io.partdb.node.lease.LeaseGrant;
+import io.partdb.node.replication.ReplicationRpc;
+import io.partdb.node.replication.ReplicationTransport;
 import io.partdb.node.recovery.LogicalBackup;
 import io.partdb.node.recovery.PartDbRecovery;
 import io.partdb.node.recovery.RecoveryOptions;
@@ -33,7 +33,7 @@ class PartDbBootstrapTest {
             .build();
 
         LogicalBackup backup;
-        try (var node = PartDbNode.open(sourceConfig, new NoOpConsensusTransport())) {
+        try (var node = PartDbNode.open(sourceConfig, new NoOpReplicationTransport())) {
             awaitLeader(node);
 
             LeaseGrant leaseGrant = node.leases().grant(Duration.ofSeconds(30)).toCompletableFuture().get(5, TimeUnit.SECONDS);
@@ -59,7 +59,7 @@ class PartDbBootstrapTest {
         assertEquals(1, result.deletedLeaseAttachedKeyCount());
         assertTrue(result.finalRevision() >= backup.appliedIndex());
 
-        try (var recovered = PartDbNode.open(recoveredConfig, new NoOpConsensusTransport())) {
+        try (var recovered = PartDbNode.open(recoveredConfig, new NoOpReplicationTransport())) {
             awaitLeader(recovered);
 
             assertEquals(
@@ -97,13 +97,13 @@ class PartDbBootstrapTest {
         return Bytes.utf8(value);
     }
 
-    private static final class NoOpConsensusTransport implements ConsensusTransport {
+    private static final class NoOpReplicationTransport implements ReplicationTransport {
         @Override
         public void start(RpcHandler handler) {
         }
 
         @Override
-        public CompletableFuture<ConsensusRpc.Response> send(String to, ConsensusRpc.Request request) {
+        public CompletableFuture<ReplicationRpc.Response> send(String to, ReplicationRpc.Request request) {
             return CompletableFuture.failedFuture(new UnsupportedOperationException("single-node transport"));
         }
 

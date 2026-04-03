@@ -1,4 +1,4 @@
-package io.partdb.node.command;
+package io.partdb.node.internal.command;
 
 import io.partdb.bytes.Bytes;
 

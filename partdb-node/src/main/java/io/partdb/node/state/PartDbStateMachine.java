@@ -1,8 +1,11 @@
 package io.partdb.node.state;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.command.PartDbCommand;
-import io.partdb.node.command.PartDbCommandCodec;
+import io.partdb.consensus.ApplyResult;
+import io.partdb.node.internal.command.PartDbCommand;
+import io.partdb.node.internal.command.PartDbCommandCodec;
+import io.partdb.node.internal.command.PartDbCommandResult;
+import io.partdb.node.internal.command.PartDbCommandResultCodec;
 import io.partdb.node.lease.LeaseRegistry;
 import io.partdb.node.recovery.RecoveryResult;
 import io.partdb.consensus.ReplicatedStateMachine;
@@ -49,31 +52,53 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
     }
 
     @Override
-    public void apply(long index, Bytes data) {
+    public ApplyResult apply(long index, Bytes data) {
         PartDbCommand command = PartDbCommandCodec.decode(data);
 
-        switch (command) {
+        ApplyResult result = switch (command) {
             case PartDbCommand.Put(var key, var value, long leaseId) -> {
+                if (leaseId != 0 && !leaseRegistry.isLeaseActive(leaseId)) {
+                    yield rejected(new PartDbCommandResult.LeaseNotFound(leaseId));
+                }
                 detachKeyFromLease(key);
                 StoredValue stored = new StoredValue(value.toByteArray(), leaseId);
                 store.apply(new Revision(index), Mutation.put(key, Bytes.copyOf(stored.encode())));
                 if (leaseId != 0) {
                     leaseRegistry.attachKey(leaseId, key);
                 }
+                yield applied(new PartDbCommandResult.PutApplied(index));
             }
             case PartDbCommand.Delete(var key) -> {
                 detachKeyFromLease(key);
                 store.apply(new Revision(index), Mutation.delete(key));
+                yield applied(new PartDbCommandResult.DeleteApplied(index));
             }
             case PartDbCommand.GrantLease(long ttlNanos) -> {
                 leaseRegistry.grant(index, ttlNanos);
+                yield applied(new PartDbCommandResult.LeaseGranted(index, index, ttlNanos));
             }
-            case PartDbCommand.RevokeLease(long leaseId) -> revokeLease(index, leaseId);
-            case PartDbCommand.ExpireLease(long leaseId) -> revokeLease(index, leaseId);
-            case PartDbCommand.KeepAliveLease(long leaseId) -> leaseRegistry.keepAlive(leaseId);
-        }
+            case PartDbCommand.RevokeLease(long leaseId) -> {
+                if (!leaseRegistry.isLeaseActive(leaseId)) {
+                    yield rejected(new PartDbCommandResult.LeaseNotFound(leaseId));
+                }
+                yield applied(revokeLease(index, leaseId));
+            }
+            case PartDbCommand.ExpireLease(long leaseId) -> applied(
+                leaseRegistry.isLeaseActive(leaseId)
+                    ? revokeLease(index, leaseId)
+                    : new PartDbCommandResult.LeaseRevoked(index, leaseId, 0)
+            );
+            case PartDbCommand.KeepAliveLease(long leaseId) -> {
+                var ttlNanos = leaseRegistry.keepAlive(leaseId);
+                if (ttlNanos.isEmpty()) {
+                    yield rejected(new PartDbCommandResult.LeaseNotFound(leaseId));
+                }
+                yield applied(new PartDbCommandResult.LeaseKeptAlive(index, leaseId, ttlNanos.getAsLong()));
+            }
+        };
 
         lastApplied = index;
+        return result;
     }
 
     private void detachKeyFromLease(Bytes key) {
@@ -86,13 +111,15 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
         }
     }
 
-    private void revokeLease(long index, long leaseId) {
+    private PartDbCommandResult.LeaseRevoked revokeLease(long index, long leaseId) {
         WriteBatch.Builder batch = WriteBatch.builder();
-        for (Bytes key : leaseRegistry.attachedKeys(leaseId)) {
+        var attachedKeys = leaseRegistry.attachedKeys(leaseId);
+        for (Bytes key : attachedKeys) {
             batch.delete(key);
         }
         store.apply(new Revision(index), batch.build());
         leaseRegistry.revoke(leaseId);
+        return new PartDbCommandResult.LeaseRevoked(index, leaseId, attachedKeys.size());
     }
 
     public Optional<Bytes> getLocal(Bytes key) {
@@ -256,5 +283,13 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
                 }
             }
         }
+    }
+
+    private static ApplyResult applied(PartDbCommandResult.AppliedCommandResult result) {
+        return new ApplyResult.Applied(PartDbCommandResultCodec.encode(result));
+    }
+
+    private static ApplyResult rejected(PartDbCommandResult.RejectedCommandResult result) {
+        return new ApplyResult.Rejected(PartDbCommandResultCodec.encode(result));
     }
 }

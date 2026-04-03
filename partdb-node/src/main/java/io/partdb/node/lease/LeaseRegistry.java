@@ -6,6 +6,7 @@ import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.DelayQueue;
 import java.util.concurrent.Delayed;
@@ -33,8 +34,8 @@ public final class LeaseRegistry {
         expirationQueue.offer(new LeaseExpiry(leaseId, lease.expiresAtNanos()));
     }
 
-    public void revoke(long leaseId) {
-        byId.remove(leaseId);
+    public boolean revoke(long leaseId) {
+        return byId.remove(leaseId) != null;
     }
 
     public void attachKey(long leaseId, Bytes key) {
@@ -60,12 +61,20 @@ public final class LeaseRegistry {
         return lease.keys().stream().toList();
     }
 
-    public void keepAlive(long leaseId) {
+    public OptionalLong keepAlive(long leaseId) {
         var lease = byId.get(leaseId);
-        if (lease != null) {
-            lease.refresh();
-            expirationQueue.offer(new LeaseExpiry(leaseId, lease.expiresAtNanos()));
+        if (lease == null) {
+            return OptionalLong.empty();
         }
+
+        lease.refresh();
+        expirationQueue.offer(new LeaseExpiry(leaseId, lease.expiresAtNanos()));
+        return OptionalLong.of(lease.ttlNanos());
+    }
+
+    public OptionalLong ttlNanos(long leaseId) {
+        var lease = byId.get(leaseId);
+        return lease != null ? OptionalLong.of(lease.ttlNanos()) : OptionalLong.empty();
     }
 
     public boolean isLeaseActive(long leaseId) {
