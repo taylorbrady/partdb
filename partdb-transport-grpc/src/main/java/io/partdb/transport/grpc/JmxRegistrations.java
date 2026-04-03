@@ -22,8 +22,9 @@ final class JmxRegistrations implements AutoCloseable {
     JmxRegistrations(PartDbNode node) {
         this.mBeanServer = ManagementFactory.getPlatformMBeanServer();
         this.node = node;
-        this.nodeObjectName = objectName("Node", node.nodeId());
-        this.storageObjectName = objectName("Storage", node.nodeId());
+        String nodeId = node.cluster().status().nodeId();
+        this.nodeObjectName = objectName("Node", nodeId);
+        this.storageObjectName = objectName("Storage", nodeId);
         this.registered = false;
     }
 
@@ -75,114 +76,116 @@ final class JmxRegistrations implements AutoCloseable {
     private record NodeMBean(PartDbNode node) implements PartDbNodeMXBean {
         @Override
         public String getNodeId() {
-            return node.nodeId();
+            return node.cluster().status().nodeId();
         }
 
         @Override
         public boolean isRunning() {
-            return node.status().running();
+            return node.cluster().status().running();
         }
 
         @Override
         public String getRole() {
-            return node.status().role().name();
+            return node.cluster().status().role().name();
         }
 
         @Override
         public String getLeaderId() {
-            return node.leaderId().orElse("");
+            return node.cluster().status().leaderId().orElse("");
         }
 
         @Override
         public long getCurrentTerm() {
-            return node.status().term();
+            return node.cluster().status().term();
         }
 
         @Override
         public long getCommitIndex() {
-            return node.status().commitIndex();
+            return node.cluster().status().commitIndex();
         }
 
         @Override
         public long getAppliedIndex() {
-            return node.status().appliedIndex();
+            return node.cluster().status().appliedIndex();
         }
 
         @Override
         public long getLastLeaderChangeEpochMillis() {
-            return node.lastLeaderChangeEpochMillis();
+            return node.cluster().status().lastLeaderChangeTime()
+                .map(java.time.Instant::toEpochMilli)
+                .orElse(0L);
         }
 
         @Override
         public long getProposalCount() {
-            return node.proposalCount();
+            return node.maintenance().nodeMetrics().proposalCount();
         }
 
         @Override
         public long getProposalFailureCount() {
-            return node.proposalFailureCount();
+            return node.maintenance().nodeMetrics().proposalFailureCount();
         }
     }
 
     private record StorageMBean(PartDbNode node) implements PartDbStorageMXBean {
         @Override
         public long getActiveMemtableBytes() {
-            return node.storageActiveMemtableBytes();
+            return node.maintenance().storageMetrics().activeMemtableBytes();
         }
 
         @Override
         public int getImmutableMemtableCount() {
-            return node.storageImmutableMemtableCount();
+            return node.maintenance().storageMetrics().immutableMemtableCount();
         }
 
         @Override
         public int getSstableCount() {
-            return node.storageSstableCount();
+            return node.maintenance().storageMetrics().sstableCount();
         }
 
         @Override
         public long getTotalSstableBytes() {
-            return node.storageTotalSstableBytes();
+            return node.maintenance().storageMetrics().totalSstableBytes();
         }
 
         @Override
         public int getActiveCompactions() {
-            return node.storageActiveCompactions();
+            return node.maintenance().storageMetrics().activeCompactions();
         }
 
         @Override
         public long getCompletedCompactions() {
-            return node.storageCompletedCompactions();
+            return node.maintenance().storageMetrics().completedCompactions();
         }
 
         @Override
         public long getFailedCompactions() {
-            return node.storageFailedCompactions();
+            return node.maintenance().storageMetrics().failedCompactions();
         }
 
         @Override
         public long getLastCompactionDurationMillis() {
-            return node.storageLastCompactionDurationMillis();
+            return node.maintenance().storageMetrics().lastCompactionDuration().toMillis();
         }
 
         @Override
         public long getCheckpointCount() {
-            return node.storageCheckpointCount();
+            return node.maintenance().storageMetrics().checkpointCount();
         }
 
         @Override
         public long getRestoreCount() {
-            return node.storageRestoreCount();
+            return node.maintenance().storageMetrics().restoreCount();
         }
 
         @Override
         public long getLastCheckpointDurationMillis() {
-            return node.storageLastCheckpointDurationMillis();
+            return node.maintenance().storageMetrics().lastCheckpointDuration().toMillis();
         }
 
         @Override
         public long getLastRestoreDurationMillis() {
-            return node.storageLastRestoreDurationMillis();
+            return node.maintenance().storageMetrics().lastRestoreDuration().toMillis();
         }
     }
 }

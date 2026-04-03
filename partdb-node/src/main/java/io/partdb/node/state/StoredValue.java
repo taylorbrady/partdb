@@ -1,4 +1,4 @@
-package io.partdb.node.kv;
+package io.partdb.node.state;
 
 import java.nio.ByteBuffer;
 

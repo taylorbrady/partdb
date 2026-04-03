@@ -3,29 +3,24 @@ package io.partdb.node.lease;
 import io.partdb.consensus.ConsensusNode;
 import io.partdb.consensus.ConsensusRole;
 import io.partdb.node.command.CommandProposer;
-import io.partdb.node.command.proto.CommandProto.Command;
-import io.partdb.node.command.proto.CommandProto.GrantLease;
-import io.partdb.node.command.proto.CommandProto.KeepAliveLease;
-import io.partdb.node.command.proto.CommandProto.RevokeLease;
+import io.partdb.node.command.PartDbCommand;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicLong;
 
-public final class LeaseManager implements AutoCloseable {
-    private static final Logger log = LoggerFactory.getLogger(LeaseManager.class);
+public final class LeaseService implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(LeaseService.class);
     private static final int MAX_REVOCATIONS_PER_BATCH = 500;
 
     private final ConsensusNode consensus;
     private final CommandProposer proposer;
     private final LeaseRegistry leaseRegistry;
-    private final AtomicLong nextLeaseId = new AtomicLong(1);
     private final Thread expirerThread;
     private volatile boolean running = true;
 
-    public LeaseManager(ConsensusNode consensus, CommandProposer proposer, LeaseRegistry leaseRegistry) {
+    public LeaseService(ConsensusNode consensus, CommandProposer proposer, LeaseRegistry leaseRegistry) {
         this.consensus = consensus;
         this.proposer = proposer;
         this.leaseRegistry = leaseRegistry;
@@ -34,25 +29,16 @@ public final class LeaseManager implements AutoCloseable {
             .start(this::runExpirer);
     }
 
-    public CompletableFuture<Long> grant(long ttlNanos) {
-        long leaseId = nextLeaseId.getAndIncrement();
-        return proposer.propose(Command.newBuilder()
-                .setGrantLease(GrantLease.newBuilder()
-                    .setLeaseId(leaseId)
-                    .setTtlNanos(ttlNanos)))
-            .thenApply(_ -> leaseId);
+    public CompletableFuture<Long> grant(Duration ttl) {
+        return proposer.propose(new PartDbCommand.GrantLease(ttl.toNanos()));
     }
 
-    public CompletableFuture<Long> revoke(long leaseId) {
-        return proposer.propose(Command.newBuilder()
-            .setRevokeLease(RevokeLease.newBuilder()
-                .setLeaseId(leaseId)));
+    public CompletableFuture<Long> revoke(LeaseId leaseId) {
+        return proposer.propose(new PartDbCommand.RevokeLease(leaseId.value()));
     }
 
-    public CompletableFuture<Long> keepAlive(long leaseId) {
-        return proposer.propose(Command.newBuilder()
-            .setKeepAliveLease(KeepAliveLease.newBuilder()
-                .setLeaseId(leaseId)));
+    public CompletableFuture<Long> keepAlive(LeaseId leaseId) {
+        return proposer.propose(new PartDbCommand.KeepAliveLease(leaseId.value()));
     }
 
     private void runExpirer() {
@@ -72,12 +58,12 @@ public final class LeaseManager implements AutoCloseable {
                 while (entry != null && count < MAX_REVOCATIONS_PER_BATCH) {
                     if (!leaseRegistry.isStale(entry)) {
                         long leaseId = entry.leaseId();
-                        revoke(leaseId)
+                        proposer.propose(new PartDbCommand.ExpireLease(leaseId))
                             .exceptionally(ex -> {
                                 log.atWarn()
                                     .addKeyValue("leaseId", leaseId)
                                     .setCause(ex)
-                                    .log("Failed to revoke lease");
+                                    .log("Failed to expire lease");
                                 return null;
                             });
                         count++;

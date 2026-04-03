@@ -47,14 +47,14 @@ final class AdminHttpServer implements AutoCloseable {
     }
 
     private HealthStatus liveStatus() {
-        if (node.status().running()) {
+        if (node.cluster().status().running()) {
             return HealthStatus.ok();
         }
         return HealthStatus.unavailable("not live: node stopped\n");
     }
 
     private HealthStatus readyStatus() {
-        var status = node.status();
+        var status = node.cluster().status();
         if (!status.running()) {
             return HealthStatus.unavailable("not ready: node stopped\n");
         }

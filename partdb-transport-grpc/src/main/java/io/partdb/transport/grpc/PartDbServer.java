@@ -23,7 +23,7 @@ public final class PartDbServer implements AutoCloseable {
     PartDbServer(PartDbServerConfig config, ConsensusTransport transport) {
         this.config = config;
         ConsensusTransport raftTransport = transport != null ? transport : createDefaultTransport();
-        this.node = new PartDbNode(config.nodeConfig(), raftTransport);
+        this.node = PartDbNode.open(config.nodeConfig(), raftTransport);
         this.grpcServer = new GrpcServer(
             node,
             config.raftPeerAddresses(),

@@ -127,6 +127,17 @@ public final class Raft {
         this.lastApplied = snapIndex;
     }
 
+    public RaftReady.Application recoverCommittedApplication() {
+        if (lastApplied >= commitIndex) {
+            return RaftReady.Application.EMPTY;
+        }
+
+        var accumulator = new RaftStepAccumulator();
+        prepareEntriesToApply(accumulator);
+        lastApplied = commitIndex;
+        return accumulator.finish().application();
+    }
+
     public boolean isLeader() {
         return role == RaftRole.LEADER;
     }
@@ -773,6 +784,7 @@ public final class Raft {
 
     private void prepareEntriesToApply(RaftStepAccumulator accumulator) {
         for (long i = lastApplied + 1; i <= commitIndex; i++) {
+            accumulator.advanceAppliedThrough(i);
             switch (get(i)) {
                 case LogEntry.Data entry -> accumulator.apply(entry.index(), entry.term(), entry.data());
                 case LogEntry.Config entry -> {

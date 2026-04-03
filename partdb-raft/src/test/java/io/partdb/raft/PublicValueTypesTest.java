@@ -48,7 +48,7 @@ class PublicValueTypesTest {
         var ready = new RaftReady(
             RaftReady.Persistence.EMPTY,
             List.of(),
-            new RaftReady.Application(List.of(applyEntry), List.of(), List.of()),
+            new RaftReady.Application(List.of(applyEntry), List.of(), List.of(), applyEntry.index()),
             Optional.empty()
         );
 

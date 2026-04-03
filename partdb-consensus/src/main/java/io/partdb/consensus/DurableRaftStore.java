@@ -60,7 +60,8 @@ final class DurableRaftStore implements RaftStore {
     private static RaftMembership recoverMembershipFromLog(WriteAheadLog wal, RaftMembership initial) {
         RaftMembership membership = initial;
         long from = wal.firstIndex();
-        long to = wal.lastIndex() + 1;
+        long committedThrough = Math.min(wal.hardState().commit(), wal.lastIndex());
+        long to = committedThrough + 1;
 
         List<LogEntry> entries = wal.entries(from, to, Long.MAX_VALUE);
         for (LogEntry entry : entries) {

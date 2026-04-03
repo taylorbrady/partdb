@@ -379,20 +379,17 @@ public final class ConsensusNode implements AutoCloseable {
             }
         }
 
-        long lastAppliedIndex = 0;
-        long lastAppliedTerm = 0;
         for (var entry : ready.application().entries()) {
             var commitFuture = pendingCommits.remove(entry.index());
             if (commitFuture != null) {
                 commitFuture.complete(new ProposalResult(entry.index(), entry.term()));
             }
             stateMachine.apply(entry.index(), entry.data());
-            lastAppliedIndex = entry.index();
-            lastAppliedTerm = entry.term();
         }
-        if (lastAppliedIndex > 0) {
-            raft.acknowledgeApplication(lastAppliedIndex);
-            applyTracker.advance(lastAppliedIndex);
+        long appliedThroughIndex = ready.application().appliedThroughIndex();
+        if (appliedThroughIndex > 0) {
+            raft.acknowledgeApplication(appliedThroughIndex);
+            applyTracker.advance(appliedThroughIndex);
         }
 
         for (var readState : ready.application().readStates()) {
@@ -537,14 +534,20 @@ public final class ConsensusNode implements AutoCloseable {
         var raft = Raft.builder(nodeId, effectiveMembership, raftConfig, store).build();
 
         var persistentState = bootstrap.persistentState().orElse(RaftPersistentState.INITIAL);
-        long snapshotIndex = store.firstIndex() > 1 ? store.firstIndex() - 1 : 0;
+        var snapshot = store.snapshot();
+        long snapshotIndex = snapshot.map(RaftSnapshot::index).orElse(0L);
         raft.restore(persistentState, snapshotIndex);
 
-        var snapshot = store.snapshot();
         snapshot.ifPresent(s -> stateMachine.restore(s.index(), s.data()));
+        var recoveredApplication = raft.recoverCommittedApplication();
+        for (var entry : recoveredApplication.entries()) {
+            stateMachine.apply(entry.index(), entry.data());
+        }
 
         var node = new ConsensusNode(nodeId, raft, raftConfig, transport, store, stateMachine, tickInterval);
-        snapshot.ifPresent(s -> node.applyTracker.advance(s.index()));
+        if (raft.lastApplied() > 0) {
+            node.applyTracker.advance(raft.lastApplied());
+        }
         return node;
     }
 }

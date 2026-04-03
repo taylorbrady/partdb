@@ -8,12 +8,12 @@ import io.partdb.grpc.cluster.proto.ClusterProto.MemberListRequest;
 import io.partdb.grpc.cluster.proto.ClusterProto.MemberListResponse;
 import io.partdb.grpc.cluster.proto.ClusterProto.MemberRole;
 import io.partdb.grpc.cluster.proto.ClusterProto.NodeRole;
-import io.partdb.consensus.ClusterMembership;
 import io.partdb.grpc.cluster.proto.ClusterProto.StatusRequest;
 import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
 import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
-import io.partdb.consensus.ConsensusStatus;
 import io.partdb.node.PartDbNode;
+import io.partdb.node.cluster.ClusterMembership;
+import io.partdb.node.cluster.NodeStatus;
 
 import java.util.Map;
 
@@ -31,7 +31,7 @@ final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase
 
     @Override
     public void status(StatusRequest request, StreamObserver<StatusResponse> responseObserver) {
-        ConsensusStatus status = node.status();
+        NodeStatus status = node.cluster().status();
         var response = StatusResponse.newBuilder()
             .setError(okError())
             .setNodeId(status.nodeId())
@@ -48,9 +48,10 @@ final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase
 
     @Override
     public void memberList(MemberListRequest request, StreamObserver<MemberListResponse> responseObserver) {
-        ClusterMembership membership = node.membership();
-        String leaderId = node.leaderId().orElse("");
-        String selfId = node.nodeId();
+        ClusterMembership membership = node.cluster().membership();
+        NodeStatus status = node.cluster().status();
+        String leaderId = status.leaderId().orElse("");
+        String selfId = status.nodeId();
 
         var builder = MemberListResponse.newBuilder()
             .setError(okError())
@@ -80,7 +81,7 @@ final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase
             .build();
     }
 
-    private static NodeRole toProtoRole(io.partdb.consensus.ConsensusRole role) {
+    private static NodeRole toProtoRole(io.partdb.node.cluster.NodeRole role) {
         return switch (role) {
             case FOLLOWER -> NodeRole.FOLLOWER;
             case PRE_CANDIDATE -> NodeRole.PRE_CANDIDATE;

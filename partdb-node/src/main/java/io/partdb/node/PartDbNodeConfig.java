@@ -1,8 +1,9 @@
 package io.partdb.node;
 
-import io.partdb.consensus.ClusterMembership;
 import io.partdb.consensus.ConsensusConfig;
-import io.partdb.storage.StorageOptions;
+import io.partdb.node.cluster.ClusterMembership;
+import io.partdb.node.config.ReplicationConfig;
+import io.partdb.node.config.StorageConfig;
 
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
@@ -10,42 +11,57 @@ import java.util.Objects;
 import java.util.Set;
 
 public final class PartDbNodeConfig {
+    private final String nodeId;
     private final Path dataDirectory;
-    private final StorageOptions storageOptions;
-    private final ConsensusConfig consensusConfig;
+    private final ClusterMembership membership;
+    private final StorageConfig storage;
+    private final ReplicationConfig replication;
 
     private PartDbNodeConfig(Builder builder) {
+        this.nodeId = requireNonBlank(builder.nodeId, "nodeId");
         this.dataDirectory = Objects.requireNonNull(builder.dataDirectory, "dataDirectory must not be null");
-        this.storageOptions = Objects.requireNonNull(builder.storageOptions, "storageOptions must not be null");
-        this.consensusConfig = builder.consensusConfigBuilder.build();
+        this.membership = Objects.requireNonNull(builder.membership, "membership must not be null");
+        if (!membership.isMember(nodeId)) {
+            throw new IllegalArgumentException("membership must include nodeId");
+        }
+        this.storage = Objects.requireNonNull(builder.storage, "storage must not be null");
+        this.replication = Objects.requireNonNull(builder.replication, "replication must not be null");
+    }
+
+    public static Builder builder(String nodeId, Path dataDirectory) {
+        return new Builder(nodeId, dataDirectory);
+    }
+
+    public Builder toBuilder() {
+        return new Builder(this);
     }
 
     public String nodeId() {
-        return consensusConfig.nodeId();
-    }
-
-    public ClusterMembership membership() {
-        return consensusConfig.membership();
-    }
-
-    public Set<String> memberIds() {
-        return consensusConfig.membership().memberIds();
+        return nodeId;
     }
 
     public Path dataDirectory() {
         return dataDirectory;
     }
 
-    public StorageOptions storageOptions() {
-        return storageOptions;
+    public ClusterMembership membership() {
+        return membership;
     }
 
-    public ConsensusConfig consensusConfig() {
-        return consensusConfig;
+    public Set<String> memberIds() {
+        return membership.memberIds();
     }
 
-    public static Builder builder(String nodeId, Path dataDirectory) {
-        return new Builder(nodeId, dataDirectory);
+    public StorageConfig storage() {
+        return storage;
+    }
+
+    public ReplicationConfig replication() {
+        return replication;
+    }
+
+    ConsensusConfig toConsensusConfig() {
+        return replication.toConsensusConfig(nodeId, membership);
     }
 
     @Override
@@ -56,39 +72,50 @@ public final class PartDbNodeConfig {
         if (!(obj instanceof PartDbNodeConfig other)) {
             return false;
         }
-        return consensusConfig.equals(other.consensusConfig)
+        return nodeId.equals(other.nodeId)
             && dataDirectory.equals(other.dataDirectory)
-            && storageOptions.equals(other.storageOptions);
+            && membership.equals(other.membership)
+            && storage.equals(other.storage)
+            && replication.equals(other.replication);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(nodeId(), consensusConfig, dataDirectory, storageOptions);
+        return Objects.hash(nodeId, dataDirectory, membership, storage, replication);
     }
 
     @Override
     public String toString() {
         return "PartDbNodeConfig{"
-            + "nodeId='" + nodeId() + '\''
-            + ", membership=" + membership()
+            + "nodeId='" + nodeId + '\''
             + ", dataDirectory=" + dataDirectory
-            + ", storageOptions=" + storageOptions
-            + ", consensusConfig=" + consensusConfig
+            + ", membership=" + membership
+            + ", storage=" + storage
+            + ", replication=" + replication
             + '}';
     }
 
     public static final class Builder {
         private final String nodeId;
         private final Path dataDirectory;
-        private StorageOptions storageOptions = StorageOptions.defaults();
-        private final ConsensusConfig.Builder consensusConfigBuilder;
         private ClusterMembership membership;
+        private StorageConfig storage = StorageConfig.defaults();
+        private ReplicationConfig replication = ReplicationConfig.defaults();
+        private ReplicationConfig.Builder replicationBuilder = ReplicationConfig.defaults().toBuilder();
 
         private Builder(String nodeId, Path dataDirectory) {
-            this.nodeId = nodeId;
-            this.dataDirectory = dataDirectory;
-            this.consensusConfigBuilder = ConsensusConfig.builder(nodeId);
+            this.nodeId = requireNonBlank(nodeId, "nodeId");
+            this.dataDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
             this.membership = ClusterMembership.ofVoters(nodeId);
+        }
+
+        private Builder(PartDbNodeConfig config) {
+            this.nodeId = config.nodeId;
+            this.dataDirectory = config.dataDirectory;
+            this.membership = config.membership;
+            this.storage = config.storage;
+            this.replication = config.replication;
+            this.replicationBuilder = config.replication.toBuilder();
         }
 
         public Builder voters(String... voterIds) {
@@ -106,38 +133,43 @@ public final class PartDbNodeConfig {
             return this;
         }
 
-        public Builder storageOptions(StorageOptions storageOptions) {
-            this.storageOptions = Objects.requireNonNull(storageOptions, "storageOptions must not be null");
+        public Builder storage(StorageConfig storage) {
+            this.storage = Objects.requireNonNull(storage, "storage must not be null");
+            return this;
+        }
+
+        public Builder replication(ReplicationConfig replication) {
+            this.replicationBuilder = Objects.requireNonNull(replication, "replication must not be null").toBuilder();
             return this;
         }
 
         public Builder tickInterval(java.time.Duration tickInterval) {
-            consensusConfigBuilder.tickInterval(tickInterval);
+            this.replicationBuilder.tickInterval(tickInterval);
             return this;
         }
 
         public Builder electionTimeoutMinTicks(int ticks) {
-            consensusConfigBuilder.electionTimeoutMinTicks(ticks);
+            this.replicationBuilder.electionTimeoutMinTicks(ticks);
             return this;
         }
 
         public Builder electionTimeoutMaxTicks(int ticks) {
-            consensusConfigBuilder.electionTimeoutMaxTicks(ticks);
+            this.replicationBuilder.electionTimeoutMaxTicks(ticks);
             return this;
         }
 
         public Builder heartbeatIntervalTicks(int ticks) {
-            consensusConfigBuilder.heartbeatIntervalTicks(ticks);
+            this.replicationBuilder.heartbeatIntervalTicks(ticks);
             return this;
         }
 
         public Builder maxEntriesPerAppend(int count) {
-            consensusConfigBuilder.maxEntriesPerAppend(count);
+            this.replicationBuilder.maxEntriesPerAppend(count);
             return this;
         }
 
         public PartDbNodeConfig build() {
-            consensusConfigBuilder.membership(membership);
+            this.replication = replicationBuilder.build();
             return new PartDbNodeConfig(this);
         }
     }

@@ -13,6 +13,7 @@ final class RaftStepAccumulator {
     private final List<RaftReady.ApplyEntry> toApply = new ArrayList<>();
     private final List<RaftReady.ReadState> readStates = new ArrayList<>();
     private final List<RaftReady.MembershipTransition> membershipTransitions = new ArrayList<>();
+    private long appliedThroughIndex;
     private RaftSnapshot incomingSnapshot;
     private RaftReady.SnapshotTransfer snapshotTransfer;
 
@@ -40,6 +41,10 @@ final class RaftStepAccumulator {
         membershipTransitions.add(new RaftReady.MembershipTransition(index, previous, current));
     }
 
+    void advanceAppliedThrough(long index) {
+        appliedThroughIndex = Math.max(appliedThroughIndex, index);
+    }
+
     void setIncomingSnapshot(RaftSnapshot snapshot) {
         this.incomingSnapshot = snapshot;
     }
@@ -61,7 +66,8 @@ final class RaftStepAccumulator {
         var application = new RaftReady.Application(
             List.copyOf(toApply),
             List.copyOf(readStates),
-            List.copyOf(membershipTransitions)
+            List.copyOf(membershipTransitions),
+            appliedThroughIndex
         );
 
         return new RaftReady(persistence, List.copyOf(messages), application, Optional.ofNullable(snapshotTransfer));

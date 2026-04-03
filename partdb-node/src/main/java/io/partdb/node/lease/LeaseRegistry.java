@@ -72,8 +72,11 @@ public final class LeaseRegistry {
         if (leaseId == 0) {
             return true;
         }
-        var lease = byId.get(leaseId);
-        return lease != null && !lease.isExpired();
+        return byId.containsKey(leaseId);
+    }
+
+    public int leaseCount() {
+        return byId.size();
     }
 
     public LeaseExpiry pollExpired(Duration timeout) throws InterruptedException {

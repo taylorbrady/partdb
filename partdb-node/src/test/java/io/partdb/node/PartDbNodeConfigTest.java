@@ -1,8 +1,8 @@
 package io.partdb.node;
 
-import io.partdb.consensus.ClusterMembership;
-import io.partdb.consensus.ConsensusConfig;
-import io.partdb.storage.StorageOptions;
+import io.partdb.node.cluster.ClusterMembership;
+import io.partdb.node.config.ReplicationConfig;
+import io.partdb.node.config.StorageConfig;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -23,17 +23,17 @@ class PartDbNodeConfigTest {
         assertEquals(Path.of("data/node1"), config.dataDirectory());
         assertEquals(ClusterMembership.ofVoters("node1"), config.membership());
         assertEquals(Set.of("node1"), config.memberIds());
-        assertEquals(StorageOptions.defaults(), config.storageOptions());
-        assertEquals(ConsensusConfig.builder("node1").build(), config.consensusConfig());
+        assertEquals(StorageConfig.defaults(), config.storage());
+        assertEquals(ReplicationConfig.defaults(), config.replication());
     }
 
     @Test
     void builderSupportsAdvancedOverrides() {
-        var storageOptions = StorageOptions.defaults();
+        var storage = StorageConfig.defaults();
         var config = PartDbNodeConfig.builder("node2", Path.of("data/node2"))
             .voters("node1", "node2")
             .tickInterval(Duration.ofMillis(25))
-            .storageOptions(storageOptions)
+            .storage(storage)
             .electionTimeoutMinTicks(20)
             .electionTimeoutMaxTicks(40)
             .heartbeatIntervalTicks(5)
@@ -41,12 +41,12 @@ class PartDbNodeConfigTest {
             .build();
 
         assertEquals(Set.of("node1", "node2"), config.memberIds());
-        assertEquals(storageOptions, config.storageOptions());
-        assertEquals(Duration.ofMillis(25), config.consensusConfig().tickInterval());
-        assertEquals(20, config.consensusConfig().electionTimeoutMinTicks());
-        assertEquals(40, config.consensusConfig().electionTimeoutMaxTicks());
-        assertEquals(5, config.consensusConfig().heartbeatIntervalTicks());
-        assertEquals(250, config.consensusConfig().maxEntriesPerAppend());
+        assertEquals(storage, config.storage());
+        assertEquals(Duration.ofMillis(25), config.replication().tickInterval());
+        assertEquals(20, config.replication().electionTimeoutMinTicks());
+        assertEquals(40, config.replication().electionTimeoutMaxTicks());
+        assertEquals(5, config.replication().heartbeatIntervalTicks());
+        assertEquals(250, config.replication().maxEntriesPerAppend());
     }
 
     @Test

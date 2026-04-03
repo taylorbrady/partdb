@@ -52,18 +52,22 @@ public record RaftReady(
     public record Application(
         List<ApplyEntry> entries,
         List<ReadState> readStates,
-        List<MembershipTransition> membershipTransitions
+        List<MembershipTransition> membershipTransitions,
+        long appliedThroughIndex
     ) {
         public Application {
             entries = List.copyOf(Objects.requireNonNull(entries, "entries must not be null"));
             readStates = List.copyOf(Objects.requireNonNull(readStates, "readStates must not be null"));
             membershipTransitions = List.copyOf(Objects.requireNonNull(membershipTransitions, "membershipTransitions must not be null"));
+            if (appliedThroughIndex < 0) {
+                throw new IllegalArgumentException("appliedThroughIndex must not be negative");
+            }
         }
 
-        public static final Application EMPTY = new Application(List.of(), List.of(), List.of());
+        public static final Application EMPTY = new Application(List.of(), List.of(), List.of(), 0);
 
         public boolean hasWork() {
-            return !entries.isEmpty() || !readStates.isEmpty() || !membershipTransitions.isEmpty();
+            return !entries.isEmpty() || !readStates.isEmpty() || !membershipTransitions.isEmpty() || appliedThroughIndex > 0;
         }
     }
 
