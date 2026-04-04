@@ -1,27 +1,27 @@
 package io.partdb.raft;
 
-public sealed interface MembershipChange {
+public sealed interface ConfigurationChange {
     String nodeId();
 
-    record AddLearner(String nodeId) implements MembershipChange {
+    record AddLearner(String nodeId) implements ConfigurationChange {
         public AddLearner {
             nodeId = requireNodeId(nodeId);
         }
     }
 
-    record PromoteVoter(String nodeId) implements MembershipChange {
-        public PromoteVoter {
+    record PromoteToVoter(String nodeId) implements ConfigurationChange {
+        public PromoteToVoter {
             nodeId = requireNodeId(nodeId);
         }
     }
 
-    record DemoteToLearner(String nodeId) implements MembershipChange {
+    record DemoteToLearner(String nodeId) implements ConfigurationChange {
         public DemoteToLearner {
             nodeId = requireNodeId(nodeId);
         }
     }
 
-    record RemoveNode(String nodeId) implements MembershipChange {
+    record RemoveNode(String nodeId) implements ConfigurationChange {
         public RemoveNode {
             nodeId = requireNodeId(nodeId);
         }

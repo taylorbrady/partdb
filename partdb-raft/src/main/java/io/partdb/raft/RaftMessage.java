@@ -70,7 +70,7 @@ public sealed interface RaftMessage {
         String leaderId,
         long lastIncludedIndex,
         long lastIncludedTerm,
-        RaftMembership membership,
+        RaftConfiguration configuration,
         Bytes data
     ) implements Request {
         public InstallSnapshot {
@@ -78,7 +78,7 @@ public sealed interface RaftMessage {
                 throw new IllegalArgumentException("term must be non-negative");
             }
             Objects.requireNonNull(leaderId, "leaderId must not be null");
-            Objects.requireNonNull(membership, "membership must not be null");
+            Objects.requireNonNull(configuration, "configuration must not be null");
             data = Objects.requireNonNull(data, "data must not be null");
         }
     }

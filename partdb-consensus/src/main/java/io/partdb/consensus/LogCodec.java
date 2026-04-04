@@ -3,7 +3,7 @@ package io.partdb.consensus;
 import io.partdb.bytes.Bytes;
 import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.LogEntry;
-import io.partdb.raft.RaftMembership;
+import io.partdb.raft.RaftConfiguration;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -35,11 +35,11 @@ final class LogCodec {
                 buf.putLong(index);
                 buf.putLong(term);
             }
-            case LogEntry.Config(long index, long term, RaftMembership membership) -> {
+            case LogEntry.Config(long index, long term, RaftConfiguration configuration) -> {
                 buf.put(ENTRY_TYPE_CONFIG);
                 buf.putLong(index);
                 buf.putLong(term);
-                writeMembership(buf, membership);
+                writeConfiguration(buf, configuration);
             }
         }
     }
@@ -58,8 +58,8 @@ final class LogCodec {
             }
             case ENTRY_TYPE_NOOP -> new LogEntry.NoOp(index, term);
             case ENTRY_TYPE_CONFIG -> {
-                RaftMembership membership = readMembership(buf);
-                yield new LogEntry.Config(index, term, membership);
+                RaftConfiguration configuration = readConfiguration(buf);
+                yield new LogEntry.Config(index, term, configuration);
             }
             default -> throw new IllegalArgumentException("Unknown entry type: " + type);
         };
@@ -69,7 +69,7 @@ final class LogCodec {
         return switch (entry) {
             case LogEntry.Data(long index, long term, Bytes data) -> 1 + 8 + 8 + 4 + data.size();
             case LogEntry.NoOp(long index, long term) -> 1 + 8 + 8;
-            case LogEntry.Config(long index, long term, RaftMembership membership) -> 1 + 8 + 8 + membershipSize(membership);
+            case LogEntry.Config(long index, long term, RaftConfiguration configuration) -> 1 + 8 + 8 + configurationSize(configuration);
         };
     }
 
@@ -106,19 +106,19 @@ final class LogCodec {
         return size;
     }
 
-    public static void writeMembership(ByteBuffer buf, RaftMembership membership) {
-        writeStringSet(buf, membership.voters());
-        writeStringSet(buf, membership.learners());
+    public static void writeConfiguration(ByteBuffer buf, RaftConfiguration configuration) {
+        writeStringSet(buf, configuration.voters());
+        writeStringSet(buf, configuration.learners());
     }
 
-    public static RaftMembership readMembership(ByteBuffer buf) {
+    public static RaftConfiguration readConfiguration(ByteBuffer buf) {
         Set<String> voters = readStringSet(buf);
         Set<String> learners = readStringSet(buf);
-        return new RaftMembership(voters, learners);
+        return new RaftConfiguration(voters, learners);
     }
 
-    public static int membershipSize(RaftMembership membership) {
-        return stringSetSize(membership.voters()) + stringSetSize(membership.learners());
+    public static int configurationSize(RaftConfiguration configuration) {
+        return stringSetSize(configuration.voters()) + stringSetSize(configuration.learners());
     }
 
     private static void writeStringSet(ByteBuffer buf, Set<String> set) {

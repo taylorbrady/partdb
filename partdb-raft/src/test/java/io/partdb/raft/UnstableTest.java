@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class UnstableTest {
 
-    private static final RaftMembership MEMBERSHIP = RaftMembership.ofVoters("n1", "n2", "n3");
+    private static final RaftConfiguration CONFIGURATION = RaftConfiguration.ofVoters("n1", "n2", "n3");
 
     private LogEntry entry(long index, long term) {
         return new LogEntry.Data(index, term, Bytes.EMPTY);
@@ -83,7 +83,7 @@ class UnstableTest {
         @Test
         void setsSnapshot() {
             var unstable = new UnstableLog(1);
-            var snapshot = new RaftSnapshot(10, 2, MEMBERSHIP, Bytes.EMPTY);
+            var snapshot = new RaftSnapshot(10, 2, CONFIGURATION, Bytes.EMPTY);
 
             unstable.acceptSnapshot(snapshot);
 
@@ -97,7 +97,7 @@ class UnstableTest {
             unstable.append(entry(1, 1));
             unstable.append(entry(2, 1));
 
-            unstable.acceptSnapshot(new RaftSnapshot(10, 2, MEMBERSHIP, Bytes.EMPTY));
+            unstable.acceptSnapshot(new RaftSnapshot(10, 2, CONFIGURATION, Bytes.EMPTY));
 
             assertFalse(unstable.hasEntries());
         }
@@ -106,7 +106,7 @@ class UnstableTest {
         void updatesOffset() {
             var unstable = new UnstableLog(1);
 
-            unstable.acceptSnapshot(new RaftSnapshot(10, 2, MEMBERSHIP, Bytes.EMPTY));
+            unstable.acceptSnapshot(new RaftSnapshot(10, 2, CONFIGURATION, Bytes.EMPTY));
 
             assertEquals(11, unstable.offset());
         }
@@ -190,7 +190,7 @@ class UnstableTest {
         @Test
         void clearsSnapshot() {
             var unstable = new UnstableLog(1);
-            unstable.acceptSnapshot(new RaftSnapshot(10, 2, MEMBERSHIP, Bytes.EMPTY));
+            unstable.acceptSnapshot(new RaftSnapshot(10, 2, CONFIGURATION, Bytes.EMPTY));
             assertTrue(unstable.hasSnapshot());
 
             unstable.snapshotStabilized();
@@ -245,7 +245,7 @@ class UnstableTest {
         @Test
         void returnsTermFromSnapshot() {
             var unstable = new UnstableLog(1);
-            unstable.acceptSnapshot(new RaftSnapshot(10, 5, MEMBERSHIP, Bytes.EMPTY));
+            unstable.acceptSnapshot(new RaftSnapshot(10, 5, CONFIGURATION, Bytes.EMPTY));
 
             assertEquals(5L, unstable.term(10));
         }
@@ -332,7 +332,7 @@ class UnstableTest {
         @Test
         void returnsFromSnapshotWhenNoEntries() {
             var unstable = new UnstableLog(1);
-            unstable.acceptSnapshot(new RaftSnapshot(10, 5, MEMBERSHIP, Bytes.EMPTY));
+            unstable.acceptSnapshot(new RaftSnapshot(10, 5, CONFIGURATION, Bytes.EMPTY));
 
             assertEquals(10, unstable.lastIndex());
             assertEquals(5, unstable.lastTerm());
@@ -349,7 +349,7 @@ class UnstableTest {
         @Test
         void prefersEntriesOverSnapshot() {
             var unstable = new UnstableLog(1);
-            unstable.acceptSnapshot(new RaftSnapshot(10, 5, MEMBERSHIP, Bytes.EMPTY));
+            unstable.acceptSnapshot(new RaftSnapshot(10, 5, CONFIGURATION, Bytes.EMPTY));
             unstable.append(entry(11, 6));
 
             assertEquals(11, unstable.lastIndex());
@@ -374,7 +374,7 @@ class UnstableTest {
             var unstable = new UnstableLog(1);
             assertFalse(unstable.hasSnapshot());
 
-            unstable.acceptSnapshot(new RaftSnapshot(10, 2, MEMBERSHIP, Bytes.EMPTY));
+            unstable.acceptSnapshot(new RaftSnapshot(10, 2, CONFIGURATION, Bytes.EMPTY));
 
             assertTrue(unstable.hasSnapshot());
         }

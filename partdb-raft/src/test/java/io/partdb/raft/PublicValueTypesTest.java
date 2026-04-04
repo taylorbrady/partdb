@@ -24,11 +24,11 @@ class PublicValueTypesTest {
     @Test
     void snapshotHasValueSemantics() {
         byte[] data = "snapshot".getBytes(StandardCharsets.UTF_8);
-        var snapshot = new RaftSnapshot(3, 2, RaftMembership.ofVoters("n1"), Bytes.copyOf(data));
+        var snapshot = new RaftSnapshot(3, 2, RaftConfiguration.ofVoters("n1"), Bytes.copyOf(data));
 
         data[0] = 'S';
         assertEquals(Bytes.utf8("snapshot"), snapshot.data());
-        assertEquals(new RaftSnapshot(3, 2, RaftMembership.ofVoters("n1"), Bytes.utf8("snapshot")), snapshot);
+        assertEquals(new RaftSnapshot(3, 2, RaftConfiguration.ofVoters("n1"), Bytes.utf8("snapshot")), snapshot);
     }
 
     @Test

@@ -21,25 +21,25 @@ class RaftTest {
     }
 
     private Raft createRaft(String id, String... allVoters) {
-        var membership = RaftMembership.ofVoters(allVoters);
-        var storage = new InMemoryStorage(membership);
-        return Raft.builder(id, membership, CONFIG, storage)
+        var configuration = RaftConfiguration.ofVoters(allVoters);
+        var storage = new InMemoryStorage(configuration);
+        return Raft.builder(id, configuration, CONFIG, storage)
             .random(_ -> DETERMINISTIC_JITTER)
             .build();
     }
 
-    private Raft createRaft(String id, RaftMembership membership, RaftConfig config) {
-        var storage = new InMemoryStorage(membership);
-        return Raft.builder(id, membership, config, storage)
+    private Raft createRaft(String id, RaftConfiguration configuration, RaftConfig config) {
+        var storage = new InMemoryStorage(configuration);
+        return Raft.builder(id, configuration, config, storage)
             .random(_ -> DETERMINISTIC_JITTER)
             .build();
     }
 
     private Raft createRaftWithLog(String id, List<LogEntry> entries, RaftPersistentState hardState, String... allVoters) {
-        var membership = RaftMembership.ofVoters(allVoters);
-        var storage = new InMemoryStorage(membership);
+        var configuration = RaftConfiguration.ofVoters(allVoters);
+        var storage = new InMemoryStorage(configuration);
         storage.append(null, entries);
-        var raft = Raft.builder(id, membership, CONFIG, storage)
+        var raft = Raft.builder(id, configuration, CONFIG, storage)
             .random(_ -> DETERMINISTIC_JITTER)
             .build();
         raft.restore(hardState, 0);
@@ -47,9 +47,9 @@ class RaftTest {
     }
 
     private Raft createRaftWithSnapshot(String id, RaftPersistentState hardState, long snapIndex, String... allVoters) {
-        var membership = RaftMembership.ofVoters(allVoters);
-        var storage = new InMemoryStorage(membership);
-        var raft = Raft.builder(id, membership, CONFIG, storage)
+        var configuration = RaftConfiguration.ofVoters(allVoters);
+        var storage = new InMemoryStorage(configuration);
+        var raft = Raft.builder(id, configuration, CONFIG, storage)
             .random(_ -> DETERMINISTIC_JITTER)
             .build();
         raft.restore(hardState, snapIndex);
@@ -57,13 +57,13 @@ class RaftTest {
     }
 
     private Raft createRaftWithCompactedSnapshot(String id, long snapIndex, long snapTerm, String... allVoters) {
-        var membership = RaftMembership.ofVoters(allVoters);
-        var storage = new InMemoryStorage(membership);
+        var configuration = RaftConfiguration.ofVoters(allVoters);
+        var storage = new InMemoryStorage(configuration);
         for (int i = 1; i <= snapIndex; i++) {
             storage.append(null, List.of(new LogEntry.Data(i, snapTerm, Bytes.EMPTY)));
         }
-        storage.saveSnapshot(new RaftSnapshot(snapIndex, snapTerm, membership, Bytes.EMPTY));
-        var raft = Raft.builder(id, membership, CONFIG, storage)
+        storage.saveSnapshot(new RaftSnapshot(snapIndex, snapTerm, configuration, Bytes.EMPTY));
+        var raft = Raft.builder(id, configuration, CONFIG, storage)
             .random(_ -> DETERMINISTIC_JITTER)
             .build();
         raft.restore(RaftPersistentState.INITIAL, snapIndex);
@@ -238,9 +238,9 @@ class RaftTest {
         @Test
         void electionTimeoutIsRandomized() {
             var counter = new AtomicInteger(0);
-            var membership = RaftMembership.ofVoters("n1", "n2");
-            var storage = new InMemoryStorage(membership);
-            var raft = Raft.builder("n1", membership, RaftConfig.defaults(), storage)
+            var configuration = RaftConfiguration.ofVoters("n1", "n2");
+            var storage = new InMemoryStorage(configuration);
+            var raft = Raft.builder("n1", configuration, RaftConfig.defaults(), storage)
                 .random(_ -> counter.incrementAndGet())
                 .build();
 
@@ -582,7 +582,7 @@ class RaftTest {
         @Test
         void leaderSendsHeartbeatsAtInterval() {
             var config = new RaftConfig(10, 20, 3, 100);
-            var raft = createRaft("n1", RaftMembership.ofVoters("n1", "n2", "n3"), config);
+            var raft = createRaft("n1", RaftConfiguration.ofVoters("n1", "n2", "n3"), config);
             becomeLeader(raft, List.of("n2"));
 
             for (int i = 0; i < 2; i++) {
@@ -616,7 +616,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 10, 1, RaftMembership.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
+                1, "n2", 10, 1, RaftConfiguration.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
             );
             var ready = raft.step(new RaftEvent.Receive("n2", snapshot));
 
@@ -637,7 +637,7 @@ class RaftTest {
             assertEquals(1, raft.commitIndex());
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 1, 1, RaftMembership.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
+                1, "n2", 1, 1, RaftConfiguration.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
             );
             var ready = raft.step(new RaftEvent.Receive("n2", snapshot));
 
@@ -720,7 +720,7 @@ class RaftTest {
             assertEquals(5, raft.term());
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                3, "n3", 10, 3, RaftMembership.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
+                3, "n3", 10, 3, RaftConfiguration.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
             );
             var ready = raft.step(new RaftEvent.Receive("n3", snapshot));
 
@@ -739,7 +739,7 @@ class RaftTest {
             }
 
             var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 10, 1, RaftMembership.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
+                1, "n2", 10, 1, RaftConfiguration.ofVoters("n1", "n2", "n3"), bytes("snapshot-data")
             );
             raft.step(new RaftEvent.Receive("n2", snapshot));
 
@@ -1483,9 +1483,9 @@ class RaftTest {
     @Nested
     class Learners {
         private Raft createLearner(String id, Set<String> voters, Set<String> learners) {
-            var membership = new RaftMembership(voters, learners);
-            var storage = new InMemoryStorage(membership);
-            return Raft.builder(id, membership, CONFIG, storage)
+            var configuration = new RaftConfiguration(voters, learners);
+            var storage = new InMemoryStorage(configuration);
+            return Raft.builder(id, configuration, CONFIG, storage)
                 .random(_ -> DETERMINISTIC_JITTER)
                 .build();
         }
@@ -1534,8 +1534,8 @@ class RaftTest {
 
         @Test
         void learnerDoesNotCountInQuorum() {
-            var membership = new RaftMembership(Set.of("n1", "n2", "n3"), Set.of("n4"));
-            var leader = createRaft("n1", membership, CONFIG);
+            var configuration = new RaftConfiguration(Set.of("n1", "n2", "n3"), Set.of("n4"));
+            var leader = createRaft("n1", configuration, CONFIG);
             becomeLeader(leader, List.of("n2", "n3"));
 
             leader.step(new RaftEvent.Propose(bytes("hello")));
@@ -1587,8 +1587,8 @@ class RaftTest {
 
         @Test
         void learnerDoesNotReceiveVoteRequests() {
-            var membership = new RaftMembership(Set.of("n1", "n2"), Set.of("n3"));
-            var voter = createRaft("n1", membership, CONFIG);
+            var configuration = new RaftConfiguration(Set.of("n1", "n2"), Set.of("n3"));
+            var voter = createRaft("n1", configuration, CONFIG);
 
             var ready = tickUntilTimeout(voter);
             assertEquals(RaftRole.PRE_CANDIDATE, voter.role());
@@ -1604,8 +1604,8 @@ class RaftTest {
 
         @Test
         void leaderReplicatesToLearner() {
-            var membership = new RaftMembership(Set.of("n1", "n2"), Set.of("n3"));
-            var leader = createRaft("n1", membership, CONFIG);
+            var configuration = new RaftConfiguration(Set.of("n1", "n2"), Set.of("n3"));
+            var leader = createRaft("n1", configuration, CONFIG);
             becomeLeader(leader, List.of("n2"));
 
             var ready = leader.step(new RaftEvent.Propose(bytes("hello")));
@@ -1621,31 +1621,31 @@ class RaftTest {
     }
 
     @Nested
-    class ConfigChanges {
+    class ConfigurationChanges {
         @Test
         void leaderAddsLearner() {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.AddLearner("n4")));
 
             var configEntry = findEntry(ready, LogEntry.Config.class);
             assertTrue(configEntry.isPresent());
-            assertTrue(configEntry.get().membership().isLearner("n4"));
+            assertTrue(configEntry.get().configuration().isLearner("n4"));
         }
 
         @Test
         void leaderPromotesLearner() {
-            var membership = new RaftMembership(Set.of("n1", "n2"), Set.of("n3"));
-            var raft = createRaft("n1", membership, CONFIG);
+            var configuration = new RaftConfiguration(Set.of("n1", "n2"), Set.of("n3"));
+            var raft = createRaft("n1", configuration, CONFIG);
             becomeLeader(raft, List.of("n2"));
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.PromoteVoter("n3")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.PromoteToVoter("n3")));
 
             var configEntry = findEntry(ready, LogEntry.Config.class);
             assertTrue(configEntry.isPresent());
-            assertTrue(configEntry.get().membership().isVoter("n3"));
-            assertFalse(configEntry.get().membership().isLearner("n3"));
+            assertTrue(configEntry.get().configuration().isVoter("n3"));
+            assertFalse(configEntry.get().configuration().isLearner("n3"));
         }
 
         @Test
@@ -1653,12 +1653,12 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.DemoteToLearner("n3")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.DemoteToLearner("n3")));
 
             var configEntry = findEntry(ready, LogEntry.Config.class);
             assertTrue(configEntry.isPresent());
-            assertTrue(configEntry.get().membership().isLearner("n3"));
-            assertFalse(configEntry.get().membership().isVoter("n3"));
+            assertTrue(configEntry.get().configuration().isLearner("n3"));
+            assertFalse(configEntry.get().configuration().isVoter("n3"));
         }
 
         @Test
@@ -1666,18 +1666,18 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.RemoveNode("n3")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.RemoveNode("n3")));
 
             var configEntry = findEntry(ready, LogEntry.Config.class);
             assertTrue(configEntry.isPresent());
-            assertFalse(configEntry.get().membership().isMember("n3"));
+            assertFalse(configEntry.get().configuration().isMember("n3"));
         }
 
         @Test
         void nonLeaderIgnoresConfigChange() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.AddLearner("n4")));
 
             assertTrue(ready.persistence().entries().isEmpty());
             assertTrue(ready.messages().isEmpty());
@@ -1688,9 +1688,9 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
+            raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.AddLearner("n4")));
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n5")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.AddLearner("n5")));
 
             assertTrue(findEntry(ready, LogEntry.Config.class).isEmpty());
         }
@@ -1701,20 +1701,20 @@ class RaftTest {
             tickUntilTimeout(raft);
             assertTrue(raft.isLeader());
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n2")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.AddLearner("n2")));
 
-            assertEquals(1, ready.application().membershipTransitions().size());
-            var change = ready.application().membershipTransitions().getFirst();
+            assertEquals(1, ready.application().configurationTransitions().size());
+            var change = ready.application().configurationTransitions().getFirst();
             assertFalse(change.previous().isMember("n2"));
             assertTrue(change.current().isLearner("n2"));
         }
 
         @Test
-        void configChangeUpdatesQuorum() {
+        void configurationChangeUpdatesQuorum() {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.DemoteToLearner("n3")));
+            raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.DemoteToLearner("n3")));
 
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
@@ -1726,7 +1726,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.RemoveNode("n1")));
+            raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.RemoveNode("n1")));
 
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
@@ -1738,7 +1738,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.RemoveNode("n1")));
+            raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.RemoveNode("n1")));
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
             for (int i = 0; i < CONFIG.electionTimeoutMax() * 2; i++) {
@@ -1753,7 +1753,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.DemoteToLearner("n1")));
+            raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.DemoteToLearner("n1")));
 
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
@@ -1761,17 +1761,17 @@ class RaftTest {
         }
 
         @Test
-        void configChangeAppliesOnCommit() {
+        void configurationChangeAppliesOnCommit() {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
-            assertFalse(raft.membership().isLearner("n4"));
+            raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.AddLearner("n4")));
+            assertFalse(raft.configuration().isLearner("n4"));
 
             var ready = raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
-            assertTrue(raft.membership().isLearner("n4"));
-            assertEquals(1, ready.application().membershipTransitions().size());
+            assertTrue(raft.configuration().isLearner("n4"));
+            assertEquals(1, ready.application().configurationTransitions().size());
         }
 
         @Test
@@ -1780,7 +1780,7 @@ class RaftTest {
             tickUntilTimeout(raft);
             assertTrue(raft.isLeader());
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.DemoteToLearner("n1")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.DemoteToLearner("n1")));
 
             assertTrue(findEntry(ready, LogEntry.Config.class).isEmpty());
         }
@@ -1791,7 +1791,7 @@ class RaftTest {
             tickUntilTimeout(raft);
             assertTrue(raft.isLeader());
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.RemoveNode("n1")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.RemoveNode("n1")));
 
             assertTrue(findEntry(ready, LogEntry.Config.class).isEmpty());
         }
@@ -1801,7 +1801,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n2")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.AddLearner("n2")));
 
             assertTrue(findEntry(ready, LogEntry.Config.class).isEmpty());
         }
@@ -1811,7 +1811,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.PromoteVoter("n4")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.PromoteToVoter("n4")));
 
             assertTrue(findEntry(ready, LogEntry.Config.class).isEmpty());
         }
@@ -1821,14 +1821,14 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
+            raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.AddLearner("n4")));
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
-            var ready = raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n5")));
+            var ready = raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.AddLearner("n5")));
 
             var configEntry = findEntry(ready, LogEntry.Config.class);
             assertTrue(configEntry.isPresent());
-            assertTrue(configEntry.get().membership().isLearner("n5"));
+            assertTrue(configEntry.get().configuration().isLearner("n5"));
         }
 
         @Test
@@ -1836,7 +1836,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.AddLearner("n4")));
+            raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.AddLearner("n4")));
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
             var ready = tickHeartbeat(raft);
@@ -1853,7 +1853,7 @@ class RaftTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftEvent.ChangeMembership(new MembershipChange.RemoveNode("n3")));
+            raft.step(new RaftEvent.ChangeConfiguration(new ConfigurationChange.RemoveNode("n3")));
             raft.step(new RaftEvent.Receive("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
 
             var ready = tickHeartbeat(raft);

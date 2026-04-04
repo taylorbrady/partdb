@@ -3,8 +3,6 @@ package io.partdb.node;
 import io.partdb.bytes.Bytes;
 import io.partdb.node.cluster.NodeRole;
 import io.partdb.node.lease.LeaseGrant;
-import io.partdb.node.replication.ReplicationRpc;
-import io.partdb.node.replication.ReplicationTransport;
 import io.partdb.node.recovery.LogicalBackup;
 import io.partdb.node.recovery.PartDbRecovery;
 import io.partdb.node.recovery.RecoveryOptions;
@@ -15,7 +13,6 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -33,7 +30,7 @@ class PartDbBootstrapTest {
             .build();
 
         LogicalBackup backup;
-        try (var node = PartDbNode.open(sourceConfig, new NoOpReplicationTransport())) {
+        try (var node = PartDbNode.open(sourceConfig)) {
             awaitLeader(node);
 
             LeaseGrant leaseGrant = node.leases().grant(Duration.ofSeconds(30)).toCompletableFuture().get(5, TimeUnit.SECONDS);
@@ -59,7 +56,7 @@ class PartDbBootstrapTest {
         assertEquals(1, result.deletedLeaseAttachedKeyCount());
         assertTrue(result.finalRevision() >= backup.appliedIndex());
 
-        try (var recovered = PartDbNode.open(recoveredConfig, new NoOpReplicationTransport())) {
+        try (var recovered = PartDbNode.open(recoveredConfig)) {
             awaitLeader(recovered);
 
             assertEquals(
@@ -95,20 +92,5 @@ class PartDbBootstrapTest {
 
     private static Bytes bytes(String value) {
         return Bytes.utf8(value);
-    }
-
-    private static final class NoOpReplicationTransport implements ReplicationTransport {
-        @Override
-        public void start(RpcHandler handler) {
-        }
-
-        @Override
-        public CompletableFuture<ReplicationRpc.Response> send(String to, ReplicationRpc.Request request) {
-            return CompletableFuture.failedFuture(new UnsupportedOperationException("single-node transport"));
-        }
-
-        @Override
-        public void close() {
-        }
     }
 }

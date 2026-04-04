@@ -1,14 +1,14 @@
 package io.partdb.node.internal.command;
 
 import io.partdb.consensus.CommitResult;
-import io.partdb.consensus.ConsensusNode;
+import io.partdb.consensus.ConsensusRuntime;
 
 import java.util.concurrent.CompletableFuture;
 
 public final class PartDbCommandExecutor {
-    private final ConsensusNode consensus;
+    private final ConsensusRuntime consensus;
 
-    public PartDbCommandExecutor(ConsensusNode consensus) {
+    public PartDbCommandExecutor(ConsensusRuntime consensus) {
         this.consensus = consensus;
     }
 

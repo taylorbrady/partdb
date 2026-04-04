@@ -18,8 +18,8 @@ public sealed interface RaftEvent {
         }
     }
 
-    record ChangeMembership(MembershipChange change) implements RaftEvent {
-        public ChangeMembership {
+    record ChangeConfiguration(ConfigurationChange change) implements RaftEvent {
+        public ChangeConfiguration {
             Objects.requireNonNull(change, "change must not be null");
         }
     }

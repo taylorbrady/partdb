@@ -52,13 +52,13 @@ public record RaftReady(
     public record Application(
         List<ApplyEntry> entries,
         List<ReadState> readStates,
-        List<MembershipTransition> membershipTransitions,
+        List<ConfigurationTransition> configurationTransitions,
         long appliedThroughIndex
     ) {
         public Application {
             entries = List.copyOf(Objects.requireNonNull(entries, "entries must not be null"));
             readStates = List.copyOf(Objects.requireNonNull(readStates, "readStates must not be null"));
-            membershipTransitions = List.copyOf(Objects.requireNonNull(membershipTransitions, "membershipTransitions must not be null"));
+            configurationTransitions = List.copyOf(Objects.requireNonNull(configurationTransitions, "configurationTransitions must not be null"));
             if (appliedThroughIndex < 0) {
                 throw new IllegalArgumentException("appliedThroughIndex must not be negative");
             }
@@ -67,7 +67,7 @@ public record RaftReady(
         public static final Application EMPTY = new Application(List.of(), List.of(), List.of(), 0);
 
         public boolean hasWork() {
-            return !entries.isEmpty() || !readStates.isEmpty() || !membershipTransitions.isEmpty() || appliedThroughIndex > 0;
+            return !entries.isEmpty() || !readStates.isEmpty() || !configurationTransitions.isEmpty() || appliedThroughIndex > 0;
         }
     }
 
@@ -87,5 +87,5 @@ public record RaftReady(
         }
     }
 
-    public record MembershipTransition(long index, RaftMembership previous, RaftMembership current) {}
+    public record ConfigurationTransition(long index, RaftConfiguration previous, RaftConfiguration current) {}
 }

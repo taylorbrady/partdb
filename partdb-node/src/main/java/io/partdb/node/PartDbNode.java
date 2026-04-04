@@ -3,14 +3,14 @@ package io.partdb.node;
 import io.partdb.bytes.Bytes;
 import io.partdb.cluster.ClusterMembership;
 import io.partdb.consensus.ConsensusException;
-import io.partdb.consensus.ConsensusNode;
 import io.partdb.consensus.ConsensusRole;
+import io.partdb.consensus.ConsensusRuntime;
+import io.partdb.consensus.ConsensusRuntimeFactory;
 import io.partdb.node.cluster.ClusterView;
 import io.partdb.node.cluster.NodeRole;
 import io.partdb.node.cluster.NodeStatus;
 import io.partdb.node.internal.command.PartDbCommands;
 import io.partdb.node.internal.command.PartDbCommandExecutor;
-import io.partdb.node.internal.replication.ConsensusTransportAdapter;
 import io.partdb.node.kv.DeleteResult;
 import io.partdb.node.kv.KeyRange;
 import io.partdb.node.kv.KeyValueEntry;
@@ -31,8 +31,6 @@ import io.partdb.node.lease.LeaseService;
 import io.partdb.node.metrics.MaintenanceOperations;
 import io.partdb.node.metrics.NodeMetrics;
 import io.partdb.node.metrics.StorageMetrics;
-import io.partdb.node.replication.ReplicationRpc;
-import io.partdb.node.replication.ReplicationTransport;
 import io.partdb.node.recovery.LogicalBackup;
 import io.partdb.node.state.PartDbStateMachine;
 import io.partdb.storage.StorageStats;
@@ -53,7 +51,7 @@ import java.util.stream.Stream;
 public final class PartDbNode implements AutoCloseable {
 
     private final PartDbStateMachine stateMachine;
-    private final ConsensusNode consensus;
+    private final ConsensusRuntime consensus;
     private final PartDbCommandExecutor commandExecutor;
     private final LeaseService leaseService;
     private final AtomicLong proposalCount = new AtomicLong();
@@ -64,24 +62,27 @@ public final class PartDbNode implements AutoCloseable {
     private final ClusterView cluster = new ClusterViewImpl();
     private final MaintenanceOperations maintenance = new MaintenanceView();
 
-    private PartDbNode(PartDbNodeConfig config, ReplicationTransport transport) {
+    private PartDbNode(PartDbNodeConfig config, ConsensusRuntimeFactory runtimeFactory) {
         Objects.requireNonNull(config, "config must not be null");
-        Objects.requireNonNull(transport, "transport must not be null");
+        Objects.requireNonNull(runtimeFactory, "runtimeFactory must not be null");
 
         this.stateMachine = PartDbStateMachine.open(
             config.dataDirectory().resolve("db"),
             config.storage().toStorageOptions()
         );
 
-        this.consensus = ConsensusNode.open(
-            config.dataDirectory().resolve("consensus"),
-            config.toConsensusConfig(),
-            new ConsensusTransportAdapter(transport),
-            stateMachine
-        );
-
-        this.commandExecutor = new PartDbCommandExecutor(consensus);
-        this.leaseService = new LeaseService(consensus, commandExecutor, stateMachine.leaseRegistry());
+        try {
+            this.consensus = runtimeFactory.open(
+                config.dataDirectory().resolve("consensus"),
+                config.toConsensusConfig(),
+                stateMachine
+            );
+            this.commandExecutor = new PartDbCommandExecutor(consensus);
+            this.leaseService = new LeaseService(consensus, commandExecutor, stateMachine.leaseRegistry());
+        } catch (RuntimeException | Error e) {
+            stateMachine.close();
+            throw e;
+        }
     }
 
     public static PartDbNode open(PartDbNodeConfig config) {
@@ -89,11 +90,11 @@ public final class PartDbNode implements AutoCloseable {
         if (config.memberIds().size() != 1) {
             throw new IllegalArgumentException("open(config) only supports single-node membership");
         }
-        return new PartDbNode(config, new SingleNodeTransport());
+        return new PartDbNode(config, ConsensusRuntimeFactory.singleNode());
     }
 
-    public static PartDbNode open(PartDbNodeConfig config, ReplicationTransport transport) {
-        return new PartDbNode(config, transport);
+    public static PartDbNode open(PartDbNodeConfig config, ConsensusRuntimeFactory runtimeFactory) {
+        return new PartDbNode(config, runtimeFactory);
     }
 
     public KeyValueOperations keyValues() {
@@ -385,18 +386,4 @@ public final class PartDbNode implements AutoCloseable {
         }
     }
 
-    private static final class SingleNodeTransport implements ReplicationTransport {
-        @Override
-        public void start(RpcHandler handler) {
-        }
-
-        @Override
-        public CompletableFuture<ReplicationRpc.Response> send(String to, ReplicationRpc.Request request) {
-            return CompletableFuture.failedFuture(new UnsupportedOperationException("single-node transport"));
-        }
-
-        @Override
-        public void close() {
-        }
-    }
 }

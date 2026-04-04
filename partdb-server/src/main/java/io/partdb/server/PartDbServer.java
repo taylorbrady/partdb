@@ -1,8 +1,9 @@
 package io.partdb.server;
 
+import io.partdb.consensus.ConsensusRuntimeFactory;
+import io.partdb.consensus.RaftConsensusRuntimeFactory;
 import io.partdb.node.PartDbNode;
-import io.partdb.node.replication.ReplicationTransport;
-import io.partdb.transport.grpc.GrpcReplicationTransport;
+import io.partdb.transport.grpc.GrpcRaftPeerTransport;
 import io.partdb.transport.grpc.GrpcServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,10 +23,10 @@ public final class PartDbServer implements AutoCloseable {
         this(config, null);
     }
 
-    PartDbServer(PartDbServerConfig config, ReplicationTransport transport) {
+    PartDbServer(PartDbServerConfig config, ConsensusRuntimeFactory runtimeFactory) {
         this.config = config;
-        ReplicationTransport replicationTransport = transport != null ? transport : createDefaultTransport();
-        this.node = PartDbNode.open(config.nodeConfig(), replicationTransport);
+        ConsensusRuntimeFactory consensusRuntimeFactory = runtimeFactory != null ? runtimeFactory : createDefaultRuntimeFactory();
+        this.node = PartDbNode.open(config.nodeConfig(), consensusRuntimeFactory);
         this.grpcServer = new GrpcServer(
             node,
             config.raftPeerAddresses(),
@@ -35,11 +36,13 @@ public final class PartDbServer implements AutoCloseable {
         this.jmxRegistrations = new JmxRegistrations(node);
     }
 
-    private ReplicationTransport createDefaultTransport() {
-        return new GrpcReplicationTransport(
-            config.nodeId(),
-            config.raftPort(),
-            config.raftPeerAddresses()
+    private ConsensusRuntimeFactory createDefaultRuntimeFactory() {
+        return new RaftConsensusRuntimeFactory(
+            () -> new GrpcRaftPeerTransport(
+                config.nodeId(),
+                config.raftPort(),
+                config.raftPeerAddresses()
+            )
         );
     }
 

@@ -5,6 +5,7 @@ plugins {
 
 dependencies {
     implementation(project(":partdb-node"))
+    api(project(":partdb-raft"))
     implementation(project(":partdb-grpc"))
 
     val grpcVersion = "1.80.0"

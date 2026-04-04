@@ -1,7 +1,7 @@
 package io.partdb.consensus;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.raft.RaftMembership;
+import io.partdb.raft.RaftConfiguration;
 import io.partdb.raft.RaftSnapshot;
 
 import java.io.IOException;
@@ -50,17 +50,17 @@ final class SnapshotStore implements AutoCloseable {
                 StandardOpenOption.WRITE,
                 StandardOpenOption.TRUNCATE_EXISTING)) {
 
-            byte[] membershipBytes = encodeMembership(snapshot.membership());
-            int membershipLen = membershipBytes.length;
+            byte[] configurationBytes = encodeConfiguration(snapshot.configuration());
+            int configurationLen = configurationBytes.length;
             Bytes data = snapshot.data();
 
-            ByteBuffer header = ByteBuffer.allocate(HEADER_SIZE + 4 + membershipLen).order(BYTE_ORDER);
+            ByteBuffer header = ByteBuffer.allocate(HEADER_SIZE + 4 + configurationLen).order(BYTE_ORDER);
             header.putInt(MAGIC);
             header.putInt(VERSION);
             header.putLong(snapshot.term());
             header.putLong(snapshot.index());
-            header.putInt(membershipLen);
-            header.put(membershipBytes);
+            header.putInt(configurationLen);
+            header.put(configurationBytes);
             header.flip();
 
             channel.write(header);
@@ -152,14 +152,14 @@ final class SnapshotStore implements AutoCloseable {
 
             long term = headerBuf.getLong();
             long index = headerBuf.getLong();
-            int membershipLen = headerBuf.getInt();
+            int configurationLen = headerBuf.getInt();
 
-            ByteBuffer membershipBuf = ByteBuffer.allocate(membershipLen).order(BYTE_ORDER);
-            channel.read(membershipBuf);
-            membershipBuf.flip();
-            RaftMembership membership = LogCodec.readMembership(membershipBuf);
+            ByteBuffer configurationBuf = ByteBuffer.allocate(configurationLen).order(BYTE_ORDER);
+            channel.read(configurationBuf);
+            configurationBuf.flip();
+            RaftConfiguration configuration = LogCodec.readConfiguration(configurationBuf);
 
-            int dataLen = (int) (fileSize - HEADER_SIZE - 4 - membershipLen - 4);
+            int dataLen = (int) (fileSize - HEADER_SIZE - 4 - configurationLen - 4);
             byte[] data = new byte[dataLen];
             ByteBuffer dataBuf = ByteBuffer.wrap(data);
             channel.read(dataBuf);
@@ -172,25 +172,25 @@ final class SnapshotStore implements AutoCloseable {
             CRC32C crc = new CRC32C();
             headerBuf.rewind();
             crc.update(headerBuf);
-            membershipBuf.rewind();
-            crc.update(membershipBuf);
+            configurationBuf.rewind();
+            crc.update(configurationBuf);
             crc.update(data);
 
             if ((int) crc.getValue() != storedCrc) {
                 throw new ConsensusStorageException.Corruption("RaftSnapshot CRC mismatch: " + path);
             }
 
-            return new RaftSnapshot(index, term, membership, Bytes.copyOf(data));
+            return new RaftSnapshot(index, term, configuration, Bytes.copyOf(data));
 
         } catch (IOException e) {
             throw new ConsensusStorageException.IO("Failed to load snapshot: " + path, e);
         }
     }
 
-    private byte[] encodeMembership(RaftMembership membership) {
-        int size = LogCodec.membershipSize(membership);
+    private byte[] encodeConfiguration(RaftConfiguration configuration) {
+        int size = LogCodec.configurationSize(configuration);
         ByteBuffer buf = ByteBuffer.allocate(size).order(BYTE_ORDER);
-        LogCodec.writeMembership(buf, membership);
+        LogCodec.writeConfiguration(buf, configuration);
         return buf.array();
     }
 

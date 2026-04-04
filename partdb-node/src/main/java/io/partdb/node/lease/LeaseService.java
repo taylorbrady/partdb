@@ -1,7 +1,7 @@
 package io.partdb.node.lease;
 
-import io.partdb.consensus.ConsensusNode;
 import io.partdb.consensus.ConsensusRole;
+import io.partdb.consensus.ConsensusRuntime;
 import io.partdb.node.internal.command.PartDbCommands;
 import io.partdb.node.internal.command.PartDbCommandExecutor;
 import org.slf4j.Logger;
@@ -14,13 +14,13 @@ public final class LeaseService implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(LeaseService.class);
     private static final int MAX_REVOCATIONS_PER_BATCH = 500;
 
-    private final ConsensusNode consensus;
+    private final ConsensusRuntime consensus;
     private final PartDbCommandExecutor commandExecutor;
     private final LeaseRegistry leaseRegistry;
     private final Thread expirerThread;
     private volatile boolean running = true;
 
-    public LeaseService(ConsensusNode consensus, PartDbCommandExecutor commandExecutor, LeaseRegistry leaseRegistry) {
+    public LeaseService(ConsensusRuntime consensus, PartDbCommandExecutor commandExecutor, LeaseRegistry leaseRegistry) {
         this.consensus = consensus;
         this.commandExecutor = commandExecutor;
         this.leaseRegistry = leaseRegistry;

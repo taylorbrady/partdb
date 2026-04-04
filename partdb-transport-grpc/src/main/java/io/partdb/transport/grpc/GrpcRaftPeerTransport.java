@@ -13,8 +13,8 @@ import io.grpc.Server;
 import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
-import io.partdb.node.replication.ReplicationRpc;
-import io.partdb.node.replication.ReplicationTransport;
+import io.partdb.raft.RaftMessage;
+import io.partdb.raft.transport.RaftPeerTransport;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 import io.partdb.transport.grpc.raft.proto.RaftServiceGrpc;
 import org.slf4j.Logger;
@@ -28,25 +28,25 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-public final class GrpcReplicationTransport implements ReplicationTransport {
+public final class GrpcRaftPeerTransport implements RaftPeerTransport {
 
-    private static final Logger log = LoggerFactory.getLogger(GrpcReplicationTransport.class);
+    private static final Logger log = LoggerFactory.getLogger(GrpcRaftPeerTransport.class);
 
-    private final GrpcReplicationTransportConfig config;
+    private final GrpcRaftPeerTransportConfig config;
     private final Map<String, ManagedChannel> channels = new ConcurrentHashMap<>();
     private final Map<String, RaftServiceGrpc.RaftServiceStub> stubs = new ConcurrentHashMap<>();
 
     private Server server;
 
-    public GrpcReplicationTransport(
+    public GrpcRaftPeerTransport(
         String localNodeId,
         int port,
         Map<String, String> raftPeerAddresses
     ) {
-        this(GrpcReplicationTransportConfig.create(localNodeId, port, raftPeerAddresses));
+        this(GrpcRaftPeerTransportConfig.create(localNodeId, port, raftPeerAddresses));
     }
 
-    GrpcReplicationTransport(GrpcReplicationTransportConfig config) {
+    GrpcRaftPeerTransport(GrpcRaftPeerTransportConfig config) {
         this.config = config;
     }
 
@@ -54,8 +54,8 @@ public final class GrpcReplicationTransport implements ReplicationTransport {
     public void start(RpcHandler handler) {
         try {
             server = NettyServerBuilder.forPort(config.port())
-                .addService(new ReplicationServiceImpl(handler))
-                .intercept(ReplicationServiceImpl.senderIdInterceptor())
+                .addService(new RaftServiceImpl(handler))
+                .intercept(RaftServiceImpl.senderIdInterceptor())
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .build()
                 .start();
@@ -69,7 +69,7 @@ public final class GrpcReplicationTransport implements ReplicationTransport {
     }
 
     @Override
-    public CompletableFuture<ReplicationRpc.Response> send(String to, ReplicationRpc.Request request) {
+    public CompletableFuture<RaftMessage.Response> send(String to, RaftMessage.Request request) {
         var stub = getOrCreateStub(to);
         if (stub == null) {
             return CompletableFuture.failedFuture(
@@ -78,11 +78,11 @@ public final class GrpcReplicationTransport implements ReplicationTransport {
         }
 
         return switch (request) {
-            case ReplicationRpc.RequestVote msg -> sendRequestVote(stub, msg);
-            case ReplicationRpc.PreVote msg -> sendPreVote(stub, msg);
-            case ReplicationRpc.AppendEntries msg -> sendAppendEntries(stub, msg);
-            case ReplicationRpc.InstallSnapshot msg -> sendInstallSnapshot(stub, msg);
-            case ReplicationRpc.ReadIndex msg -> sendReadIndex(stub, msg);
+            case RaftMessage.RequestVote msg -> sendRequestVote(stub, msg);
+            case RaftMessage.PreVote msg -> sendPreVote(stub, msg);
+            case RaftMessage.AppendEntries msg -> sendAppendEntries(stub, msg);
+            case RaftMessage.InstallSnapshot msg -> sendInstallSnapshot(stub, msg);
+            case RaftMessage.ReadIndex msg -> sendReadIndex(stub, msg);
         };
     }
 
@@ -142,7 +142,7 @@ public final class GrpcReplicationTransport implements ReplicationTransport {
                         next.newCall(method, callOptions)) {
                     @Override
                     public void start(Listener<RespT> responseListener, Metadata headers) {
-                        headers.put(ReplicationServiceImpl.SENDER_ID_KEY, config.localNodeId());
+                        headers.put(RaftServiceImpl.SENDER_ID_KEY, config.localNodeId());
                         super.start(responseListener, headers);
                     }
                 };
@@ -158,14 +158,14 @@ public final class GrpcReplicationTransport implements ReplicationTransport {
         });
     }
 
-    private CompletableFuture<ReplicationRpc.Response> sendRequestVote(
+    private CompletableFuture<RaftMessage.Response> sendRequestVote(
             RaftServiceGrpc.RaftServiceStub stub,
-            ReplicationRpc.RequestVote msg) {
-        var future = new CompletableFuture<ReplicationRpc.Response>();
-        stub.requestVote(ReplicationProtoConverters.toProto(msg), new StreamObserver<>() {
+            RaftMessage.RequestVote msg) {
+        var future = new CompletableFuture<RaftMessage.Response>();
+        stub.requestVote(RaftProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.RequestVoteResponse response) {
-                future.complete(ReplicationProtoConverters.fromProto(response));
+                future.complete(RaftProtoConverters.fromProto(response));
             }
 
             @Override
@@ -179,14 +179,14 @@ public final class GrpcReplicationTransport implements ReplicationTransport {
         return future;
     }
 
-    private CompletableFuture<ReplicationRpc.Response> sendPreVote(
+    private CompletableFuture<RaftMessage.Response> sendPreVote(
             RaftServiceGrpc.RaftServiceStub stub,
-            ReplicationRpc.PreVote msg) {
-        var future = new CompletableFuture<ReplicationRpc.Response>();
-        stub.preVote(ReplicationProtoConverters.toProto(msg), new StreamObserver<>() {
+            RaftMessage.PreVote msg) {
+        var future = new CompletableFuture<RaftMessage.Response>();
+        stub.preVote(RaftProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.PreVoteResponse response) {
-                future.complete(ReplicationProtoConverters.fromProto(response));
+                future.complete(RaftProtoConverters.fromProto(response));
             }
 
             @Override
@@ -200,14 +200,14 @@ public final class GrpcReplicationTransport implements ReplicationTransport {
         return future;
     }
 
-    private CompletableFuture<ReplicationRpc.Response> sendAppendEntries(
+    private CompletableFuture<RaftMessage.Response> sendAppendEntries(
             RaftServiceGrpc.RaftServiceStub stub,
-            ReplicationRpc.AppendEntries msg) {
-        var future = new CompletableFuture<ReplicationRpc.Response>();
-        stub.appendEntries(ReplicationProtoConverters.toProto(msg), new StreamObserver<>() {
+            RaftMessage.AppendEntries msg) {
+        var future = new CompletableFuture<RaftMessage.Response>();
+        stub.appendEntries(RaftProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.AppendEntriesResponse response) {
-                future.complete(ReplicationProtoConverters.fromProto(response));
+                future.complete(RaftProtoConverters.fromProto(response));
             }
 
             @Override
@@ -221,15 +221,15 @@ public final class GrpcReplicationTransport implements ReplicationTransport {
         return future;
     }
 
-    private CompletableFuture<ReplicationRpc.Response> sendInstallSnapshot(
+    private CompletableFuture<RaftMessage.Response> sendInstallSnapshot(
             RaftServiceGrpc.RaftServiceStub stub,
-            ReplicationRpc.InstallSnapshot msg) {
-        var future = new CompletableFuture<ReplicationRpc.Response>();
+            RaftMessage.InstallSnapshot msg) {
+        var future = new CompletableFuture<RaftMessage.Response>();
 
         var responseObserver = new StreamObserver<RaftProto.InstallSnapshotResponse>() {
             @Override
             public void onNext(RaftProto.InstallSnapshotResponse response) {
-                future.complete(ReplicationProtoConverters.fromProto(response));
+                future.complete(RaftProtoConverters.fromProto(response));
             }
 
             @Override
@@ -244,7 +244,7 @@ public final class GrpcReplicationTransport implements ReplicationTransport {
         var requestObserver = stub.installSnapshot(responseObserver);
 
         requestObserver.onNext(RaftProto.InstallSnapshotRequest.newBuilder()
-            .setHeader(ReplicationProtoConverters.toSnapshotHeader(msg))
+            .setHeader(RaftProtoConverters.toSnapshotHeader(msg))
             .build());
 
         byte[] data = msg.data().toByteArray();
@@ -268,14 +268,14 @@ public final class GrpcReplicationTransport implements ReplicationTransport {
         return future;
     }
 
-    private CompletableFuture<ReplicationRpc.Response> sendReadIndex(
+    private CompletableFuture<RaftMessage.Response> sendReadIndex(
             RaftServiceGrpc.RaftServiceStub stub,
-            ReplicationRpc.ReadIndex msg) {
-        var future = new CompletableFuture<ReplicationRpc.Response>();
-        stub.readIndex(ReplicationProtoConverters.toProto(msg), new StreamObserver<>() {
+            RaftMessage.ReadIndex msg) {
+        var future = new CompletableFuture<RaftMessage.Response>();
+        stub.readIndex(RaftProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override
             public void onNext(RaftProto.ReadIndexResponse response) {
-                future.complete(ReplicationProtoConverters.fromProto(response));
+                future.complete(RaftProtoConverters.fromProto(response));
             }
 
             @Override

@@ -2,11 +2,9 @@ package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.node.cluster.NodeRole;
+import io.partdb.node.kv.WriteBatch;
 import io.partdb.node.lease.LeaseGrant;
 import io.partdb.node.lease.LeaseId;
-import io.partdb.node.kv.WriteBatch;
-import io.partdb.node.replication.ReplicationRpc;
-import io.partdb.node.replication.ReplicationTransport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -15,7 +13,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Comparator;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -35,7 +32,7 @@ class PartDbNodeTest {
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        try (var node = PartDbNode.open(config, new NoOpReplicationTransport())) {
+        try (var node = PartDbNode.open(config)) {
             awaitLeader(node);
 
             node.keyValues().put(bytes("key"), bytes("value")).toCompletableFuture().get(5, TimeUnit.SECONDS);
@@ -58,7 +55,7 @@ class PartDbNodeTest {
             .build();
 
         LeaseGrant leaseGrant;
-        try (var node = PartDbNode.open(config, new NoOpReplicationTransport())) {
+        try (var node = PartDbNode.open(config)) {
             awaitLeader(node);
 
             leaseGrant = node.leases().grant(Duration.ofSeconds(30)).toCompletableFuture().get(5, TimeUnit.SECONDS);
@@ -69,12 +66,14 @@ class PartDbNodeTest {
 
         deleteRecursively(nodeDirectory.resolve("db"));
 
-        try (var recovered = PartDbNode.open(config, new NoOpReplicationTransport())) {
+        try (var recovered = PartDbNode.open(config)) {
             awaitLeader(recovered);
 
             assertEquals(
                 bytes("lease-value"),
-                recovered.keyValues().get(bytes("lease-key")).toCompletableFuture().get(5, TimeUnit.SECONDS).orElseThrow().value()
+                recovered.keyValues().get(bytes("lease-key")).toCompletableFuture().get(5, TimeUnit.SECONDS)
+                    .orElseThrow()
+                    .value()
             );
         }
     }
@@ -85,7 +84,7 @@ class PartDbNodeTest {
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        try (var node = PartDbNode.open(config, new NoOpReplicationTransport())) {
+        try (var node = PartDbNode.open(config)) {
             awaitLeader(node);
 
             var error = assertThrows(
@@ -107,7 +106,7 @@ class PartDbNodeTest {
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        try (var node = PartDbNode.open(config, new NoOpReplicationTransport())) {
+        try (var node = PartDbNode.open(config)) {
             awaitLeader(node);
 
             var keepAliveError = assertThrows(
@@ -130,7 +129,7 @@ class PartDbNodeTest {
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        try (var node = PartDbNode.open(config, new NoOpReplicationTransport())) {
+        try (var node = PartDbNode.open(config)) {
             awaitLeader(node);
 
             LeaseGrant leaseGrant = node.leases().grant(Duration.ofSeconds(30)).toCompletableFuture().get(5, TimeUnit.SECONDS);
@@ -156,7 +155,7 @@ class PartDbNodeTest {
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        try (var node = PartDbNode.open(config, new NoOpReplicationTransport())) {
+        try (var node = PartDbNode.open(config)) {
             awaitLeader(node);
 
             long revision = node.keyValues()
@@ -183,7 +182,7 @@ class PartDbNodeTest {
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        try (var node = PartDbNode.open(config, new NoOpReplicationTransport())) {
+        try (var node = PartDbNode.open(config)) {
             awaitLeader(node);
 
             var error = assertThrows(
@@ -236,21 +235,6 @@ class PartDbNodeTest {
                 throw io;
             }
             throw e;
-        }
-    }
-
-    private static final class NoOpReplicationTransport implements ReplicationTransport {
-        @Override
-        public void start(RpcHandler handler) {
-        }
-
-        @Override
-        public CompletableFuture<ReplicationRpc.Response> send(String to, ReplicationRpc.Request request) {
-            return CompletableFuture.failedFuture(new UnsupportedOperationException("single-node transport"));
-        }
-
-        @Override
-        public void close() {
         }
     }
 }

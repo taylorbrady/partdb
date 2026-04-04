@@ -1,8 +1,8 @@
 package io.partdb.consensus;
 
 import io.partdb.raft.LogEntry;
+import io.partdb.raft.RaftConfiguration;
 import io.partdb.raft.RaftLogView;
-import io.partdb.raft.RaftMembership;
 import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.RaftSnapshot;
 
@@ -27,10 +27,10 @@ interface RaftStore extends RaftLogView, AutoCloseable {
     @Override
     void close();
 
-    record Bootstrap(Optional<RaftPersistentState> persistentState, Optional<RaftMembership> membership) {
+    record Bootstrap(Optional<RaftPersistentState> persistentState, Optional<RaftConfiguration> configuration) {
         public Bootstrap {
             persistentState = Objects.requireNonNull(persistentState, "persistentState must not be null");
-            membership = Objects.requireNonNull(membership, "membership must not be null");
+            configuration = Objects.requireNonNull(configuration, "configuration must not be null");
         }
     }
 }

@@ -8,14 +8,14 @@ final class InMemoryStorage implements RaftLogView {
     private volatile RaftPersistentState hardState = RaftPersistentState.INITIAL;
     private final List<LogEntry> entries = new ArrayList<>();
     private volatile RaftSnapshot snapshot;
-    private volatile RaftMembership membership;
+    private volatile RaftConfiguration configuration;
 
     InMemoryStorage() {
         this(null);
     }
 
-    InMemoryStorage(RaftMembership initialMembership) {
-        this.membership = initialMembership;
+    InMemoryStorage(RaftConfiguration initialConfiguration) {
+        this.configuration = initialConfiguration;
     }
 
     @Override
@@ -81,7 +81,7 @@ final class InMemoryStorage implements RaftLogView {
 
         for (LogEntry entry : newEntries) {
             switch (entry) {
-                case LogEntry.Config config -> this.membership = config.membership();
+                case LogEntry.Config config -> this.configuration = config.configuration();
                 case LogEntry.Data _, LogEntry.NoOp _ -> {}
             }
         }
@@ -96,7 +96,7 @@ final class InMemoryStorage implements RaftLogView {
 
     public void saveSnapshot(RaftSnapshot snapshot) {
         this.snapshot = snapshot;
-        this.membership = snapshot.membership();
+        this.configuration = snapshot.configuration();
         entries.removeIf(e -> e.index() <= snapshot.index());
     }
 

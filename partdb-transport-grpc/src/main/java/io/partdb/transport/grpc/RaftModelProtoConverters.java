@@ -2,26 +2,26 @@ package io.partdb.transport.grpc;
 
 import com.google.protobuf.ByteString;
 import io.partdb.bytes.Bytes;
-import io.partdb.cluster.ClusterMembership;
-import io.partdb.node.replication.ReplicationLogEntry;
+import io.partdb.raft.LogEntry;
+import io.partdb.raft.RaftConfiguration;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 
 import java.util.Set;
 
-final class ReplicationModelProtoConverters {
+final class RaftModelProtoConverters {
 
-    static ReplicationLogEntry fromProto(RaftProto.LogEntry proto) {
+    static LogEntry fromProto(RaftProto.LogEntry proto) {
         return switch (proto.getEntryCase()) {
-            case DATA -> new ReplicationLogEntry.Data(
+            case DATA -> new LogEntry.Data(
                 proto.getIndex(),
                 proto.getTerm(),
                 Bytes.copyOf(proto.getData().toByteArray())
             );
-            case NO_OP -> new ReplicationLogEntry.NoOp(
+            case NO_OP -> new LogEntry.NoOp(
                 proto.getIndex(),
                 proto.getTerm()
             );
-            case CONFIG -> new ReplicationLogEntry.Config(
+            case CONFIG -> new LogEntry.Config(
                 proto.getIndex(),
                 proto.getTerm(),
                 fromProto(proto.getConfig())
@@ -30,31 +30,31 @@ final class ReplicationModelProtoConverters {
         };
     }
 
-    static RaftProto.LogEntry toProto(ReplicationLogEntry entry) {
+    static RaftProto.LogEntry toProto(LogEntry entry) {
         var builder = RaftProto.LogEntry.newBuilder()
             .setIndex(entry.index())
             .setTerm(entry.term());
 
         switch (entry) {
-            case ReplicationLogEntry.Data data -> builder.setData(ByteString.copyFrom(data.data().asReadOnlyByteBuffer()));
-            case ReplicationLogEntry.NoOp _ -> builder.setNoOp(true);
-            case ReplicationLogEntry.Config config -> builder.setConfig(toProto(config.membership()));
+            case LogEntry.Data data -> builder.setData(ByteString.copyFrom(data.data().asReadOnlyByteBuffer()));
+            case LogEntry.NoOp _ -> builder.setNoOp(true);
+            case LogEntry.Config config -> builder.setConfig(toProto(config.configuration()));
         }
 
         return builder.build();
     }
 
-    static ClusterMembership fromProto(RaftProto.Membership proto) {
-        return new ClusterMembership(
+    static RaftConfiguration fromProto(RaftProto.Membership proto) {
+        return new RaftConfiguration(
             Set.copyOf(proto.getVotersList()),
             Set.copyOf(proto.getLearnersList())
         );
     }
 
-    static RaftProto.Membership toProto(ClusterMembership membership) {
+    static RaftProto.Membership toProto(RaftConfiguration configuration) {
         return RaftProto.Membership.newBuilder()
-            .addAllVoters(membership.voters())
-            .addAllLearners(membership.learners())
+            .addAllVoters(configuration.voters())
+            .addAllLearners(configuration.learners())
             .build();
     }
 }

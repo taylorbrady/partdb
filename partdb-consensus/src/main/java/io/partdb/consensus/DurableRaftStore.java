@@ -2,7 +2,7 @@ package io.partdb.consensus;
 
 import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.LogEntry;
-import io.partdb.raft.RaftMembership;
+import io.partdb.raft.RaftConfiguration;
 import io.partdb.raft.RaftSnapshot;
 
 import java.nio.file.Path;
@@ -17,25 +17,25 @@ final class DurableRaftStore implements RaftStore {
     private final ReentrantReadWriteLock lock;
 
     private RaftSnapshot currentSnapshot;
-    private RaftMembership membership;
+    private RaftConfiguration configuration;
 
     private DurableRaftStore(WriteAheadLog wal, SnapshotStore snapshots,
-                             RaftSnapshot currentSnapshot, RaftMembership membership) {
+                             RaftSnapshot currentSnapshot, RaftConfiguration configuration) {
         this.wal = wal;
         this.snapshots = snapshots;
         this.lock = new ReentrantReadWriteLock();
         this.currentSnapshot = currentSnapshot;
-        this.membership = membership;
+        this.configuration = configuration;
     }
 
-    public static DurableRaftStore create(Path directory, RaftMembership initialMembership) {
+    public static DurableRaftStore create(Path directory, RaftConfiguration initialConfiguration) {
         Path walDir = directory.resolve("wal");
         Path snapDir = directory.resolve("snap");
 
         WriteAheadLog wal = WriteAheadLog.create(walDir);
         SnapshotStore snapshots = SnapshotStore.open(snapDir);
 
-        return new DurableRaftStore(wal, snapshots, null, initialMembership);
+        return new DurableRaftStore(wal, snapshots, null, initialConfiguration);
     }
 
     public static DurableRaftStore open(Path directory) {
@@ -47,18 +47,18 @@ final class DurableRaftStore implements RaftStore {
 
         WriteAheadLog wal = WriteAheadLog.open(walDir);
 
-        RaftMembership membership = null;
+        RaftConfiguration configuration = null;
         if (snapshot != null) {
-            membership = snapshot.membership();
+            configuration = snapshot.configuration();
         }
 
-        membership = recoverMembershipFromLog(wal, membership);
+        configuration = recoverConfigurationFromLog(wal, configuration);
 
-        return new DurableRaftStore(wal, snapshots, snapshot, membership);
+        return new DurableRaftStore(wal, snapshots, snapshot, configuration);
     }
 
-    private static RaftMembership recoverMembershipFromLog(WriteAheadLog wal, RaftMembership initial) {
-        RaftMembership membership = initial;
+    private static RaftConfiguration recoverConfigurationFromLog(WriteAheadLog wal, RaftConfiguration initial) {
+        RaftConfiguration configuration = initial;
         long from = wal.firstIndex();
         long committedThrough = Math.min(wal.hardState().commit(), wal.lastIndex());
         long to = committedThrough + 1;
@@ -66,19 +66,19 @@ final class DurableRaftStore implements RaftStore {
         List<LogEntry> entries = wal.entries(from, to, Long.MAX_VALUE);
         for (LogEntry entry : entries) {
             switch (entry) {
-                case LogEntry.Config(long idx, long term, RaftMembership m) -> membership = m;
+                case LogEntry.Config(long idx, long term, RaftConfiguration c) -> configuration = c;
                 case LogEntry.Data _, LogEntry.NoOp _ -> {}
             }
         }
 
-        return membership;
+        return configuration;
     }
 
     @Override
     public RaftStore.Bootstrap bootstrap() {
         lock.readLock().lock();
         try {
-            return new RaftStore.Bootstrap(Optional.of(wal.hardState()), Optional.ofNullable(membership));
+            return new RaftStore.Bootstrap(Optional.of(wal.hardState()), Optional.ofNullable(configuration));
         } finally {
             lock.readLock().unlock();
         }
@@ -145,7 +145,7 @@ final class DurableRaftStore implements RaftStore {
 
             for (LogEntry entry : entries) {
                 switch (entry) {
-                    case LogEntry.Config(long idx, long term, RaftMembership m) -> membership = m;
+                    case LogEntry.Config(long idx, long term, RaftConfiguration c) -> configuration = c;
                     case LogEntry.Data _, LogEntry.NoOp _ -> {}
                 }
             }
@@ -190,7 +190,7 @@ final class DurableRaftStore implements RaftStore {
             }
 
             currentSnapshot = snapshot;
-            membership = snapshot.membership();
+            configuration = snapshot.configuration();
         } finally {
             lock.writeLock().unlock();
         }

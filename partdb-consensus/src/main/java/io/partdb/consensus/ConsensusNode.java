@@ -2,8 +2,8 @@ package io.partdb.consensus;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.cluster.ClusterMembership;
+import io.partdb.raft.RaftConfiguration;
 import io.partdb.raft.RaftPersistentState;
-import io.partdb.raft.RaftMembership;
 import io.partdb.raft.Raft;
 import io.partdb.raft.RaftConfig;
 import io.partdb.raft.RaftEvent;
@@ -11,7 +11,7 @@ import io.partdb.raft.RaftMessage;
 import io.partdb.raft.RaftReady;
 import io.partdb.raft.RaftRole;
 import io.partdb.raft.RaftSnapshot;
-import io.partdb.consensus.transport.ConsensusTransport;
+import io.partdb.raft.transport.RaftPeerTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,7 +35,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.Objects;
 
-public final class ConsensusNode implements AutoCloseable {
+public final class ConsensusNode implements ConsensusRuntime {
     private static final Logger log = LoggerFactory.getLogger(ConsensusNode.class);
 
     private sealed interface NodeEvent {
@@ -52,7 +52,7 @@ public final class ConsensusNode implements AutoCloseable {
     private final String nodeId;
     private final Raft raft;
     private final RaftConfig raftConfig;
-    private final RaftTransport transport;
+    private final RaftPeerTransport transport;
     private final RaftStore store;
     private final ReplicatedStateMachine stateMachine;
     private volatile RaftRole lastKnownRole;
@@ -80,7 +80,7 @@ public final class ConsensusNode implements AutoCloseable {
         String nodeId,
         Raft raft,
         RaftConfig raftConfig,
-        RaftTransport transport,
+        RaftPeerTransport transport,
         RaftStore store,
         ReplicatedStateMachine stateMachine,
         Duration tickInterval
@@ -121,7 +121,7 @@ public final class ConsensusNode implements AutoCloseable {
     public static ConsensusNode open(
         Path dataDirectory,
         ConsensusConfig config,
-        ConsensusTransport transport,
+        RaftPeerTransport transport,
         ReplicatedStateMachine stateMachine
     ) {
         Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
@@ -129,14 +129,14 @@ public final class ConsensusNode implements AutoCloseable {
         Objects.requireNonNull(transport, "transport must not be null");
         Objects.requireNonNull(stateMachine, "stateMachine must not be null");
 
-        var membership = ClusterMemberships.toRaftMembership(config.membership());
-        RaftStore store = openStore(dataDirectory, membership);
+        var configuration = RaftConfigurationMapper.toRaftConfiguration(config.membership());
+        RaftStore store = openStore(dataDirectory, configuration);
         return openRuntime(
             config.nodeId(),
-            membership,
+            configuration,
             config.toRaftConfig(),
             config.tickInterval(),
-            new ConsensusTransportAdapter(transport),
+            transport,
             store,
             stateMachine
         );
@@ -168,7 +168,7 @@ public final class ConsensusNode implements AutoCloseable {
     }
 
     public ClusterMembership membership() {
-        return ClusterMemberships.fromRaftMembership(raft.membership());
+        return RaftConfigurationMapper.toClusterMembership(raft.configuration());
     }
 
     @Override
@@ -418,7 +418,7 @@ public final class ConsensusNode implements AutoCloseable {
         var snapshot = store.snapshot();
         if (snapshot.isEmpty()) {
             Bytes data = stateMachine.snapshot();
-            var newSnapshot = new RaftSnapshot(request.index(), request.term(), raft.membership(), data);
+            var newSnapshot = new RaftSnapshot(request.index(), request.term(), raft.configuration(), data);
             store.saveSnapshot(newSnapshot);
             snapshot = Optional.of(newSnapshot);
         }
@@ -429,7 +429,7 @@ public final class ConsensusNode implements AutoCloseable {
             raft.leaderId().orElseThrow(),
             snap.index(),
             snap.term(),
-            snap.membership(),
+            snap.configuration(),
             snap.data()
         );
 
@@ -514,31 +514,31 @@ public final class ConsensusNode implements AutoCloseable {
         return applyTracker.waitFor(index);
     }
 
-    private static RaftStore openStore(Path dataDirectory, RaftMembership membership) {
+    private static RaftStore openStore(Path dataDirectory, RaftConfiguration configuration) {
         Path raftDir = dataDirectory.resolve("wal");
         if (Files.exists(raftDir)) {
             return DurableRaftStore.open(dataDirectory);
         }
-        return DurableRaftStore.create(dataDirectory, membership);
+        return DurableRaftStore.create(dataDirectory, configuration);
     }
 
     private static ConsensusNode openRuntime(
         String nodeId,
-        RaftMembership membership,
+        RaftConfiguration configuration,
         RaftConfig raftConfig,
         Duration tickInterval,
-        RaftTransport transport,
+        RaftPeerTransport transport,
         RaftStore store,
         ReplicatedStateMachine stateMachine
     ) {
         var bootstrap = store.bootstrap();
-        var effectiveMembership = bootstrap.membership().orElse(membership);
+        var effectiveConfiguration = bootstrap.configuration().orElse(configuration);
 
-        if (effectiveMembership == null) {
-            throw new IllegalStateException("membership is required");
+        if (effectiveConfiguration == null) {
+            throw new IllegalStateException("configuration is required");
         }
 
-        var raft = Raft.builder(nodeId, effectiveMembership, raftConfig, store).build();
+        var raft = Raft.builder(nodeId, effectiveConfiguration, raftConfig, store).build();
 
         var persistentState = bootstrap.persistentState().orElse(RaftPersistentState.INITIAL);
         var snapshot = store.snapshot();

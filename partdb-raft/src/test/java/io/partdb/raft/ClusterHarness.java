@@ -18,7 +18,7 @@ final class ClusterHarness {
     private final Deque<Envelope> inFlight = new ArrayDeque<>();
     private final Set<String> isolated = new HashSet<>();
     private final List<ReadState> readStates = new ArrayList<>();
-    private final List<MembershipChangeEvent> membershipChanges = new ArrayList<>();
+    private final List<ConfigurationChangeEvent> configurationChanges = new ArrayList<>();
 
     private record SimulatedNode(Raft raft, InMemoryStorage storage) {}
 
@@ -35,7 +35,7 @@ final class ClusterHarness {
         }
     }
 
-    record MembershipChangeEvent(String nodeId, long index, RaftMembership previous, RaftMembership current) {}
+    record ConfigurationChangeEvent(String nodeId, long index, RaftConfiguration previous, RaftConfiguration current) {}
 
     private ClusterHarness() {}
 
@@ -64,16 +64,16 @@ final class ClusterHarness {
             learners.add(nodeId(i));
         }
 
-        var membership = new RaftMembership(voters, learners);
+        var configuration = new RaftConfiguration(voters, learners);
 
         int nodeIndex = 0;
         for (String nodeId : voters) {
             int jitter = nodeIndex++;
-            cluster.addNode(nodeId, membership, config, jitter);
+            cluster.addNode(nodeId, configuration, config, jitter);
         }
         for (String nodeId : learners) {
             int jitter = nodeIndex++;
-            cluster.addNode(nodeId, membership, config, jitter);
+            cluster.addNode(nodeId, configuration, config, jitter);
         }
 
         return cluster;
@@ -198,17 +198,17 @@ final class ClusterHarness {
         return !readStates.isEmpty();
     }
 
-    void proposeConfigChange(String nodeId, MembershipChange change) {
+    void proposeConfigChange(String nodeId, ConfigurationChange change) {
         var node = nodes.get(nodeId);
         if (node != null) {
-            var ready = node.raft().step(new RaftEvent.ChangeMembership(change));
+            var ready = node.raft().step(new RaftEvent.ChangeConfiguration(change));
             processReady(nodeId, ready);
         }
     }
 
-    List<MembershipChangeEvent> drainMembershipChanges() {
-        var result = List.copyOf(membershipChanges);
-        membershipChanges.clear();
+    List<ConfigurationChangeEvent> drainConfigurationChanges() {
+        var result = List.copyOf(configurationChanges);
+        configurationChanges.clear();
         return result;
     }
 
@@ -254,8 +254,8 @@ final class ClusterHarness {
 
         long lastAppliedIndex = 0;
         long lastAppliedTerm = 0;
-        for (var change : ready.application().membershipTransitions()) {
-            membershipChanges.add(new MembershipChangeEvent(from, change.index(), change.previous(), change.current()));
+        for (var change : ready.application().configurationTransitions()) {
+            configurationChanges.add(new ConfigurationChangeEvent(from, change.index(), change.previous(), change.current()));
             if (change.index() > lastAppliedIndex) {
                 lastAppliedIndex = change.index();
                 lastAppliedTerm = node.storage().term(change.index());
@@ -277,22 +277,22 @@ final class ClusterHarness {
         var snapshot = ready.snapshotTransfer().orElse(null);
         if (snapshot != null) {
             var outgoingSnapshot = node.storage().snapshot()
-                .orElseGet(() -> new RaftSnapshot(snapshot.index(), snapshot.term(), node.raft().membership(), Bytes.EMPTY));
+                .orElseGet(() -> new RaftSnapshot(snapshot.index(), snapshot.term(), node.raft().configuration(), Bytes.EMPTY));
             var msg = new RaftMessage.InstallSnapshot(
                 node.raft().term(),
                 from,
                 outgoingSnapshot.index(),
                 outgoingSnapshot.term(),
-                outgoingSnapshot.membership(),
+                outgoingSnapshot.configuration(),
                 outgoingSnapshot.data()
             );
             inFlight.addLast(new Envelope(from, snapshot.peer(), msg));
         }
     }
 
-    private void addNode(String nodeId, RaftMembership membership, RaftConfig config, int jitter) {
-        var storage = new InMemoryStorage(membership);
-        var raft = Raft.builder(nodeId, membership, config, storage)
+    private void addNode(String nodeId, RaftConfiguration configuration, RaftConfig config, int jitter) {
+        var storage = new InMemoryStorage(configuration);
+        var raft = Raft.builder(nodeId, configuration, config, storage)
             .random(_ -> jitter)
             .build();
         addNode(nodeId, raft, storage);

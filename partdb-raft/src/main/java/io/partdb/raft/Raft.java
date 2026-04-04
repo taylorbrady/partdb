@@ -5,7 +5,6 @@ import io.partdb.bytes.Bytes;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -19,12 +18,12 @@ public final class Raft {
     private record PendingRead(long index, Bytes context, String requester, Set<String> acks) {}
 
     private final String id;
-    private RaftMembership membership;
+    private RaftConfiguration configuration;
     private Set<String> peers;
     private Set<String> votingPeers;
     private int quorum;
     private boolean isLearner;
-    private Long pendingMembershipChangeIndex;
+    private Long pendingConfigurationChangeIndex;
     private final int electionTimeoutMin;
     private final int electionTimeoutMax;
     private final int heartbeatInterval;
@@ -55,24 +54,17 @@ public final class Raft {
     private long leaderContactTicks;
     private Map<String, Long> lastHeardFrom;
 
-    private Raft(String id, RaftMembership membership, RaftConfig config,
+    private Raft(String id, RaftConfiguration configuration, RaftConfig config,
                  RaftLogView logView, IntUnaryOperator random) {
-        if (!membership.isVoter(id) && !membership.isLearner(id)) {
+        if (!configuration.isMember(id)) {
             throw new IllegalArgumentException("Node must be member of cluster");
         }
         this.id = id;
-        this.membership = membership;
-        this.isLearner = membership.isLearner(id);
-        this.quorum = membership.voters().size() / 2 + 1;
-
-        var allPeers = new LinkedHashSet<>(membership.voters());
-        allPeers.addAll(membership.learners());
-        allPeers.remove(id);
-        this.peers = Set.copyOf(allPeers);
-
-        var voting = new LinkedHashSet<>(membership.voters());
-        voting.remove(id);
-        this.votingPeers = Set.copyOf(voting);
+        this.configuration = configuration;
+        this.isLearner = configuration.isLearner(id);
+        this.quorum = configuration.quorumSize();
+        this.peers = configuration.peerIdsExcluding(id);
+        this.votingPeers = configuration.votingPeerIdsExcluding(id);
 
         this.electionTimeoutMin = config.electionTimeoutMin();
         this.electionTimeoutMax = config.electionTimeoutMax();
@@ -88,8 +80,8 @@ public final class Raft {
         resetElectionTimeout();
     }
 
-    public static Builder builder(String id, RaftMembership membership, RaftConfig config, RaftLogView logView) {
-        return new Builder(id, membership, config, logView);
+    public static Builder builder(String id, RaftConfiguration configuration, RaftConfig config, RaftLogView logView) {
+        return new Builder(id, configuration, config, logView);
     }
 
     public RaftReady step(RaftEvent event) {
@@ -100,7 +92,7 @@ public final class Raft {
             case RaftEvent.Propose(var data) -> propose(data, accumulator);
             case RaftEvent.Receive(var from, var msg) -> receive(from, msg, accumulator);
             case RaftEvent.ReadIndex(var context) -> handleReadIndexEvent(context, accumulator);
-            case RaftEvent.ChangeMembership(var change) -> proposeMembershipChange(change, accumulator);
+            case RaftEvent.ChangeConfiguration(var change) -> proposeConfigurationChange(change, accumulator);
         }
 
         prepareEntriesToApply(accumulator);
@@ -162,8 +154,8 @@ public final class Raft {
         return lastApplied;
     }
 
-    public RaftMembership membership() {
-        return membership;
+    public RaftConfiguration configuration() {
+        return configuration;
     }
 
     private long lastIndex() {
@@ -272,7 +264,7 @@ public final class Raft {
     }
 
     private void tickElection(RaftStepAccumulator accumulator) {
-        if (!membership.isVoter(id)) {
+        if (!configuration.isVoter(id)) {
             return;
         }
         electionTicks++;
@@ -302,26 +294,26 @@ public final class Raft {
         }
     }
 
-    private void proposeMembershipChange(MembershipChange change, RaftStepAccumulator accumulator) {
+    private void proposeConfigurationChange(ConfigurationChange change, RaftStepAccumulator accumulator) {
         if (role != RaftRole.LEADER) {
             return;
         }
 
-        if (hasPendingMembershipChange()) {
+        if (hasPendingConfigurationChange()) {
             return;
         }
 
-        RaftMembership newMembership;
+        RaftConfiguration newConfiguration;
         try {
-            newMembership = applyMembershipChange(change);
+            newConfiguration = applyConfigurationChange(change);
         } catch (IllegalArgumentException e) {
             return;
         }
 
-        var entry = new LogEntry.Config(lastIndex() + 1, term, newMembership);
+        var entry = new LogEntry.Config(lastIndex() + 1, term, newConfiguration);
         appendEntry(entry);
         accumulator.persist(entry);
-        pendingMembershipChangeIndex = entry.index();
+        pendingConfigurationChangeIndex = entry.index();
 
         if (quorum == 1) {
             commitIndex = entry.index();
@@ -331,32 +323,20 @@ public final class Raft {
         }
     }
 
-    private boolean hasPendingMembershipChange() {
-        return pendingMembershipChangeIndex != null && pendingMembershipChangeIndex > commitIndex;
+    private boolean hasPendingConfigurationChange() {
+        return pendingConfigurationChangeIndex != null && pendingConfigurationChangeIndex > commitIndex;
     }
 
-    private RaftMembership applyMembershipChange(MembershipChange change) {
-        return switch (change) {
-            case MembershipChange.AddLearner(var nodeId) -> membership.addLearner(nodeId);
-            case MembershipChange.PromoteVoter(var nodeId) -> membership.promoteVoter(nodeId);
-            case MembershipChange.DemoteToLearner(var nodeId) -> membership.demoteToLearner(nodeId);
-            case MembershipChange.RemoveNode(var nodeId) -> membership.removeNode(nodeId);
-        };
+    private RaftConfiguration applyConfigurationChange(ConfigurationChange change) {
+        return configuration.apply(change);
     }
 
-    private void replaceMembership(RaftMembership newMembership) {
-        this.membership = newMembership;
-        this.isLearner = newMembership.isLearner(id);
-        this.quorum = newMembership.voters().size() / 2 + 1;
-
-        var allPeers = new LinkedHashSet<>(newMembership.voters());
-        allPeers.addAll(newMembership.learners());
-        allPeers.remove(id);
-        this.peers = Set.copyOf(allPeers);
-
-        var voting = new LinkedHashSet<>(newMembership.voters());
-        voting.remove(id);
-        this.votingPeers = Set.copyOf(voting);
+    private void replaceConfiguration(RaftConfiguration newConfiguration) {
+        this.configuration = newConfiguration;
+        this.isLearner = newConfiguration.isLearner(id);
+        this.quorum = newConfiguration.quorumSize();
+        this.peers = newConfiguration.peerIdsExcluding(id);
+        this.votingPeers = newConfiguration.votingPeerIdsExcluding(id);
 
         if (role == RaftRole.LEADER) {
             for (String peer : peers) {
@@ -370,7 +350,7 @@ public final class Raft {
         }
     }
 
-    private void stepDownAfterMembershipChange() {
+    private void stepDownAfterConfigurationChange() {
         role = RaftRole.FOLLOWER;
         leaderId = null;
         pendingReads = List.of();
@@ -379,7 +359,7 @@ public final class Raft {
     }
 
     private void receive(String from, RaftMessage msg, RaftStepAccumulator accumulator) {
-        if (!membership.isMember(from)) {
+        if (!configuration.isMember(from)) {
             return;
         }
 
@@ -410,7 +390,7 @@ public final class Raft {
     }
 
     private void startPreVote(RaftStepAccumulator accumulator) {
-        if (!membership.isVoter(id)) {
+        if (!configuration.isVoter(id)) {
             return;
         }
         if (quorum == 1) {
@@ -431,7 +411,7 @@ public final class Raft {
     }
 
     private void startElection(RaftStepAccumulator accumulator) {
-        if (!membership.isVoter(id)) {
+        if (!configuration.isVoter(id)) {
             return;
         }
         term++;
@@ -521,7 +501,7 @@ public final class Raft {
             return;
         }
 
-        if (pvr.voteGranted() && membership.isVoter(from)) {
+        if (pvr.voteGranted() && configuration.isVoter(from)) {
             preVotesReceived.add(from);
             if (preVotesReceived.size() >= quorum) {
                 startElection(accumulator);
@@ -550,7 +530,7 @@ public final class Raft {
             return;
         }
 
-        if (rvr.voteGranted() && membership.isVoter(from)) {
+        if (rvr.voteGranted() && configuration.isVoter(from)) {
             votesReceived.add(from);
             if (votesReceived.size() >= quorum) {
                 becomeLeader(accumulator);
@@ -628,19 +608,19 @@ public final class Raft {
         unstable.acceptSnapshot(new RaftSnapshot(
             is.lastIncludedIndex(),
             is.lastIncludedTerm(),
-            is.membership(),
+            is.configuration(),
             is.data()
         ));
         commitIndex = is.lastIncludedIndex();
         lastApplied = is.lastIncludedIndex();
         persistHardState(accumulator);
 
-        replaceMembership(is.membership());
+        replaceConfiguration(is.configuration());
 
         accumulator.setIncomingSnapshot(new RaftSnapshot(
             is.lastIncludedIndex(),
             is.lastIncludedTerm(),
-            is.membership(),
+            is.configuration(),
             is.data()
         ));
         accumulator.send(from, new RaftMessage.InstallSnapshotResponse(term));
@@ -672,7 +652,7 @@ public final class Raft {
     }
 
     private void handleReadIndexResponse(String from, RaftMessage.ReadIndexResponse rir, RaftStepAccumulator accumulator) {
-        if (!membership.isVoter(from) || !Objects.equals(from, leaderId)) {
+        if (!configuration.isVoter(from) || !Objects.equals(from, leaderId)) {
             return;
         }
         if (rir.term() > term) {
@@ -711,7 +691,7 @@ public final class Raft {
             return;
         }
 
-        if (!membership.isVoter(from)) {
+        if (!configuration.isVoter(from)) {
             return;
         }
 
@@ -788,16 +768,16 @@ public final class Raft {
             switch (get(i)) {
                 case LogEntry.Data entry -> accumulator.apply(entry.index(), entry.term(), entry.data());
                 case LogEntry.Config entry -> {
-                    RaftMembership previous = membership;
-                    replaceMembership(entry.membership());
-                    accumulator.addMembershipTransition(entry.index(), previous, entry.membership());
+                    RaftConfiguration previous = configuration;
+                    replaceConfiguration(entry.configuration());
+                    accumulator.addConfigurationTransition(entry.index(), previous, entry.configuration());
 
-                    if (pendingMembershipChangeIndex != null && pendingMembershipChangeIndex == entry.index()) {
-                        pendingMembershipChangeIndex = null;
+                    if (pendingConfigurationChangeIndex != null && pendingConfigurationChangeIndex == entry.index()) {
+                        pendingConfigurationChangeIndex = null;
                     }
 
-                    if (role == RaftRole.LEADER && !entry.membership().isVoter(id)) {
-                        stepDownAfterMembershipChange();
+                    if (role == RaftRole.LEADER && !entry.configuration().isVoter(id)) {
+                        stepDownAfterConfigurationChange();
                     }
                 }
                 case LogEntry.NoOp _ -> {}
@@ -825,14 +805,14 @@ public final class Raft {
 
     public static final class Builder {
         private final String id;
-        private final RaftMembership membership;
+        private final RaftConfiguration configuration;
         private final RaftConfig config;
         private final RaftLogView logView;
         private IntUnaryOperator random = bound -> ThreadLocalRandom.current().nextInt(bound);
 
-        private Builder(String id, RaftMembership membership, RaftConfig config, RaftLogView logView) {
+        private Builder(String id, RaftConfiguration configuration, RaftConfig config, RaftLogView logView) {
             this.id = id;
-            this.membership = membership;
+            this.configuration = configuration;
             this.config = config;
             this.logView = logView;
         }
@@ -843,7 +823,7 @@ public final class Raft {
         }
 
         public Raft build() {
-            return new Raft(id, membership, config, logView, random);
+            return new Raft(id, configuration, config, logView, random);
         }
     }
 }
