@@ -2,7 +2,7 @@ package io.partdb.transport.grpc;
 
 import com.google.protobuf.ByteString;
 import io.partdb.bytes.Bytes;
-import io.partdb.node.cluster.ClusterMembership;
+import io.partdb.cluster.ClusterMembership;
 import io.partdb.node.replication.ReplicationLogEntry;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 

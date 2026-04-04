@@ -3,8 +3,8 @@ package io.partdb.transport.grpc;
 import java.net.URI;
 import java.util.Objects;
 
-record PeerEndpoint(String host, int port) {
-    PeerEndpoint {
+public record PeerEndpoint(String host, int port) {
+    public PeerEndpoint {
         Objects.requireNonNull(host, "host must not be null");
         if (host.isBlank()) {
             throw new IllegalArgumentException("host must not be blank");
@@ -14,7 +14,7 @@ record PeerEndpoint(String host, int port) {
         }
     }
 
-    static PeerEndpoint parse(String value) {
+    public static PeerEndpoint parse(String value) {
         Objects.requireNonNull(value, "value must not be null");
         if (value.isBlank()) {
             throw new IllegalArgumentException("endpoint must not be blank");

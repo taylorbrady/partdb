@@ -1,6 +1,7 @@
 package io.partdb.consensus;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.cluster.ClusterMembership;
 import io.partdb.raft.RaftPersistentState;
 import io.partdb.raft.RaftMembership;
 import io.partdb.raft.Raft;
@@ -128,10 +129,11 @@ public final class ConsensusNode implements AutoCloseable {
         Objects.requireNonNull(transport, "transport must not be null");
         Objects.requireNonNull(stateMachine, "stateMachine must not be null");
 
-        RaftStore store = openStore(dataDirectory, config.membership().toRaftMembership());
+        var membership = ClusterMemberships.toRaftMembership(config.membership());
+        RaftStore store = openStore(dataDirectory, membership);
         return openRuntime(
             config.nodeId(),
-            config.membership().toRaftMembership(),
+            membership,
             config.toRaftConfig(),
             config.tickInterval(),
             new ConsensusTransportAdapter(transport),
@@ -166,7 +168,7 @@ public final class ConsensusNode implements AutoCloseable {
     }
 
     public ClusterMembership membership() {
-        return ClusterMembership.fromRaftMembership(raft.membership());
+        return ClusterMemberships.fromRaftMembership(raft.membership());
     }
 
     @Override

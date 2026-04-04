@@ -1,6 +1,6 @@
 package io.partdb.node;
 
-import io.partdb.node.cluster.ClusterMembership;
+import io.partdb.cluster.ClusterMembership;
 import io.partdb.node.config.ReplicationConfig;
 import io.partdb.node.config.StorageConfig;
 import org.junit.jupiter.api.Test;

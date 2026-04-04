@@ -1,4 +1,4 @@
-package io.partdb.node.cluster;
+package io.partdb.cluster;
 
 import java.util.LinkedHashSet;
 import java.util.Objects;

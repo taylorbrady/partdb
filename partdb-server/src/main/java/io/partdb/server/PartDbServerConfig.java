@@ -1,6 +1,7 @@
-package io.partdb.transport.grpc;
+package io.partdb.server;
 
 import io.partdb.node.PartDbNodeConfig;
+import io.partdb.transport.grpc.PeerEndpoint;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -12,7 +13,7 @@ public final class PartDbServerConfig {
     private final Map<String, String> raftPeerAddresses;
     private final PeerEndpoint selfRaftEndpoint;
     private final int raftPort;
-    private final GrpcServerConfig grpcServerConfig;
+    private final int grpcPort;
     private final int adminPort;
 
     PartDbServerConfig(
@@ -20,25 +21,27 @@ public final class PartDbServerConfig {
         Map<String, String> raftPeerAddresses,
         PeerEndpoint selfRaftEndpoint,
         int raftPort,
-        GrpcServerConfig grpcServerConfig,
+        int grpcPort,
         int adminPort
     ) {
         Objects.requireNonNull(nodeConfig, "nodeConfig must not be null");
         Objects.requireNonNull(raftPeerAddresses, "raftPeerAddresses must not be null");
         Objects.requireNonNull(selfRaftEndpoint, "selfRaftEndpoint must not be null");
-        Objects.requireNonNull(grpcServerConfig, "grpcServerConfig must not be null");
         if (raftPort <= 0 || raftPort > 65535) {
             throw new IllegalArgumentException("raftPort must be between 1 and 65535");
+        }
+        if (grpcPort <= 0 || grpcPort > 65535) {
+            throw new IllegalArgumentException("grpcPort must be between 1 and 65535");
         }
         if (adminPort <= 0 || adminPort > 65535) {
             throw new IllegalArgumentException("adminPort must be between 1 and 65535");
         }
-        validateDistinctPorts(raftPort, grpcServerConfig.port(), adminPort);
+        validateDistinctPorts(raftPort, grpcPort, adminPort);
         this.nodeConfig = nodeConfig;
         this.raftPeerAddresses = Map.copyOf(raftPeerAddresses);
         this.selfRaftEndpoint = selfRaftEndpoint;
         this.raftPort = raftPort;
-        this.grpcServerConfig = grpcServerConfig;
+        this.grpcPort = grpcPort;
         this.adminPort = adminPort;
     }
 
@@ -63,15 +66,11 @@ public final class PartDbServerConfig {
     }
 
     public int grpcPort() {
-        return grpcServerConfig.port();
+        return grpcPort;
     }
 
     public int adminPort() {
         return adminPort;
-    }
-
-    GrpcServerConfig grpcServerConfig() {
-        return grpcServerConfig;
     }
 
     public static PartDbServerConfig create(
@@ -92,7 +91,7 @@ public final class PartDbServerConfig {
             normalizedRaftPeerAddresses,
             resolveSelfRaftEndpoint(nodeId, normalizedRaftPeerAddresses, raftPort),
             raftPort,
-            GrpcServerConfig.defaultConfig(grpcPort),
+            grpcPort,
             adminPort
         );
     }

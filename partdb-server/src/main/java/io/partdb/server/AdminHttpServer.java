@@ -1,4 +1,4 @@
-package io.partdb.transport.grpc;
+package io.partdb.server;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;

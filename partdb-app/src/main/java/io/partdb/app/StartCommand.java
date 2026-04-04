@@ -1,7 +1,7 @@
 package io.partdb.app;
 
-import io.partdb.transport.grpc.PartDbServer;
-import io.partdb.transport.grpc.PartDbServerConfig;
+import io.partdb.server.PartDbServer;
+import io.partdb.server.PartDbServerConfig;
 
 import java.nio.file.Path;
 import java.util.Collections;

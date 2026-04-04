@@ -1,7 +1,7 @@
 package io.partdb.node;
 
+import io.partdb.cluster.ClusterMembership;
 import io.partdb.consensus.ConsensusConfig;
-import io.partdb.node.cluster.ClusterMembership;
 import io.partdb.node.config.ReplicationConfig;
 import io.partdb.node.config.StorageConfig;
 

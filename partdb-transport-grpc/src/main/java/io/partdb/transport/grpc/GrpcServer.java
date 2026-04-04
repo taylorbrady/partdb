@@ -9,9 +9,18 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-final class GrpcServer implements AutoCloseable {
+public final class GrpcServer implements AutoCloseable {
     private final Server server;
     private final GrpcServerConfig config;
+
+    public GrpcServer(
+        PartDbNode node,
+        Map<String, String> raftPeerAddresses,
+        String selfRaftAddress,
+        int port
+    ) {
+        this(node, raftPeerAddresses, selfRaftAddress, GrpcServerConfig.defaultConfig(port));
+    }
 
     GrpcServer(
         PartDbNode node,
@@ -27,7 +36,7 @@ final class GrpcServer implements AutoCloseable {
             .build();
     }
 
-    void start() throws IOException {
+    public void start() throws IOException {
         server.start();
     }
 

@@ -6,7 +6,7 @@ val logbackVersion = "1.5.32"
 val logstashEncoderVersion = "9.0"
 
 dependencies {
-    implementation(project(":partdb-transport-grpc"))
+    implementation(project(":partdb-server"))
     implementation(project(":partdb-client"))
 
     runtimeOnly("ch.qos.logback:logback-classic:$logbackVersion")

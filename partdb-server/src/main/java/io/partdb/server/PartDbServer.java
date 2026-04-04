@@ -1,7 +1,9 @@
-package io.partdb.transport.grpc;
+package io.partdb.server;
 
 import io.partdb.node.PartDbNode;
 import io.partdb.node.replication.ReplicationTransport;
+import io.partdb.transport.grpc.GrpcReplicationTransport;
+import io.partdb.transport.grpc.GrpcServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,18 +30,17 @@ public final class PartDbServer implements AutoCloseable {
             node,
             config.raftPeerAddresses(),
             config.selfRaftEndpoint().toString(),
-            config.grpcServerConfig()
+            config.grpcPort()
         );
         this.jmxRegistrations = new JmxRegistrations(node);
     }
 
     private ReplicationTransport createDefaultTransport() {
-        var transportConfig = GrpcReplicationTransportConfig.create(
+        return new GrpcReplicationTransport(
             config.nodeId(),
             config.raftPort(),
             config.raftPeerAddresses()
         );
-        return new GrpcReplicationTransport(transportConfig);
     }
 
     public void start() throws IOException {

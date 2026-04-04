@@ -1,7 +1,7 @@
 package io.partdb.consensus.transport;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.consensus.ClusterMembership;
+import io.partdb.cluster.ClusterMembership;
 
 import java.util.List;
 import java.util.Objects;

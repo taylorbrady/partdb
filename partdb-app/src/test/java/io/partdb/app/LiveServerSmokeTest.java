@@ -4,8 +4,8 @@ import io.partdb.client.ClusterClient;
 import io.partdb.client.ClusterClientConfig;
 import io.partdb.client.ClusterNodeRole;
 import io.partdb.client.ServerEndpoint;
-import io.partdb.transport.grpc.PartDbServer;
-import io.partdb.transport.grpc.PartDbServerConfig;
+import io.partdb.server.PartDbServer;
+import io.partdb.server.PartDbServerConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 

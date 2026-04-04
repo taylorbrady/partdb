@@ -1,5 +1,6 @@
 package io.partdb.consensus;
 
+import io.partdb.cluster.ClusterMembership;
 import io.partdb.consensus.transport.ConsensusLogEntry;
 import io.partdb.consensus.transport.ConsensusRpc;
 import io.partdb.consensus.transport.ConsensusTransport;
@@ -55,7 +56,7 @@ final class ConsensusTransportAdapter implements RaftTransport {
                 msg.leaderId(),
                 msg.lastIncludedIndex(),
                 msg.lastIncludedTerm(),
-                ClusterMembership.fromRaftMembership(msg.membership()),
+                ClusterMemberships.fromRaftMembership(msg.membership()),
                 msg.data()
             );
             case RaftMessage.PreVote msg -> new ConsensusRpc.PreVote(
@@ -118,7 +119,7 @@ final class ConsensusTransportAdapter implements RaftTransport {
                 msg.leaderId(),
                 msg.lastIncludedIndex(),
                 msg.lastIncludedTerm(),
-                msg.membership().toRaftMembership(),
+                ClusterMemberships.toRaftMembership(msg.membership()),
                 msg.data()
             );
             case ConsensusRpc.PreVote msg -> new RaftMessage.PreVote(
@@ -167,7 +168,7 @@ final class ConsensusTransportAdapter implements RaftTransport {
             case LogEntry.Config config -> new ConsensusLogEntry.Config(
                 config.index(),
                 config.term(),
-                ClusterMembership.fromRaftMembership(config.membership())
+                ClusterMemberships.fromRaftMembership(config.membership())
             );
         };
     }
@@ -179,7 +180,7 @@ final class ConsensusTransportAdapter implements RaftTransport {
             case ConsensusLogEntry.Config config -> new LogEntry.Config(
                 config.index(),
                 config.term(),
-                config.membership().toRaftMembership()
+                ClusterMemberships.toRaftMembership(config.membership())
             );
         };
     }

@@ -11,8 +11,8 @@ import io.partdb.client.KvClient;
 import io.partdb.client.KvClientConfig;
 import io.partdb.client.ReadConsistency;
 import io.partdb.client.ServerEndpoint;
-import io.partdb.transport.grpc.PartDbServer;
-import io.partdb.transport.grpc.PartDbServerConfig;
+import io.partdb.server.PartDbServer;
+import io.partdb.server.PartDbServerConfig;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

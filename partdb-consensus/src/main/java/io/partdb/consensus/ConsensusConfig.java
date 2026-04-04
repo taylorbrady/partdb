@@ -1,5 +1,6 @@
 package io.partdb.consensus;
 
+import io.partdb.cluster.ClusterMembership;
 import io.partdb.raft.RaftConfig;
 
 import java.time.Duration;

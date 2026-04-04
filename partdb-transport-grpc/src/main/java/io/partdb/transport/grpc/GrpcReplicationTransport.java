@@ -28,7 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-final class GrpcReplicationTransport implements ReplicationTransport {
+public final class GrpcReplicationTransport implements ReplicationTransport {
 
     private static final Logger log = LoggerFactory.getLogger(GrpcReplicationTransport.class);
 
@@ -37,6 +37,14 @@ final class GrpcReplicationTransport implements ReplicationTransport {
     private final Map<String, RaftServiceGrpc.RaftServiceStub> stubs = new ConcurrentHashMap<>();
 
     private Server server;
+
+    public GrpcReplicationTransport(
+        String localNodeId,
+        int port,
+        Map<String, String> raftPeerAddresses
+    ) {
+        this(GrpcReplicationTransportConfig.create(localNodeId, port, raftPeerAddresses));
+    }
 
     GrpcReplicationTransport(GrpcReplicationTransportConfig config) {
         this.config = config;

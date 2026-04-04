@@ -1,9 +1,9 @@
 package io.partdb.node.internal.replication;
 
+import io.partdb.cluster.ClusterMembership;
 import io.partdb.consensus.transport.ConsensusLogEntry;
 import io.partdb.consensus.transport.ConsensusRpc;
 import io.partdb.consensus.transport.ConsensusTransport;
-import io.partdb.node.cluster.ClusterMembership;
 import io.partdb.node.replication.ReplicationLogEntry;
 import io.partdb.node.replication.ReplicationRpc;
 import io.partdb.node.replication.ReplicationTransport;
@@ -59,7 +59,7 @@ public final class ConsensusTransportAdapter implements ConsensusTransport {
                 msg.leaderId(),
                 msg.lastIncludedIndex(),
                 msg.lastIncludedTerm(),
-                toConsensus(msg.membership()),
+                msg.membership(),
                 msg.data()
             );
             case ReplicationRpc.ReadIndex msg -> new ConsensusRpc.ReadIndex(msg.term(), msg.context());
@@ -141,7 +141,7 @@ public final class ConsensusTransportAdapter implements ConsensusTransport {
                 msg.leaderId(),
                 msg.lastIncludedIndex(),
                 msg.lastIncludedTerm(),
-                fromConsensus(msg.membership()),
+                msg.membership(),
                 msg.data()
             );
             case ConsensusRpc.ReadIndex msg -> new ReplicationRpc.ReadIndex(msg.term(), msg.context());
@@ -153,7 +153,7 @@ public final class ConsensusTransportAdapter implements ConsensusTransport {
             case ReplicationLogEntry.Data data -> new ConsensusLogEntry.Data(data.index(), data.term(), data.data());
             case ReplicationLogEntry.NoOp noOp -> new ConsensusLogEntry.NoOp(noOp.index(), noOp.term());
             case ReplicationLogEntry.Config config ->
-                new ConsensusLogEntry.Config(config.index(), config.term(), toConsensus(config.membership()));
+                new ConsensusLogEntry.Config(config.index(), config.term(), config.membership());
         };
     }
 
@@ -162,15 +162,7 @@ public final class ConsensusTransportAdapter implements ConsensusTransport {
             case ConsensusLogEntry.Data data -> new ReplicationLogEntry.Data(data.index(), data.term(), data.data());
             case ConsensusLogEntry.NoOp noOp -> new ReplicationLogEntry.NoOp(noOp.index(), noOp.term());
             case ConsensusLogEntry.Config config ->
-                new ReplicationLogEntry.Config(config.index(), config.term(), fromConsensus(config.membership()));
+                new ReplicationLogEntry.Config(config.index(), config.term(), config.membership());
         };
-    }
-
-    private static io.partdb.consensus.ClusterMembership toConsensus(ClusterMembership membership) {
-        return new io.partdb.consensus.ClusterMembership(membership.voters(), membership.learners());
-    }
-
-    private static ClusterMembership fromConsensus(io.partdb.consensus.ClusterMembership membership) {
-        return new ClusterMembership(membership.voters(), membership.learners());
     }
 }

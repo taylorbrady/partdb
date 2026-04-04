@@ -1,7 +1,7 @@
 package io.partdb.node.replication;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.cluster.ClusterMembership;
+import io.partdb.cluster.ClusterMembership;
 
 import java.util.Objects;
 

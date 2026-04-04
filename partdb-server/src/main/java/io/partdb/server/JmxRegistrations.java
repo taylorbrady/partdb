@@ -1,4 +1,4 @@
-package io.partdb.transport.grpc;
+package io.partdb.server;
 
 import io.partdb.node.PartDbNode;
 import io.partdb.node.PartDbNodeMXBean;

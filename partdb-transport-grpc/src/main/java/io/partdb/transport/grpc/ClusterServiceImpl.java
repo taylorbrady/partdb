@@ -1,6 +1,7 @@
 package io.partdb.transport.grpc;
 
 import io.grpc.stub.StreamObserver;
+import io.partdb.cluster.ClusterMembership;
 import io.partdb.grpc.cluster.proto.ClusterProto.Error;
 import io.partdb.grpc.cluster.proto.ClusterProto.ErrorCode;
 import io.partdb.grpc.cluster.proto.ClusterProto.Member;
@@ -12,7 +13,6 @@ import io.partdb.grpc.cluster.proto.ClusterProto.StatusRequest;
 import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
 import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
 import io.partdb.node.PartDbNode;
-import io.partdb.node.cluster.ClusterMembership;
 import io.partdb.node.cluster.NodeStatus;
 
 import java.util.Map;
