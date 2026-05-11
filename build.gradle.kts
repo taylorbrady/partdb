@@ -41,8 +41,14 @@ tasks.register("integrationTest") {
     dependsOn(":partdb-app:integrationTest")
 }
 
+tasks.register("packagedIntegrationTest") {
+    group = "verification"
+    description = "Runs packaged application integration tests."
+    dependsOn(":partdb-app:packagedIntegrationTest")
+}
+
 tasks.register("ci") {
     group = "verification"
     description = "Runs all checks required before merge."
-    dependsOn("check", "integrationTest", ":partdb-app:packagedIntegrationTest")
+    dependsOn("check", "integrationTest", "packagedIntegrationTest")
 }

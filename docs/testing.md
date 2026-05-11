@@ -66,7 +66,7 @@ Use this suite for:
 Run:
 
 ```bash
-./gradlew :partdb-app:packagedIntegrationTest
+./gradlew packagedIntegrationTest
 ```
 
 Packaged integration tests live in `src/packagedIntegrationTest`. They install
@@ -98,7 +98,7 @@ Run:
 ```
 
 `ci` is the required pre-merge/release gate. It runs `check`,
-`integrationTest`, and `:partdb-app:packagedIntegrationTest`.
+`integrationTest`, and `packagedIntegrationTest`.
 
 ## Benchmarks
 

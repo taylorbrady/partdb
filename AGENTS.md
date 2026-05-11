@@ -20,8 +20,8 @@ depend on gRPC, CLI code, packaging, or process lifecycle concerns.
 - `./gradlew test`: run fast module-local unit tests.
 - `./gradlew check`: run the standard local quality gate.
 - `./gradlew integrationTest`: run in-process cross-module integration tests.
-- `./gradlew :partdb-app:packagedIntegrationTest`: test the installed app,
-  generated scripts, runtime classpath, CLI, and real OS processes.
+- `./gradlew packagedIntegrationTest`: test the installed app, generated
+  scripts, runtime classpath, CLI, and real OS processes.
 - `./gradlew ci`: run the required pre-merge gate.
 - `./gradlew :partdb-app:run --args="..."`: run the CLI locally.
 
