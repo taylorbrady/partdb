@@ -20,6 +20,26 @@ application {
 
 testing {
     suites {
+        register<JvmTestSuite>("integrationTest") {
+            useJUnitJupiter()
+
+            dependencies {
+                implementation(project())
+                implementation(project(":partdb-server"))
+                implementation(project(":partdb-client"))
+            }
+
+            targets {
+                all {
+                    testTask.configure {
+                        shouldRunAfter(tasks.named("test"))
+                        maxParallelForks = 1
+                        jvmArgs("--sun-misc-unsafe-memory-access=allow")
+                    }
+                }
+            }
+        }
+
         register<JvmTestSuite>("packagedIntegrationTest") {
             useJUnitJupiter()
 
@@ -32,7 +52,7 @@ testing {
                 all {
                     testTask.configure {
                         dependsOn(tasks.named("installDist"))
-                        shouldRunAfter(tasks.named("test"))
+                        shouldRunAfter(tasks.named("integrationTest"))
                         maxParallelForks = 1
                         jvmArgs("--sun-misc-unsafe-memory-access=allow")
                         systemProperty(

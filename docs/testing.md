@@ -6,21 +6,48 @@ PartDB's highest-value tests are the ones that exercise the whole stack:
 client -> public gRPC -> server -> node -> consensus/Raft -> Raft gRPC -> storage
 ```
 
-## Current Proof Tests
+The test taxonomy keeps fast feedback, behavioral confidence, packaged-artifact
+confidence, and performance measurement separate.
 
-### Fast In-Process Cluster Test
+## Unit Tests
 
 Run:
 
 ```bash
-./gradlew :partdb-app:test --tests io.partdb.app.MultiNodeClusterIntegrationTest
+./gradlew test
 ```
 
-This starts three `PartDbServer` instances in one JVM, each with real public gRPC
-and Raft gRPC transports. It uses `KvClient` and `ClusterClient` rather than
-node internals.
+Unit tests live in `src/test`. They should be fast, deterministic, and local to
+one module. Use them for value objects, config validation, codecs, Raft state
+transitions, storage invariants, command parsing, and small server/client
+behavior.
 
-Coverage includes:
+## Project Checks
+
+Run:
+
+```bash
+./gradlew check
+```
+
+`check` is the normal local quality gate. It runs unit tests and is the right
+place to attach future formatting, static analysis, dependency, and license
+checks. It intentionally does not run the heavier integration suites.
+
+## In-Process Integration Tests
+
+Run:
+
+```bash
+./gradlew integrationTest
+```
+
+Integration tests live in `src/integrationTest`. They exercise multiple PartDB
+modules together inside the Gradle test JVM. These tests may start real
+`PartDbServer` instances with public gRPC and Raft gRPC transports, but they do
+not use the installed application distribution.
+
+Use this suite for:
 
 - 3-node startup
 - leader election
@@ -31,8 +58,10 @@ Coverage includes:
 - follower restart and catch-up
 - full cluster restart
 - range scan through the public client
+- health endpoint lifecycle
+- startup configuration failures
 
-### Packaged Process Cluster Test
+## Packaged Integration Tests
 
 Run:
 
@@ -40,18 +69,41 @@ Run:
 ./gradlew :partdb-app:packagedIntegrationTest
 ```
 
-This installs the application distribution, starts three real OS processes, and
-drives the cluster through the packaged CLI and public client API.
+Packaged integration tests live in `src/packagedIntegrationTest`. They install
+the application distribution, start real OS processes from the generated
+executable, and drive the cluster through the packaged CLI and public client API.
 
-Coverage includes:
+Use this suite for:
 
 - installed executable startup
+- generated start scripts
+- runtime classpath and logging dependencies
+- default JVM arguments
 - 3-node leader election
 - CLI `put`, `get`, `status`, and `members`
 - leader stop and failover
 - post-failover writes
 - old leader process restart and catch-up
 - range scan through the public client
+
+Keep this suite focused on shipped-artifact smoke coverage. Most behavioral
+cluster scenarios belong in `integrationTest`.
+
+## CI Gate
+
+Run:
+
+```bash
+./gradlew ci
+```
+
+`ci` is the required pre-merge/release gate. It runs `check`,
+`integrationTest`, and `:partdb-app:packagedIntegrationTest`.
+
+## Benchmarks
+
+Run JMH benchmarks explicitly. They are performance tools, not correctness
+checks, and must not be attached to `check` or `ci`.
 
 ## Known Gaps
 

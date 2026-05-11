@@ -22,10 +22,7 @@ subprojects {
     }
 
     dependencies {
-        val slf4jVersion = "2.0.17"
         val junitVersion = "6.0.3"
-
-        implementation("org.slf4j:slf4j-api:$slf4jVersion")
 
         testImplementation("org.junit.jupiter:junit-jupiter-api:$junitVersion")
         testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:$junitVersion")
@@ -36,4 +33,16 @@ subprojects {
         useJUnitPlatform()
         jvmArgs("--sun-misc-unsafe-memory-access=allow")
     }
+}
+
+tasks.register("integrationTest") {
+    group = "verification"
+    description = "Runs in-process cross-module integration tests."
+    dependsOn(":partdb-app:integrationTest")
+}
+
+tasks.register("ci") {
+    group = "verification"
+    description = "Runs all checks required before merge."
+    dependsOn("check", "integrationTest", ":partdb-app:packagedIntegrationTest")
 }
