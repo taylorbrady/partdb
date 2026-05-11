@@ -1,7 +1,6 @@
 package io.partdb.node.kv;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.lease.LeaseId;
 
 import java.util.Optional;
 import java.util.concurrent.CompletionStage;
@@ -23,10 +22,6 @@ public interface KeyValueOperations {
 
     default CompletionStage<PutResult> put(Bytes key, Bytes value) {
         return put(PutRequest.of(key, value));
-    }
-
-    default CompletionStage<PutResult> put(Bytes key, Bytes value, LeaseId leaseId) {
-        return put(PutRequest.of(key, value, leaseId));
     }
 
     CompletionStage<DeleteResult> delete(Bytes key);

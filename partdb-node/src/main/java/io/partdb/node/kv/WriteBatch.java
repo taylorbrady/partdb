@@ -1,7 +1,6 @@
 package io.partdb.node.kv;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.lease.LeaseId;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -33,11 +32,6 @@ public record WriteBatch(List<WriteBatchOperation> operations) {
 
         public Builder put(Bytes key, Bytes value) {
             operations.add(WriteBatchOperation.Put.of(key, value));
-            return this;
-        }
-
-        public Builder put(Bytes key, Bytes value, LeaseId leaseId) {
-            operations.add(WriteBatchOperation.Put.of(key, value, leaseId));
             return this;
         }
 

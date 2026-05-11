@@ -1,10 +1,13 @@
 package io.partdb.app;
 
+import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -106,6 +109,26 @@ class PackagedClusterSmokeTest {
             );
             assertEquals("failover-value\n", postFailoverGet.stdout(), "stderr:\n" + postFailoverGet.stderr());
             assertEquals("", postFailoverGet.stderr(), "stdout:\n" + postFailoverGet.stdout());
+
+            cluster.startNode(leader.nodeId());
+            cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+            cluster.awaitNodeValue(leader.nodeId(), "smoke-key", "smoke-value", CLUSTER_TIMEOUT);
+            cluster.awaitNodeValue(leader.nodeId(), "failover-key", "failover-value", CLUSTER_TIMEOUT);
+
+            try (var client = cluster.newKvClient()) {
+                client.put(Bytes.utf8("scan/a"), Bytes.utf8("one")).get();
+                client.put(Bytes.utf8("scan/b"), Bytes.utf8("two")).get();
+
+                var scanned = new ArrayList<String>();
+                try (var cursor = client.scan(Optional.of(Bytes.utf8("scan/")), Optional.of(Bytes.utf8("scan0"))).get()) {
+                    while (cursor.hasNext()) {
+                        var entry = cursor.next();
+                        scanned.add(entry.key().utf8() + "=" + entry.value().utf8());
+                    }
+                }
+
+                assertEquals(java.util.List.of("scan/a=one", "scan/b=two"), scanned);
+            }
         }
     }
 }

@@ -22,12 +22,6 @@ import io.partdb.node.kv.ScanCursor;
 import io.partdb.node.kv.VersionedValue;
 import io.partdb.node.kv.WriteBatch;
 import io.partdb.node.kv.WriteBatchResult;
-import io.partdb.node.lease.LeaseGrant;
-import io.partdb.node.lease.LeaseId;
-import io.partdb.node.lease.LeaseKeepAliveResult;
-import io.partdb.node.lease.LeaseOperations;
-import io.partdb.node.lease.LeaseRevokeResult;
-import io.partdb.node.lease.LeaseService;
 import io.partdb.node.metrics.MaintenanceOperations;
 import io.partdb.node.metrics.NodeMetrics;
 import io.partdb.node.metrics.StorageMetrics;
@@ -53,12 +47,10 @@ public final class PartDbNode implements AutoCloseable {
     private final PartDbStateMachine stateMachine;
     private final ConsensusRuntime consensus;
     private final PartDbCommandExecutor commandExecutor;
-    private final LeaseService leaseService;
     private final AtomicLong proposalCount = new AtomicLong();
     private final AtomicLong proposalFailureCount = new AtomicLong();
 
     private final KeyValueOperations keyValues = new KeyValuesView();
-    private final LeaseOperations leases = new LeaseView();
     private final ClusterView cluster = new ClusterViewImpl();
     private final MaintenanceOperations maintenance = new MaintenanceView();
 
@@ -78,7 +70,6 @@ public final class PartDbNode implements AutoCloseable {
                 stateMachine
             );
             this.commandExecutor = new PartDbCommandExecutor(consensus);
-            this.leaseService = new LeaseService(consensus, commandExecutor, stateMachine.leaseRegistry());
         } catch (RuntimeException | Error e) {
             stateMachine.close();
             throw e;
@@ -101,10 +92,6 @@ public final class PartDbNode implements AutoCloseable {
         return keyValues;
     }
 
-    public LeaseOperations leases() {
-        return leases;
-    }
-
     public ClusterView cluster() {
         return cluster;
     }
@@ -115,7 +102,6 @@ public final class PartDbNode implements AutoCloseable {
 
     @Override
     public void close() {
-        leaseService.close();
         consensus.close();
         stateMachine.close();
     }
@@ -150,8 +136,7 @@ public final class PartDbNode implements AutoCloseable {
                 .map(entry -> new KeyValueEntry(
                     entry.key(),
                     entry.value(),
-                    entry.version(),
-                    entry.leaseId() == 0 ? Optional.empty() : Optional.of(LeaseId.of(entry.leaseId()))
+                    entry.version()
                 ));
             return new StreamBackedScanCursor<>(stream);
         }
@@ -175,9 +160,9 @@ public final class PartDbNode implements AutoCloseable {
         @Override
         public CompletionStage<PutResult> put(PutRequest request) {
             Objects.requireNonNull(request, "request must not be null");
-            CompletableFuture<PutResult> proposal = request.leaseId()
-                .map(leaseId -> commandExecutor.execute(PartDbCommands.put(request.key(), request.value(), leaseId)))
-                .orElseGet(() -> commandExecutor.execute(PartDbCommands.put(request.key(), request.value())));
+            CompletableFuture<PutResult> proposal = commandExecutor.execute(
+                PartDbCommands.put(request.key(), request.value())
+            );
             return mapFailure(trackProposal(proposal));
         }
 
@@ -191,29 +176,6 @@ public final class PartDbNode implements AutoCloseable {
         public CompletionStage<WriteBatchResult> writeBatch(WriteBatch batch) {
             Objects.requireNonNull(batch, "batch must not be null");
             return mapFailure(trackProposal(commandExecutor.execute(PartDbCommands.writeBatch(batch))));
-        }
-    }
-
-    private final class LeaseView implements LeaseOperations {
-        @Override
-        public CompletionStage<LeaseGrant> grant(Duration ttl) {
-            Objects.requireNonNull(ttl, "ttl must not be null");
-            if (ttl.isZero() || ttl.isNegative()) {
-                throw new IllegalArgumentException("ttl must be positive");
-            }
-            return mapFailure(trackProposal(leaseService.grant(ttl)));
-        }
-
-        @Override
-        public CompletionStage<LeaseKeepAliveResult> keepAlive(LeaseId leaseId) {
-            Objects.requireNonNull(leaseId, "leaseId must not be null");
-            return mapFailure(trackProposal(leaseService.keepAlive(leaseId)));
-        }
-
-        @Override
-        public CompletionStage<LeaseRevokeResult> revoke(LeaseId leaseId) {
-            Objects.requireNonNull(leaseId, "leaseId must not be null");
-            return mapFailure(trackProposal(leaseService.revoke(leaseId)));
         }
     }
 
@@ -298,8 +260,7 @@ public final class PartDbNode implements AutoCloseable {
     private VersionedValue toVersionedValue(PartDbStateMachine.LocalValue value) {
         return new VersionedValue(
             value.value(),
-            value.modRevision(),
-            value.leaseId() == 0 ? Optional.empty() : Optional.of(LeaseId.of(value.leaseId()))
+            value.modRevision()
         );
     }
 

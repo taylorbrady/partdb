@@ -30,7 +30,7 @@ class ClientValueTypesTest {
         byte[] key = "key".getBytes(StandardCharsets.UTF_8);
         byte[] value = "value".getBytes(StandardCharsets.UTF_8);
 
-        var put = new WriteOp.Put(Bytes.copyOf(key), Bytes.copyOf(value), 5);
+        var put = new WriteOp.Put(Bytes.copyOf(key), Bytes.copyOf(value));
         var delete = new WriteOp.Delete(Bytes.copyOf(key));
 
         key[0] = 'K';
@@ -39,7 +39,7 @@ class ClientValueTypesTest {
         assertEquals(Bytes.utf8("key"), put.key());
         assertEquals(Bytes.utf8("value"), put.value());
         assertEquals(Bytes.utf8("key"), delete.key());
-        assertEquals(new WriteOp.Put(Bytes.utf8("key"), Bytes.utf8("value"), 5), put);
+        assertEquals(new WriteOp.Put(Bytes.utf8("key"), Bytes.utf8("value")), put);
         assertEquals(new WriteOp.Delete(Bytes.utf8("key")), delete);
     }
 

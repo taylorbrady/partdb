@@ -2,17 +2,14 @@ package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.node.cluster.NodeRole;
-import io.partdb.node.lease.LeaseGrant;
 import io.partdb.node.recovery.LogicalBackup;
 import io.partdb.node.recovery.PartDbRecovery;
-import io.partdb.node.recovery.RecoveryOptions;
 import io.partdb.node.recovery.RecoveryResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,7 +21,7 @@ class PartDbBootstrapTest {
     Path tempDir;
 
     @Test
-    void recoverFromBackupPreservesDurableKeysAndInvalidatesLeases() throws Exception {
+    void recoverFromBackupPreservesDurableKeys() throws Exception {
         var sourceConfig = PartDbNodeConfig.builder("node-1", tempDir.resolve("source"))
             .tickInterval(Duration.ofMillis(1))
             .build();
@@ -33,9 +30,7 @@ class PartDbBootstrapTest {
         try (var node = PartDbNode.open(sourceConfig)) {
             awaitLeader(node);
 
-            LeaseGrant leaseGrant = node.leases().grant(Duration.ofSeconds(30)).toCompletableFuture().get(5, TimeUnit.SECONDS);
-            node.keyValues().put(bytes("plain-key"), bytes("plain-value")).toCompletableFuture().get(5, TimeUnit.SECONDS);
-            node.keyValues().put(bytes("lease-key"), bytes("lease-value"), leaseGrant.leaseId())
+            node.keyValues().put(bytes("plain-key"), bytes("plain-value"))
                 .toCompletableFuture()
                 .get(5, TimeUnit.SECONDS);
 
@@ -46,14 +41,8 @@ class PartDbBootstrapTest {
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        RecoveryResult result = PartDbRecovery.restore(
-            recoveredConfig,
-            backup,
-            RecoveryOptions.defaults()
-        );
+        RecoveryResult result = PartDbRecovery.restore(recoveredConfig, backup);
 
-        assertEquals(1, result.invalidatedLeaseCount());
-        assertEquals(1, result.deletedLeaseAttachedKeyCount());
         assertTrue(result.finalRevision() >= backup.appliedIndex());
 
         try (var recovered = PartDbNode.open(recoveredConfig)) {
@@ -65,11 +54,6 @@ class PartDbBootstrapTest {
                     .orElseThrow()
                     .value()
             );
-            assertEquals(
-                Optional.empty(),
-                recovered.keyValues().get(bytes("lease-key")).toCompletableFuture().get(5, TimeUnit.SECONDS)
-            );
-
             long nextWriteRevision = recovered.keyValues()
                 .put(bytes("post-recovery"), bytes("value"))
                 .toCompletableFuture()

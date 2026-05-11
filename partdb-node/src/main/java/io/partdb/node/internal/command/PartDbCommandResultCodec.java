@@ -11,10 +11,6 @@ public final class PartDbCommandResultCodec {
     private static final byte OP_PUT_APPLIED = 1;
     private static final byte OP_DELETE_APPLIED = 2;
     private static final byte OP_BATCH_WRITE_APPLIED = 3;
-    private static final byte OP_LEASE_GRANTED = 4;
-    private static final byte OP_LEASE_KEPT_ALIVE = 5;
-    private static final byte OP_LEASE_REVOKED = 6;
-    private static final byte OP_LEASE_NOT_FOUND = 7;
 
     private PartDbCommandResultCodec() {
     }
@@ -36,28 +32,6 @@ public final class PartDbCommandResultCodec {
                 buffer.put(OP_BATCH_WRITE_APPLIED);
                 buffer.putLong(modRevision);
             }
-            case PartDbCommandResult.LeaseGranted(long modRevision, long leaseId, long ttlNanos) -> {
-                buffer.put(OP_LEASE_GRANTED);
-                buffer.putLong(modRevision);
-                buffer.putLong(leaseId);
-                buffer.putLong(ttlNanos);
-            }
-            case PartDbCommandResult.LeaseKeptAlive(long modRevision, long leaseId, long ttlNanos) -> {
-                buffer.put(OP_LEASE_KEPT_ALIVE);
-                buffer.putLong(modRevision);
-                buffer.putLong(leaseId);
-                buffer.putLong(ttlNanos);
-            }
-            case PartDbCommandResult.LeaseRevoked(long modRevision, long leaseId, long deletedKeyCount) -> {
-                buffer.put(OP_LEASE_REVOKED);
-                buffer.putLong(modRevision);
-                buffer.putLong(leaseId);
-                buffer.putLong(deletedKeyCount);
-            }
-            case PartDbCommandResult.LeaseNotFound(long leaseId) -> {
-                buffer.put(OP_LEASE_NOT_FOUND);
-                buffer.putLong(leaseId);
-            }
         }
 
         return Bytes.copyOf(buffer.array());
@@ -75,13 +49,6 @@ public final class PartDbCommandResultCodec {
             case OP_PUT_APPLIED -> new PartDbCommandResult.PutApplied(buffer.getLong());
             case OP_DELETE_APPLIED -> new PartDbCommandResult.DeleteApplied(buffer.getLong());
             case OP_BATCH_WRITE_APPLIED -> new PartDbCommandResult.BatchWriteApplied(buffer.getLong());
-            case OP_LEASE_GRANTED ->
-                new PartDbCommandResult.LeaseGranted(buffer.getLong(), buffer.getLong(), buffer.getLong());
-            case OP_LEASE_KEPT_ALIVE ->
-                new PartDbCommandResult.LeaseKeptAlive(buffer.getLong(), buffer.getLong(), buffer.getLong());
-            case OP_LEASE_REVOKED ->
-                new PartDbCommandResult.LeaseRevoked(buffer.getLong(), buffer.getLong(), buffer.getLong());
-            case OP_LEASE_NOT_FOUND -> new PartDbCommandResult.LeaseNotFound(buffer.getLong());
             default -> throw new IllegalArgumentException("Unknown PartDB command result opcode: " + opcode);
         };
     }
@@ -90,11 +57,7 @@ public final class PartDbCommandResultCodec {
         return switch (result) {
             case PartDbCommandResult.PutApplied _,
                  PartDbCommandResult.DeleteApplied _,
-                 PartDbCommandResult.BatchWriteApplied _,
-                 PartDbCommandResult.LeaseNotFound _ -> 1 + 1 + 8;
-            case PartDbCommandResult.LeaseGranted _,
-                 PartDbCommandResult.LeaseKeptAlive _,
-                 PartDbCommandResult.LeaseRevoked _ -> 1 + 1 + 8 + 8 + 8;
+                 PartDbCommandResult.BatchWriteApplied _ -> 1 + 1 + 8;
         };
     }
 }

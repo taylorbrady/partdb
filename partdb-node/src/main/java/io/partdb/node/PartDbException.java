@@ -6,7 +6,6 @@ import java.util.Optional;
 public sealed class PartDbException extends RuntimeException
     permits PartDbException.NotLeader,
             PartDbException.NodeClosed,
-            PartDbException.LeaseNotFound,
             PartDbException.StorageFailure,
             PartDbException.RecoveryFailure {
 
@@ -36,22 +35,6 @@ public sealed class PartDbException extends RuntimeException
     public static final class NodeClosed extends PartDbException {
         public NodeClosed() {
             super("Node has been shut down");
-        }
-    }
-
-    public static final class LeaseNotFound extends PartDbException {
-        private final long leaseId;
-
-        public LeaseNotFound(long leaseId) {
-            super("Lease not found: " + leaseId);
-            if (leaseId <= 0) {
-                throw new IllegalArgumentException("leaseId must be positive");
-            }
-            this.leaseId = leaseId;
-        }
-
-        public long leaseId() {
-            return leaseId;
         }
     }
 

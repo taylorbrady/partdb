@@ -4,7 +4,7 @@ import io.partdb.bytes.Bytes;
 
 public sealed interface WriteOp permits WriteOp.Put, WriteOp.Delete {
 
-    record Put(Bytes key, Bytes value, long leaseId) implements WriteOp {
+    record Put(Bytes key, Bytes value) implements WriteOp {
         public Put {
             if (key == null) {
                 throw new IllegalArgumentException("key must not be null");

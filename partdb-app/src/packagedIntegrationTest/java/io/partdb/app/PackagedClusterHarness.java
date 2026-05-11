@@ -4,7 +4,11 @@ import io.partdb.client.ClusterClient;
 import io.partdb.client.ClusterClientConfig;
 import io.partdb.client.ClusterNodeRole;
 import io.partdb.client.ClusterStatus;
+import io.partdb.client.KvClient;
+import io.partdb.client.KvClientConfig;
+import io.partdb.client.ReadConsistency;
 import io.partdb.client.ServerEndpoint;
+import io.partdb.bytes.Bytes;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -91,6 +95,41 @@ final class PackagedClusterHarness implements AutoCloseable {
 
     String grpcAddress(String nodeId) {
         return node(nodeId).endpoint().toString();
+    }
+
+    KvClient newKvClient() {
+        var endpoints = nodes.values().stream()
+            .filter(NodeProcess::isRunning)
+            .map(NodeProcess::endpoint)
+            .toArray(ServerEndpoint[]::new);
+        return new KvClient(KvClientConfig.defaultConfig(endpoints));
+    }
+
+    KvClient newKvClient(String nodeId) {
+        return new KvClient(KvClientConfig.defaultConfig(node(nodeId).endpoint()));
+    }
+
+    void awaitNodeValue(String nodeId, String key, String expectedValue, Duration timeout) throws Exception {
+        Bytes expectedBytes = Bytes.utf8(expectedValue);
+        long deadlineNanos = System.nanoTime() + timeout.toNanos();
+        Throwable lastFailure = null;
+
+        while (System.nanoTime() < deadlineNanos) {
+            try (var client = newKvClient(nodeId)) {
+                var value = client.get(Bytes.utf8(key), ReadConsistency.STALE).get();
+                if (value.isPresent() && value.get().equals(expectedBytes)) {
+                    return;
+                }
+            } catch (Exception e) {
+                lastFailure = e;
+            }
+            Thread.sleep(POLL_INTERVAL);
+        }
+
+        throw new AssertionError(
+            "Timed out waiting for packaged " + nodeId + " to observe " + key + "=" + expectedValue,
+            lastFailure
+        );
     }
 
     CommandResult runCommand(String... args) throws Exception {

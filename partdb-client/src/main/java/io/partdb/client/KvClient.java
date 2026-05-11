@@ -7,15 +7,11 @@ import io.partdb.bytes.Bytes;
 import io.partdb.grpc.kv.proto.KvProto;
 import io.partdb.grpc.kv.proto.KvServiceGrpc;
 
-import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -27,18 +23,12 @@ public final class KvClient implements AutoCloseable {
     private final ConcurrentHashMap<ServerEndpoint, ManagedChannel> channels;
     private final AtomicReference<ServerEndpoint> currentLeader;
     private final AtomicInteger roundRobinIndex;
-    private final ScheduledExecutorService scheduler;
 
     public KvClient(KvClientConfig config) {
         this.config = config;
         this.channels = new ConcurrentHashMap<>();
         this.currentLeader = new AtomicReference<>(null);
         this.roundRobinIndex = new AtomicInteger(0);
-        this.scheduler = Executors.newScheduledThreadPool(1, r -> {
-            Thread t = new Thread(r, "kv-client-scheduler");
-            t.setDaemon(true);
-            return t;
-        });
     }
 
     public CompletableFuture<Optional<Bytes>> get(Bytes key) {
@@ -80,15 +70,10 @@ public final class KvClient implements AutoCloseable {
     }
 
     public CompletableFuture<Void> put(Bytes key, Bytes value) {
-        return put(key, value, 0);
-    }
-
-    public CompletableFuture<Void> put(Bytes key, Bytes value, long leaseId) {
         KvProto.PutRequest request = KvProto.PutRequest.newBuilder()
             .setHeader(buildHeader())
             .setKey(toByteString(key))
             .setValue(toByteString(value))
-            .setLeaseId(leaseId)
             .build();
 
         return executeWithRetry(() -> {
@@ -168,56 +153,6 @@ public final class KvClient implements AutoCloseable {
         return startScan(request, 0);
     }
 
-    public CompletableFuture<List<KeyValue>> batchGet(List<Bytes> keys) {
-        return batchGet(keys, ReadConsistency.LINEARIZABLE);
-    }
-
-    public CompletableFuture<List<KeyValue>> batchGet(List<Bytes> keys, ReadConsistency consistency) {
-        KvProto.BatchGetRequest.Builder builder = KvProto.BatchGetRequest.newBuilder()
-            .setHeader(buildHeader())
-            .setConsistency(toProtoConsistency(consistency));
-
-        for (Bytes key : keys) {
-            builder.addKeys(toByteString(key));
-        }
-
-        KvProto.BatchGetRequest request = builder.build();
-
-        return executeWithRetry(() -> {
-            CompletableFuture<List<KeyValue>> future = new CompletableFuture<>();
-            getStub().batchGet(request, new StreamObserver<>() {
-                @Override
-                public void onNext(KvProto.BatchGetResponse response) {
-                    if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
-                        handleError(response.getError(), future);
-                    } else {
-                        List<KeyValue> results = new ArrayList<>();
-                        for (KvProto.KeyValue kv : response.getValuesList()) {
-                            if (kv.getFound()) {
-                                results.add(new KeyValue(
-                                    Bytes.copyOf(kv.getKey().toByteArray()),
-                                    Bytes.copyOf(kv.getValue().toByteArray()),
-                                    kv.getRevision()
-                                ));
-                            }
-                        }
-                        future.complete(results);
-                    }
-                }
-
-                @Override
-                public void onError(Throwable t) {
-                    future.completeExceptionally(t);
-                }
-
-                @Override
-                public void onCompleted() {
-                }
-            });
-            return future;
-        });
-    }
-
     public CompletableFuture<Void> batchWrite(List<WriteOp> ops) {
         KvProto.BatchWriteRequest.Builder builder = KvProto.BatchWriteRequest.newBuilder()
             .setHeader(buildHeader());
@@ -228,7 +163,6 @@ public final class KvClient implements AutoCloseable {
                 case WriteOp.Put put -> opBuilder.setPut(KvProto.PutOp.newBuilder()
                     .setKey(toByteString(put.key()))
                     .setValue(toByteString(put.value()))
-                    .setLeaseId(put.leaseId())
                     .build());
                 case WriteOp.Delete delete -> opBuilder.setDelete(KvProto.DeleteOp.newBuilder()
                     .setKey(toByteString(delete.key()))
@@ -264,118 +198,8 @@ public final class KvClient implements AutoCloseable {
         });
     }
 
-    public CompletableFuture<Lease> grantLease(Duration ttl) {
-        KvProto.GrantLeaseRequest request = KvProto.GrantLeaseRequest.newBuilder()
-            .setHeader(buildHeader())
-            .setTtlMillis(ttl.toMillis())
-            .build();
-
-        return executeWithRetry(() -> {
-            CompletableFuture<Lease> future = new CompletableFuture<>();
-            getStub().grantLease(request, new StreamObserver<>() {
-                @Override
-                public void onNext(KvProto.GrantLeaseResponse response) {
-                    if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
-                        handleError(response.getError(), future);
-                    } else {
-                        Lease lease = new Lease(
-                            response.getLeaseId(),
-                            Duration.ofMillis(response.getTtlMillis()),
-                            scheduler,
-                            KvClient.this::keepAliveLease,
-                            KvClient.this::revokeLease
-                        );
-                        future.complete(lease);
-                    }
-                }
-
-                @Override
-                public void onError(Throwable t) {
-                    future.completeExceptionally(t);
-                }
-
-                @Override
-                public void onCompleted() {
-                }
-            });
-            return future;
-        });
-    }
-
-    private CompletableFuture<Void> keepAliveLease(long leaseId) {
-        KvProto.KeepAliveLeaseRequest request = KvProto.KeepAliveLeaseRequest.newBuilder()
-            .setHeader(buildHeader())
-            .setLeaseId(leaseId)
-            .build();
-
-        return executeWithRetry(() -> {
-            CompletableFuture<Void> future = new CompletableFuture<>();
-            getStub().keepAliveLease(request, new StreamObserver<>() {
-                @Override
-                public void onNext(KvProto.KeepAliveLeaseResponse response) {
-                    if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
-                        handleError(response.getError(), future);
-                    } else {
-                        future.complete(null);
-                    }
-                }
-
-                @Override
-                public void onError(Throwable t) {
-                    future.completeExceptionally(t);
-                }
-
-                @Override
-                public void onCompleted() {
-                }
-            });
-            return future;
-        });
-    }
-
-    private CompletableFuture<Void> revokeLease(long leaseId) {
-        KvProto.RevokeLeaseRequest request = KvProto.RevokeLeaseRequest.newBuilder()
-            .setHeader(buildHeader())
-            .setLeaseId(leaseId)
-            .build();
-
-        return executeWithRetry(() -> {
-            CompletableFuture<Void> future = new CompletableFuture<>();
-            getStub().revokeLease(request, new StreamObserver<>() {
-                @Override
-                public void onNext(KvProto.RevokeLeaseResponse response) {
-                    if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
-                        handleError(response.getError(), future);
-                    } else {
-                        future.complete(null);
-                    }
-                }
-
-                @Override
-                public void onError(Throwable t) {
-                    future.completeExceptionally(t);
-                }
-
-                @Override
-                public void onCompleted() {
-                }
-            });
-            return future;
-        });
-    }
-
     @Override
     public void close() {
-        scheduler.shutdown();
-        try {
-            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                scheduler.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            scheduler.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-
         for (ManagedChannel channel : channels.values()) {
             channel.shutdown();
             try {
@@ -598,7 +422,6 @@ public final class KvClient implements AutoCloseable {
     private RuntimeException toException(KvProto.Error error) {
         return switch (error.getCode()) {
             case NOT_LEADER -> new NotLeaderException(ServerEndpoint.tryParse(error.getLeaderHint()).orElse(null));
-            case CONFLICT -> new KvClientException.Conflict(error.getMessage());
             default -> new KvClientException.ClusterUnavailable(error.getMessage());
         };
     }

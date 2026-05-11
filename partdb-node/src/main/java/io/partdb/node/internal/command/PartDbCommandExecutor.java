@@ -21,18 +21,8 @@ public final class PartDbCommandExecutor {
     private static PartDbCommandResult decode(CommitResult result) {
         PartDbCommandResult decoded = PartDbCommandResultCodec.decode(result.result());
         return switch (result) {
-            case CommitResult.Applied _ -> {
-                if (decoded instanceof PartDbCommandResult.RejectedCommandResult) {
-                    throw new IllegalStateException("Applied commit yielded rejected result: " + decoded);
-                }
-                yield decoded;
-            }
-            case CommitResult.Rejected _ -> {
-                if (decoded instanceof PartDbCommandResult.AppliedCommandResult) {
-                    throw new IllegalStateException("Rejected commit yielded applied result: " + decoded);
-                }
-                yield decoded;
-            }
+            case CommitResult.Applied _ -> decoded;
+            case CommitResult.Rejected _ -> throw new IllegalStateException("Command was rejected: " + decoded);
         };
     }
 }

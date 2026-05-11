@@ -3,8 +3,6 @@ package io.partdb.node;
 import io.partdb.bytes.Bytes;
 import io.partdb.node.cluster.NodeRole;
 import io.partdb.node.kv.WriteBatch;
-import io.partdb.node.lease.LeaseGrant;
-import io.partdb.node.lease.LeaseId;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -13,12 +11,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Comparator;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PartDbNodeTest {
@@ -54,12 +49,10 @@ class PartDbNodeTest {
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        LeaseGrant leaseGrant;
         try (var node = PartDbNode.open(config)) {
             awaitLeader(node);
 
-            leaseGrant = node.leases().grant(Duration.ofSeconds(30)).toCompletableFuture().get(5, TimeUnit.SECONDS);
-            node.keyValues().put(bytes("lease-key"), bytes("lease-value"), leaseGrant.leaseId())
+            node.keyValues().put(bytes("key"), bytes("value"))
                 .toCompletableFuture()
                 .get(5, TimeUnit.SECONDS);
         }
@@ -70,81 +63,10 @@ class PartDbNodeTest {
             awaitLeader(recovered);
 
             assertEquals(
-                bytes("lease-value"),
-                recovered.keyValues().get(bytes("lease-key")).toCompletableFuture().get(5, TimeUnit.SECONDS)
+                bytes("value"),
+                recovered.keyValues().get(bytes("key")).toCompletableFuture().get(5, TimeUnit.SECONDS)
                     .orElseThrow()
                     .value()
-            );
-        }
-    }
-
-    @Test
-    void putWithMissingLeaseFailsWithoutWritingHiddenValue() throws Exception {
-        var config = PartDbNodeConfig.builder("node-1", tempDir.resolve("node-1"))
-            .tickInterval(Duration.ofMillis(1))
-            .build();
-
-        try (var node = PartDbNode.open(config)) {
-            awaitLeader(node);
-
-            var error = assertThrows(
-                ExecutionException.class,
-                () -> node.keyValues().put(bytes("key"), bytes("value"), LeaseId.of(42))
-                    .toCompletableFuture()
-                    .get(5, TimeUnit.SECONDS)
-            );
-
-            var cause = assertInstanceOf(PartDbException.LeaseNotFound.class, error.getCause());
-            assertEquals(42, cause.leaseId());
-            assertTrue(node.keyValues().getLocal(bytes("key")).isEmpty());
-        }
-    }
-
-    @Test
-    void keepAliveAndRevokeMissingLeaseFail() throws Exception {
-        var config = PartDbNodeConfig.builder("node-1", tempDir.resolve("node-1"))
-            .tickInterval(Duration.ofMillis(1))
-            .build();
-
-        try (var node = PartDbNode.open(config)) {
-            awaitLeader(node);
-
-            var keepAliveError = assertThrows(
-                ExecutionException.class,
-                () -> node.leases().keepAlive(LeaseId.of(42)).toCompletableFuture().get(5, TimeUnit.SECONDS)
-            );
-            assertEquals(42, assertInstanceOf(PartDbException.LeaseNotFound.class, keepAliveError.getCause()).leaseId());
-
-            var revokeError = assertThrows(
-                ExecutionException.class,
-                () -> node.leases().revoke(LeaseId.of(42)).toCompletableFuture().get(5, TimeUnit.SECONDS)
-            );
-            assertEquals(42, assertInstanceOf(PartDbException.LeaseNotFound.class, revokeError.getCause()).leaseId());
-        }
-    }
-
-    @Test
-    void revokingOldLeaseDoesNotDeleteOverwrittenUnleasedValue() throws Exception {
-        var config = PartDbNodeConfig.builder("node-1", tempDir.resolve("node-1"))
-            .tickInterval(Duration.ofMillis(1))
-            .build();
-
-        try (var node = PartDbNode.open(config)) {
-            awaitLeader(node);
-
-            LeaseGrant leaseGrant = node.leases().grant(Duration.ofSeconds(30)).toCompletableFuture().get(5, TimeUnit.SECONDS);
-            node.keyValues().put(bytes("key"), bytes("lease-value"), leaseGrant.leaseId())
-                .toCompletableFuture()
-                .get(5, TimeUnit.SECONDS);
-            node.keyValues().put(bytes("key"), bytes("plain-value"))
-                .toCompletableFuture()
-                .get(5, TimeUnit.SECONDS);
-
-            node.leases().revoke(leaseGrant.leaseId()).toCompletableFuture().get(5, TimeUnit.SECONDS);
-
-            assertEquals(
-                bytes("plain-value"),
-                node.keyValues().get(bytes("key")).toCompletableFuture().get(5, TimeUnit.SECONDS).orElseThrow().value()
             );
         }
     }
@@ -173,32 +95,6 @@ class PartDbNodeTest {
             assertEquals(revision, node.keyValues().get(bytes("key-2")).toCompletableFuture().get(5, TimeUnit.SECONDS)
                 .orElseThrow()
                 .modRevision());
-        }
-    }
-
-    @Test
-    void writeBatchRejectsMissingLeaseAtomically() throws Exception {
-        var config = PartDbNodeConfig.builder("node-1", tempDir.resolve("node-1"))
-            .tickInterval(Duration.ofMillis(1))
-            .build();
-
-        try (var node = PartDbNode.open(config)) {
-            awaitLeader(node);
-
-            var error = assertThrows(
-                ExecutionException.class,
-                () -> node.keyValues()
-                    .writeBatch(WriteBatch.builder()
-                        .put(bytes("key-1"), bytes("value-1"))
-                        .put(bytes("key-2"), bytes("value-2"), LeaseId.of(42))
-                        .build())
-                    .toCompletableFuture()
-                    .get(5, TimeUnit.SECONDS)
-            );
-
-            assertEquals(42, assertInstanceOf(PartDbException.LeaseNotFound.class, error.getCause()).leaseId());
-            assertTrue(node.keyValues().getLocal(bytes("key-1")).isEmpty());
-            assertTrue(node.keyValues().getLocal(bytes("key-2")).isEmpty());
         }
     }
 

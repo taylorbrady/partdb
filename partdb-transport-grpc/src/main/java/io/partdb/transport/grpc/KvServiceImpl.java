@@ -4,8 +4,6 @@ import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
 import io.partdb.bytes.Bytes;
 import io.partdb.grpc.kv.proto.KvProto;
-import io.partdb.grpc.kv.proto.KvProto.BatchGetRequest;
-import io.partdb.grpc.kv.proto.KvProto.BatchGetResponse;
 import io.partdb.grpc.kv.proto.KvProto.BatchWriteRequest;
 import io.partdb.grpc.kv.proto.KvProto.BatchWriteResponse;
 import io.partdb.grpc.kv.proto.KvProto.DeleteRequest;
@@ -14,17 +12,9 @@ import io.partdb.grpc.kv.proto.KvProto.Error;
 import io.partdb.grpc.kv.proto.KvProto.ErrorCode;
 import io.partdb.grpc.kv.proto.KvProto.GetRequest;
 import io.partdb.grpc.kv.proto.KvProto.GetResponse;
-import io.partdb.grpc.kv.proto.KvProto.GrantLeaseRequest;
-import io.partdb.grpc.kv.proto.KvProto.GrantLeaseResponse;
-import io.partdb.grpc.kv.proto.KvProto.KeepAliveLeaseRequest;
-import io.partdb.grpc.kv.proto.KvProto.KeepAliveLeaseResponse;
-import io.partdb.grpc.kv.proto.KvProto.KeyValue;
 import io.partdb.grpc.kv.proto.KvProto.PutRequest;
 import io.partdb.grpc.kv.proto.KvProto.PutResponse;
-import io.partdb.grpc.kv.proto.KvProto.ReadConsistency;
 import io.partdb.grpc.kv.proto.KvProto.RequestHeader;
-import io.partdb.grpc.kv.proto.KvProto.RevokeLeaseRequest;
-import io.partdb.grpc.kv.proto.KvProto.RevokeLeaseResponse;
 import io.partdb.grpc.kv.proto.KvProto.ScanRequest;
 import io.partdb.grpc.kv.proto.KvProto.ScanResponse;
 import io.partdb.grpc.kv.proto.KvServiceGrpc;
@@ -36,11 +26,8 @@ import io.partdb.node.kv.PutResult;
 import io.partdb.node.kv.ScanCursor;
 import io.partdb.node.kv.VersionedValue;
 import io.partdb.node.kv.WriteBatch;
-import io.partdb.node.lease.LeaseId;
 
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -100,12 +87,8 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         Duration timeout = resolveTimeout(request.getHeader());
         Bytes key = toBytes(request.getKey());
         Bytes value = toBytes(request.getValue());
-        long leaseId = request.getLeaseId();
 
-        CompletableFuture<PutResult> future = (leaseId == 0
-            ? node.keyValues().put(key, value)
-            : node.keyValues().put(key, value, LeaseId.of(leaseId)))
-            .toCompletableFuture();
+        CompletableFuture<PutResult> future = node.keyValues().put(key, value).toCompletableFuture();
 
         future
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
@@ -195,34 +178,6 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
     }
 
     @Override
-    public void batchGet(BatchGetRequest request, StreamObserver<BatchGetResponse> responseObserver) {
-        Duration timeout = resolveTimeout(request.getHeader());
-        CompletableFuture<List<KeyValue>> future = switch (request.getConsistency()) {
-            case STALE -> CompletableFuture.completedFuture(readBatchLocal(request));
-            case LINEARIZABLE -> readBatchLinearizable(request);
-            case UNRECOGNIZED -> CompletableFuture.failedFuture(
-                new IllegalArgumentException("Unknown read consistency: " + request.getConsistency())
-            );
-        };
-
-        future
-            .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((results, ex) -> {
-                if (ex != null) {
-                    responseObserver.onNext(BatchGetResponse.newBuilder()
-                        .setError(toProtoError(ex))
-                        .build());
-                } else {
-                    BatchGetResponse.Builder builder = BatchGetResponse.newBuilder()
-                        .setError(okError());
-                    builder.addAllValues(results);
-                    responseObserver.onNext(builder.build());
-                }
-                responseObserver.onCompleted();
-            });
-    }
-
-    @Override
     public void batchWrite(BatchWriteRequest request, StreamObserver<BatchWriteResponse> responseObserver) {
         Duration timeout = resolveTimeout(request.getHeader());
         CompletableFuture<Long> future;
@@ -246,73 +201,6 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                     responseObserver.onNext(BatchWriteResponse.newBuilder()
                         .setError(okError())
                         .setRevision(revision)
-                        .build());
-                }
-                responseObserver.onCompleted();
-            });
-    }
-
-    @Override
-    public void grantLease(GrantLeaseRequest request, StreamObserver<GrantLeaseResponse> responseObserver) {
-        Duration timeout = resolveTimeout(request.getHeader());
-        Duration ttl = Duration.ofMillis(request.getTtlMillis());
-
-        node.leases().grant(ttl)
-            .toCompletableFuture()
-            .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((grant, ex) -> {
-                if (ex != null) {
-                    responseObserver.onNext(GrantLeaseResponse.newBuilder()
-                        .setError(toProtoError(ex))
-                        .build());
-                } else {
-                    responseObserver.onNext(GrantLeaseResponse.newBuilder()
-                        .setError(okError())
-                        .setLeaseId(grant.leaseId().value())
-                        .setTtlMillis(grant.ttl().toMillis())
-                        .build());
-                }
-                responseObserver.onCompleted();
-            });
-    }
-
-    @Override
-    public void revokeLease(RevokeLeaseRequest request, StreamObserver<RevokeLeaseResponse> responseObserver) {
-        Duration timeout = resolveTimeout(request.getHeader());
-
-        node.leases().revoke(LeaseId.of(request.getLeaseId()))
-            .toCompletableFuture()
-            .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((_, ex) -> {
-                if (ex != null) {
-                    responseObserver.onNext(RevokeLeaseResponse.newBuilder()
-                        .setError(toProtoError(ex))
-                        .build());
-                } else {
-                    responseObserver.onNext(RevokeLeaseResponse.newBuilder()
-                        .setError(okError())
-                        .build());
-                }
-                responseObserver.onCompleted();
-            });
-    }
-
-    @Override
-    public void keepAliveLease(KeepAliveLeaseRequest request, StreamObserver<KeepAliveLeaseResponse> responseObserver) {
-        Duration timeout = resolveTimeout(request.getHeader());
-
-        node.leases().keepAlive(LeaseId.of(request.getLeaseId()))
-            .toCompletableFuture()
-            .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-            .whenComplete((result, ex) -> {
-                if (ex != null) {
-                    responseObserver.onNext(KeepAliveLeaseResponse.newBuilder()
-                        .setError(toProtoError(ex))
-                        .build());
-                } else {
-                    responseObserver.onNext(KeepAliveLeaseResponse.newBuilder()
-                        .setError(okError())
-                        .setTtlMillis(result.ttl().toMillis())
                         .build());
                 }
                 responseObserver.onCompleted();
@@ -353,10 +241,6 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                 .setCode(ErrorCode.INTERNAL_ERROR)
                 .setMessage("Server shutting down")
                 .build();
-            case PartDbException.LeaseNotFound e -> Error.newBuilder()
-                .setCode(ErrorCode.NOT_FOUND)
-                .setMessage(e.getMessage())
-                .build();
             case TimeoutException _ -> Error.newBuilder()
                 .setCode(ErrorCode.INTERNAL_ERROR)
                 .setMessage("Request timed out")
@@ -393,50 +277,11 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         var builder = WriteBatch.builder();
         for (KvProto.WriteOp writeOp : request.getOpsList()) {
             switch (writeOp.getOpCase()) {
-                case PUT -> {
-                    KvProto.PutOp put = writeOp.getPut();
-                    if (put.getLeaseId() == 0) {
-                        builder.put(toBytes(put.getKey()), toBytes(put.getValue()));
-                    } else {
-                        builder.put(toBytes(put.getKey()), toBytes(put.getValue()), LeaseId.of(put.getLeaseId()));
-                    }
-                }
+                case PUT -> builder.put(toBytes(writeOp.getPut().getKey()), toBytes(writeOp.getPut().getValue()));
                 case DELETE -> builder.delete(toBytes(writeOp.getDelete().getKey()));
                 case OP_NOT_SET -> throw new IllegalArgumentException("WriteOp type not set");
             }
         }
-        return builder.build();
-    }
-
-    private CompletableFuture<List<KeyValue>> readBatchLinearizable(BatchGetRequest request) {
-        List<CompletableFuture<KeyValue>> futures = new ArrayList<>();
-        for (ByteString keyBytes : request.getKeysList()) {
-            futures.add(node.keyValues()
-                .get(Bytes.copyOf(keyBytes.toByteArray()), io.partdb.node.kv.ReadConsistency.LINEARIZABLE)
-                .thenApply(value -> buildKeyValue(keyBytes, value))
-                .toCompletableFuture());
-        }
-
-        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-            .thenApply(_ -> futures.stream().map(CompletableFuture::join).toList());
-    }
-
-    private List<KeyValue> readBatchLocal(BatchGetRequest request) {
-        List<KeyValue> results = new ArrayList<>();
-        for (ByteString keyBytes : request.getKeysList()) {
-            Optional<VersionedValue> value = node.keyValues().getLocal(Bytes.copyOf(keyBytes.toByteArray()));
-            results.add(buildKeyValue(keyBytes, value));
-        }
-        return results;
-    }
-
-    private static KeyValue buildKeyValue(ByteString key, Optional<VersionedValue> value) {
-        KeyValue.Builder builder = KeyValue.newBuilder()
-            .setKey(key)
-            .setFound(value.isPresent());
-        value.ifPresent(v -> builder
-            .setValue(toByteString(v.value()))
-            .setRevision(v.modRevision()));
         return builder.build();
     }
 }

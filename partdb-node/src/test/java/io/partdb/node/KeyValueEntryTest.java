@@ -2,11 +2,9 @@ package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.node.kv.KeyValueEntry;
-import io.partdb.node.lease.LeaseId;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -17,7 +15,7 @@ class KeyValueEntryTest {
         byte[] key = "key".getBytes(StandardCharsets.UTF_8);
         byte[] value = "value".getBytes(StandardCharsets.UTF_8);
 
-        var entry = new KeyValueEntry(Bytes.copyOf(key), Bytes.copyOf(value), 7, Optional.of(LeaseId.of(11)));
+        var entry = new KeyValueEntry(Bytes.copyOf(key), Bytes.copyOf(value), 7);
 
         key[0] = 'K';
         value[0] = 'V';
@@ -25,7 +23,7 @@ class KeyValueEntryTest {
         assertEquals(Bytes.utf8("key"), entry.key());
         assertEquals(Bytes.utf8("value"), entry.value());
         assertEquals(
-            new KeyValueEntry(Bytes.utf8("key"), Bytes.utf8("value"), 7, Optional.of(LeaseId.of(11))),
+            new KeyValueEntry(Bytes.utf8("key"), Bytes.utf8("value"), 7),
             entry
         );
     }

@@ -11,11 +11,7 @@ service KvService {
   rpc Put(PutRequest) returns (PutResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
   rpc Scan(ScanRequest) returns (stream ScanResponse);
-  rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
   rpc BatchWrite(BatchWriteRequest) returns (BatchWriteResponse);
-  rpc GrantLease(GrantLeaseRequest) returns (GrantLeaseResponse);
-  rpc RevokeLease(RevokeLeaseRequest) returns (RevokeLeaseResponse);
-  rpc KeepAliveLease(KeepAliveLeaseRequest) returns (KeepAliveLeaseResponse);
 }
 
 message RequestHeader {
@@ -32,8 +28,7 @@ enum ErrorCode {
   OK = 0;
   NOT_FOUND = 1;
   NOT_LEADER = 2;
-  CONFLICT = 3;
-  INTERNAL_ERROR = 4;
+  INTERNAL_ERROR = 3;
 }
 
 message Error {
@@ -58,26 +53,21 @@ message PutRequest {
   RequestHeader header = 1;
   bytes key = 2;
   bytes value = 3;
-  int64 lease_id = 4;
-  bytes prev_value = 5;
 }
 
 message PutResponse {
   Error error = 1;
   int64 revision = 2;
-  bytes prev_value = 3;
 }
 
 message DeleteRequest {
   RequestHeader header = 1;
   bytes key = 2;
-  bytes prev_value = 3;
 }
 
 message DeleteResponse {
   Error error = 1;
   int64 revision = 2;
-  bytes prev_value = 3;
 }
 
 message ScanRequest {
@@ -95,24 +85,6 @@ message ScanResponse {
   int64 revision = 4;
 }
 
-message BatchGetRequest {
-  RequestHeader header = 1;
-  repeated bytes keys = 2;
-  ReadConsistency consistency = 3;
-}
-
-message KeyValue {
-  bytes key = 1;
-  bytes value = 2;
-  int64 revision = 3;
-  bool found = 4;
-}
-
-message BatchGetResponse {
-  Error error = 1;
-  repeated KeyValue values = 2;
-}
-
 message WriteOp {
   oneof op {
     PutOp put = 1;
@@ -123,7 +95,6 @@ message WriteOp {
 message PutOp {
   bytes key = 1;
   bytes value = 2;
-  int64 lease_id = 3;
 }
 
 message DeleteOp {
@@ -138,34 +109,4 @@ message BatchWriteRequest {
 message BatchWriteResponse {
   Error error = 1;
   int64 revision = 2;
-}
-
-message GrantLeaseRequest {
-  RequestHeader header = 1;
-  int64 ttl_millis = 2;
-}
-
-message GrantLeaseResponse {
-  Error error = 1;
-  int64 lease_id = 2;
-  int64 ttl_millis = 3;
-}
-
-message RevokeLeaseRequest {
-  RequestHeader header = 1;
-  int64 lease_id = 2;
-}
-
-message RevokeLeaseResponse {
-  Error error = 1;
-}
-
-message KeepAliveLeaseRequest {
-  RequestHeader header = 1;
-  int64 lease_id = 2;
-}
-
-message KeepAliveLeaseResponse {
-  Error error = 1;
-  int64 ttl_millis = 2;
 }

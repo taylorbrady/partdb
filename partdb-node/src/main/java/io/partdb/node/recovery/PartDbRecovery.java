@@ -19,17 +19,8 @@ public final class PartDbRecovery {
         PartDbNodeConfig config,
         LogicalBackup backup
     ) {
-        return restore(config, backup, RecoveryOptions.defaults());
-    }
-
-    public static RecoveryResult restore(
-        PartDbNodeConfig config,
-        LogicalBackup backup,
-        RecoveryOptions options
-    ) {
         Objects.requireNonNull(config, "config must not be null");
         Objects.requireNonNull(backup, "backup must not be null");
-        Objects.requireNonNull(options, "options must not be null");
 
         Path dataDirectory = config.dataDirectory();
         boolean newDirectory = !Files.exists(dataDirectory);
@@ -44,9 +35,7 @@ public final class PartDbRecovery {
                 config.storage().toStorageOptions()
             )) {
                 stateMachine.restore(backup.appliedIndex(), backup.snapshotBytes());
-                result = options.invalidateLeases()
-                    ? stateMachine.invalidateLeasesForDisasterRecovery()
-                    : new RecoveryResult(stateMachine.lastAppliedIndex(), 0, 0);
+                result = new RecoveryResult(stateMachine.lastAppliedIndex());
                 recoveredBackup = new LogicalBackup(stateMachine.snapshot(), stateMachine.lastAppliedIndex());
             }
 

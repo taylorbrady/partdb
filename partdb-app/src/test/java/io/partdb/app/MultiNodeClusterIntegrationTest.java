@@ -6,6 +6,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -16,6 +18,57 @@ class MultiNodeClusterIntegrationTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void threeNodeClusterSupportsFailoverRestartCatchupAndScanThroughPublicClient() throws Exception {
+        try (var cluster = MultiNodeClusterHarness.create(tempDir, 3)) {
+            cluster.startAll();
+
+            var initialLeader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+
+            try (var client = cluster.newKvClient()) {
+                client.put(bytes("proof/a"), bytes("one")).get();
+                client.put(bytes("proof/b"), bytes("two")).get();
+
+                assertEquals("one", decode(client.get(bytes("proof/a")).get().orElseThrow()));
+                assertEquals("two", decode(client.get(bytes("proof/b")).get().orElseThrow()));
+            }
+
+            cluster.stopNode(initialLeader.nodeId());
+
+            var newLeader = cluster.awaitStableLeaderExcluding(initialLeader.nodeId(), CLUSTER_TIMEOUT);
+            assertNotEquals(initialLeader.nodeId(), newLeader.nodeId());
+
+            try (var client = cluster.newKvClient()) {
+                assertEquals("one", decode(client.get(bytes("proof/a")).get().orElseThrow()));
+                client.put(bytes("proof/c"), bytes("three")).get();
+                assertEquals("three", decode(client.get(bytes("proof/c")).get().orElseThrow()));
+            }
+
+            cluster.startNode(initialLeader.nodeId());
+            cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+            cluster.awaitMembershipSize(initialLeader.nodeId(), 3, CLUSTER_TIMEOUT);
+
+            cluster.awaitNodeValue(initialLeader.nodeId(), "proof/a", "one", CLUSTER_TIMEOUT);
+            cluster.awaitNodeValue(initialLeader.nodeId(), "proof/b", "two", CLUSTER_TIMEOUT);
+            cluster.awaitNodeValue(initialLeader.nodeId(), "proof/c", "three", CLUSTER_TIMEOUT);
+
+            try (var client = cluster.newKvClient()) {
+                var scanned = new ArrayList<String>();
+                try (var cursor = client.scan(Optional.of(bytes("proof/")), Optional.of(bytes("proof0"))).get()) {
+                    while (cursor.hasNext()) {
+                        var entry = cursor.next();
+                        scanned.add(entry.key().utf8() + "=" + entry.value().utf8());
+                    }
+                }
+
+                assertEquals(
+                    java.util.List.of("proof/a=one", "proof/b=two", "proof/c=three"),
+                    scanned
+                );
+            }
+        }
+    }
 
     @Test
     void leaderFailoverPreservesWritesAndRecoveredLeaderCatchesUp() throws Exception {

@@ -8,19 +8,12 @@ import java.util.Objects;
 public sealed interface PartDbCommand
     permits PartDbCommand.Put,
             PartDbCommand.Delete,
-            PartDbCommand.BatchWrite,
-            PartDbCommand.GrantLease,
-            PartDbCommand.RevokeLease,
-            PartDbCommand.KeepAliveLease,
-            PartDbCommand.ExpireLease {
+            PartDbCommand.BatchWrite {
 
-    record Put(Bytes key, Bytes value, long leaseId) implements PartDbCommand {
+    record Put(Bytes key, Bytes value) implements PartDbCommand {
         public Put {
             key = Objects.requireNonNull(key, "key must not be null");
             value = Objects.requireNonNull(value, "value must not be null");
-            if (leaseId < 0) {
-                throw new IllegalArgumentException("leaseId must not be negative");
-            }
         }
     }
 
@@ -36,35 +29,4 @@ public sealed interface PartDbCommand
         }
     }
 
-    record GrantLease(long ttlNanos) implements PartDbCommand {
-        public GrantLease {
-            if (ttlNanos <= 0) {
-                throw new IllegalArgumentException("ttlNanos must be positive");
-            }
-        }
-    }
-
-    record RevokeLease(long leaseId) implements PartDbCommand {
-        public RevokeLease {
-            if (leaseId <= 0) {
-                throw new IllegalArgumentException("leaseId must be positive");
-            }
-        }
-    }
-
-    record KeepAliveLease(long leaseId) implements PartDbCommand {
-        public KeepAliveLease {
-            if (leaseId <= 0) {
-                throw new IllegalArgumentException("leaseId must be positive");
-            }
-        }
-    }
-
-    record ExpireLease(long leaseId) implements PartDbCommand {
-        public ExpireLease {
-            if (leaseId <= 0) {
-                throw new IllegalArgumentException("leaseId must be positive");
-            }
-        }
-    }
 }
