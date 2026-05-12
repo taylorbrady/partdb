@@ -1,7 +1,7 @@
 package io.partdb.consensus;
 
-import io.partdb.raft.RaftPersistentState;
-import io.partdb.raft.LogEntry;
+import io.partdb.raft.RaftHardState;
+import io.partdb.raft.RaftLogEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,7 +26,7 @@ final class WriteAheadLog implements AutoCloseable {
     private final Map<Long, EntryLocation> index;
 
     private ActiveSegment active;
-    private RaftPersistentState hardState;
+    private RaftHardState hardState;
     private long firstIndex;
     private long lastIndex;
     private int nextSequence;
@@ -36,7 +36,7 @@ final class WriteAheadLog implements AutoCloseable {
         this.segmentSize = segmentSize;
         this.sealed = new ArrayList<>();
         this.index = new HashMap<>();
-        this.hardState = RaftPersistentState.INITIAL;
+        this.hardState = RaftHardState.INITIAL;
         this.firstIndex = 1;
         this.lastIndex = 0;
         this.nextSequence = 0;
@@ -69,7 +69,7 @@ final class WriteAheadLog implements AutoCloseable {
         return wal;
     }
 
-    public void append(RaftPersistentState newHardState, List<LogEntry> entries) {
+    public void append(RaftHardState newHardState, List<RaftLogEntry> entries) {
         if (newHardState != null) {
             active.append(new LogRecord.State(newHardState));
             hardState = newHardState;
@@ -77,7 +77,7 @@ final class WriteAheadLog implements AutoCloseable {
 
         int activeSegmentIndex = sealed.size();
 
-        for (LogEntry entry : entries) {
+        for (RaftLogEntry entry : entries) {
             maybeRollSegment();
 
             long offset = active.fileSize();
@@ -91,11 +91,11 @@ final class WriteAheadLog implements AutoCloseable {
         }
     }
 
-    public List<LogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
+    public List<RaftLogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
         if (fromIndex < firstIndex) {
             throw new ConsensusException.Compaction(fromIndex, firstIndex);
         }
-        List<LogEntry> result = new ArrayList<>();
+        List<RaftLogEntry> result = new ArrayList<>();
         long bytes = 0;
 
         for (long i = fromIndex; i < toIndex; i++) {
@@ -104,7 +104,7 @@ final class WriteAheadLog implements AutoCloseable {
                 break;
             }
 
-            LogEntry entry = readEntry(loc);
+            RaftLogEntry entry = readEntry(loc);
             int entrySize = LogCodec.entrySize(entry);
 
             if (!result.isEmpty() && bytes + entrySize > maxBytes) {
@@ -126,11 +126,11 @@ final class WriteAheadLog implements AutoCloseable {
         if (loc == null) {
             return 0;
         }
-        LogEntry entry = readEntry(loc);
+        RaftLogEntry entry = readEntry(loc);
         return entry.term();
     }
 
-    public RaftPersistentState hardState() {
+    public RaftHardState hardState() {
         return hardState;
     }
 
@@ -232,12 +232,12 @@ final class WriteAheadLog implements AutoCloseable {
 
         SegmentScanner.ScanResult result = SegmentScanner.scan(path, scanned -> {
             switch (scanned.record()) {
-                case LogRecord.Entry(LogEntry entry) -> {
+                case LogRecord.Entry(RaftLogEntry entry) -> {
                     index.put(entry.index(), new EntryLocation(segmentIndex, scanned.offset()));
                     lastIdx[0] = entry.index();
                     lastIndex = entry.index();
                 }
-                case LogRecord.State(RaftPersistentState state) -> hardState = state;
+                case LogRecord.State(RaftHardState state) -> hardState = state;
                 case LogRecord.SnapshotMarker _ -> {}
             }
         });
@@ -258,16 +258,16 @@ final class WriteAheadLog implements AutoCloseable {
     private void recoverLastSegment(Path path, LogSegment.SegmentInfo info) {
         int segmentIndex = sealed.size();
         long[] lastIdx = {info.firstIndex() - 1};
-        RaftPersistentState[] lastState = {hardState};
+        RaftHardState[] lastState = {hardState};
 
         SegmentScanner.ScanResult result = SegmentScanner.scan(path, scanned -> {
             switch (scanned.record()) {
-                case LogRecord.Entry(LogEntry entry) -> {
+                case LogRecord.Entry(RaftLogEntry entry) -> {
                     index.put(entry.index(), new EntryLocation(segmentIndex, scanned.offset()));
                     lastIdx[0] = entry.index();
                     lastIndex = entry.index();
                 }
-                case LogRecord.State(RaftPersistentState state) -> {
+                case LogRecord.State(RaftHardState state) -> {
                     hardState = state;
                     lastState[0] = state;
                 }
@@ -320,7 +320,7 @@ final class WriteAheadLog implements AutoCloseable {
         nextSequence++;
     }
 
-    private LogEntry readEntry(EntryLocation loc) {
+    private RaftLogEntry readEntry(EntryLocation loc) {
         if (loc.segmentIndex() < sealed.size()) {
             return sealed.get(loc.segmentIndex()).readEntry(loc.offset());
         } else {
@@ -328,7 +328,7 @@ final class WriteAheadLog implements AutoCloseable {
         }
     }
 
-    private LogEntry readFromActive(long offset) {
+    private RaftLogEntry readFromActive(long offset) {
         active.flush();
         try (SealedSegment temp = SealedSegment.open(active.path(), active.sequence(),
                 active.firstIndex(), active.lastIndex())) {

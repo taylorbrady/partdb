@@ -127,14 +127,14 @@ final class RaftProtoConverters {
             .build();
     }
 
-    static RaftMessage.ReadIndex fromProto(RaftProto.ReadIndexRequest proto) {
-        return new RaftMessage.ReadIndex(
+    static RaftMessage.ReadRequested fromProto(RaftProto.ReadIndexRequest proto) {
+        return new RaftMessage.ReadRequested(
             proto.getTerm(),
             Bytes.copyOf(proto.getContext().toByteArray())
         );
     }
 
-    static RaftProto.ReadIndexRequest toProto(RaftMessage.ReadIndex msg) {
+    static RaftProto.ReadIndexRequest toProto(RaftMessage.ReadRequested msg) {
         return RaftProto.ReadIndexRequest.newBuilder()
             .setTerm(msg.term())
             .setContext(ByteString.copyFrom(msg.context().asReadOnlyByteBuffer()))
@@ -163,7 +163,7 @@ final class RaftProtoConverters {
             .setLeaderId(msg.leaderId())
             .setLastIncludedIndex(msg.lastIncludedIndex())
             .setLastIncludedTerm(msg.lastIncludedTerm())
-            .setMembership(RaftModelProtoConverters.toProto(msg.configuration()))
+            .setMembership(RaftModelProtoConverters.toProto(msg.membership()))
             .setTotalSize(msg.data().size())
             .build();
     }

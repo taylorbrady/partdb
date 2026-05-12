@@ -1,7 +1,7 @@
 package io.partdb.consensus;
 
-import io.partdb.raft.RaftPersistentState;
-import io.partdb.raft.LogEntry;
+import io.partdb.raft.RaftHardState;
+import io.partdb.raft.RaftLogEntry;
 
 sealed interface LogRecord {
 
@@ -9,9 +9,9 @@ sealed interface LogRecord {
     byte TYPE_STATE = 1;
     byte TYPE_SNAPSHOT_MARKER = 2;
 
-    record Entry(LogEntry entry) implements LogRecord {}
+    record Entry(RaftLogEntry entry) implements LogRecord {}
 
-    record State(RaftPersistentState hardState) implements LogRecord {}
+    record State(RaftHardState hardState) implements LogRecord {}
 
     record SnapshotMarker(long index, long term) implements LogRecord {}
 }

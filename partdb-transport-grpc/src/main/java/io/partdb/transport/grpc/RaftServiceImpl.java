@@ -7,8 +7,8 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.stub.StreamObserver;
+import io.partdb.consensus.RaftPeerTransport;
 import io.partdb.raft.RaftMessage;
-import io.partdb.raft.transport.RaftPeerTransport;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 import io.partdb.transport.grpc.raft.proto.RaftServiceGrpc;
 import org.slf4j.Logger;
@@ -185,13 +185,13 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void readIndex(RaftProto.ReadIndexRequest request,
                           StreamObserver<RaftProto.ReadIndexResponse> responseObserver) {
         String from = getSenderId();
-        RaftMessage.ReadIndex msg = RaftProtoConverters.fromProto(request);
+        RaftMessage.ReadRequested msg = RaftProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
                 if (ex != null) {
                     log.atDebug()
-                        .addKeyValue("rpc", "ReadIndex")
+                        .addKeyValue("rpc", "ReadRequested")
                         .addKeyValue("from", from)
                         .addKeyValue("error", ex.getMessage())
                         .log("RPC failed");

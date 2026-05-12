@@ -5,6 +5,7 @@ plugins {
 
 dependencies {
     implementation(project(":partdb-node"))
+    implementation(project(":partdb-consensus"))
     api(project(":partdb-raft"))
     implementation(project(":partdb-grpc"))
 

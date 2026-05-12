@@ -1,12 +1,12 @@
 package io.partdb.raft;
 
-public record RaftConfig(
+public record RaftOptions(
     int electionTimeoutMin,
     int electionTimeoutMax,
     int heartbeatInterval,
     int maxEntriesPerAppend
 ) {
-    public RaftConfig {
+    public RaftOptions {
         if (electionTimeoutMin <= 0) {
             throw new IllegalArgumentException("electionTimeoutMin must be positive");
         }
@@ -24,7 +24,7 @@ public record RaftConfig(
         }
     }
 
-    public static RaftConfig defaults() {
-        return new RaftConfig(10, 20, 3, 100);
+    public static RaftOptions defaults() {
+        return new RaftOptions(10, 20, 3, 100);
     }
 }

@@ -1,5 +1,6 @@
 package io.partdb.raft;
 
+import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -256,7 +257,7 @@ class ClusterTest {
             }
 
             long minCommit = network.allNodes().stream()
-                .mapToLong(Raft::commitIndex)
+                .mapToLong(RaftNode::commitIndex)
                 .min()
                 .orElse(0);
 
@@ -385,7 +386,7 @@ class ClusterTest {
 
             var remainingNodes = network.allNodes().stream()
                 .filter(n -> !n.leaderId().equals(Optional.of(oldLeaderId)) || n.isLeader())
-                .filter(Raft::isLeader)
+                .filter(RaftNode::isLeader)
                 .count();
 
             assertTrue(remainingNodes >= 1);
@@ -400,7 +401,8 @@ class ClusterTest {
             electLeader(network);
 
             var leaderId = network.leader().orElseThrow();
-            network.isolate(ClusterHarness.nodeId(2));
+            String laggedFollowerId = ClusterHarness.nodeId(2);
+            network.isolate(laggedFollowerId);
 
             for (int i = 0; i < 5; i++) {
                 network.propose(leaderId, ("entry-" + i).getBytes());
@@ -415,20 +417,26 @@ class ClusterTest {
             long commitBeforeCompaction = leader.commitIndex();
             assertTrue(commitBeforeCompaction >= 5);
 
-            network.heal(ClusterHarness.nodeId(2));
+            Bytes snapshotData = Bytes.utf8("snapshot-at-" + commitBeforeCompaction);
+            network.compactWithSnapshot(leaderId, commitBeforeCompaction, snapshotData);
+
+            network.heal(laggedFollowerId);
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
                 network.deliverAll();
             }
 
-            var lagged = network.node(2);
+            var lagged = network.node(laggedFollowerId);
             assertEquals(leader.commitIndex(), lagged.commitIndex());
+            var installedSnapshot = network.snapshot(laggedFollowerId).orElseThrow();
+            assertEquals(commitBeforeCompaction, installedSnapshot.index());
+            assertEquals(snapshotData, installedSnapshot.data());
         }
     }
 
     @Nested
-    class ReadIndex {
+    class ReadRequested {
         @Test
         void leaderServesReadIndexDirectly() {
             var network = ClusterHarness.create(3);
@@ -695,7 +703,7 @@ class ClusterTest {
     }
 
     @Nested
-    class ConfigurationChanges {
+    class MembershipChanges {
         @Test
         void addLearnerReplicatesAfterCommit() {
             var network = ClusterHarness.create(3);
@@ -704,16 +712,16 @@ class ClusterTest {
             var leaderId = network.leader().orElseThrow();
             var leader = network.node(leaderId);
 
-            network.proposeConfigChange(leaderId, new ConfigurationChange.AddLearner("node-3"));
+            network.proposeConfigChange(leaderId, new MembershipChange.AddLearner("node-3"));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
                 network.deliverAll();
             }
 
-            assertTrue(leader.configuration().isLearner("node-3"));
+            assertTrue(leader.membership().isLearner("node-3"));
 
-            var configurationChanges = network.drainConfigurationChanges();
+            var configurationChanges = network.drainMembershipChanges();
             long changesWithNewLearner = configurationChanges.stream()
                 .filter(c -> c.current().isLearner("node-3"))
                 .count();
@@ -728,14 +736,14 @@ class ClusterTest {
             var leaderId = network.leader().orElseThrow();
             var leader = network.node(leaderId);
 
-            network.proposeConfigChange(leaderId, new ConfigurationChange.PromoteToVoter(ClusterHarness.nodeId(2)));
+            network.proposeConfigChange(leaderId, new MembershipChange.PromoteToVoter(ClusterHarness.nodeId(2)));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
                 network.deliverAll();
             }
 
-            assertTrue(leader.configuration().isVoter(ClusterHarness.nodeId(2)));
+            assertTrue(leader.membership().isVoter(ClusterHarness.nodeId(2)));
 
             String otherVoter = leaderId.equals(ClusterHarness.nodeId(0)) ? ClusterHarness.nodeId(1) : ClusterHarness.nodeId(0);
             network.isolate(otherVoter);
@@ -759,7 +767,7 @@ class ClusterTest {
             var leaderId = network.leader().orElseThrow();
             var leader = network.node(leaderId);
 
-            network.proposeConfigChange(leaderId, new ConfigurationChange.RemoveNode(leaderId));
+            network.proposeConfigChange(leaderId, new MembershipChange.RemoveNode(leaderId));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -779,7 +787,7 @@ class ClusterTest {
             network.isolate(ClusterHarness.nodeId(2));
 
             long commitBefore = leader.commitIndex();
-            network.proposeConfigChange(leaderId, new ConfigurationChange.AddLearner("node-3"));
+            network.proposeConfigChange(leaderId, new MembershipChange.AddLearner("node-3"));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -787,7 +795,7 @@ class ClusterTest {
             }
 
             assertTrue(leader.commitIndex() > commitBefore);
-            assertTrue(leader.configuration().isLearner("node-3"));
+            assertTrue(leader.membership().isLearner("node-3"));
         }
 
         @Test
@@ -799,7 +807,7 @@ class ClusterTest {
             var removedNodeId = ClusterHarness.nodeId(2);
             var removedNode = network.node(removedNodeId);
 
-            network.proposeConfigChange(leaderId, new ConfigurationChange.RemoveNode(removedNodeId));
+            network.proposeConfigChange(leaderId, new MembershipChange.RemoveNode(removedNodeId));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -807,7 +815,7 @@ class ClusterTest {
             }
 
             var leader = network.node(leaderId);
-            assertFalse(leader.configuration().isMember(removedNodeId));
+            assertFalse(leader.membership().isMember(removedNodeId));
 
             long commitBeforeProposal = removedNode.commitIndex();
             network.propose(leaderId, "after-removal".getBytes());
@@ -828,7 +836,7 @@ class ClusterTest {
             var leaderId = network.leader().orElseThrow();
             var demotedNodeId = ClusterHarness.nodeId(2);
 
-            network.proposeConfigChange(leaderId, new ConfigurationChange.DemoteToLearner(demotedNodeId));
+            network.proposeConfigChange(leaderId, new MembershipChange.DemoteToLearner(demotedNodeId));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
@@ -837,7 +845,7 @@ class ClusterTest {
 
             var leader = network.node(leaderId);
             var demotedNode = network.node(demotedNodeId);
-            assertTrue(leader.configuration().isLearner(demotedNodeId));
+            assertTrue(leader.membership().isLearner(demotedNodeId));
 
             network.propose(leaderId, "after-demotion".getBytes());
 
@@ -868,16 +876,16 @@ class ClusterTest {
 
             long commitBeforeJoin = leader.commitIndex();
 
-            network.proposeConfigChange(leaderId, new ConfigurationChange.AddLearner("node-3"));
+            network.proposeConfigChange(leaderId, new MembershipChange.AddLearner("node-3"));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
                 network.deliverAll();
             }
 
-            var storage = new InMemoryStorage(leader.configuration());
-            var newLearner = Raft.builder("node-3", leader.configuration(), RaftConfig.defaults(), storage)
-                .random(_ -> 5)
+            var storage = new InMemoryStorage(leader.membership());
+            var newLearner = RaftNode.builder("node-3", leader.membership(), RaftOptions.defaults(), storage)
+                .electionJitter(_ -> 5)
                 .build();
             network.addNode("node-3", newLearner, storage);
 
@@ -896,14 +904,14 @@ class ClusterTest {
 
             var leaderId = network.leader().orElseThrow();
 
-            network.proposeConfigChange(leaderId, new ConfigurationChange.AddLearner("node-3"));
+            network.proposeConfigChange(leaderId, new MembershipChange.AddLearner("node-3"));
 
             for (int i = 0; i < 30; i++) {
                 network.tick();
                 network.deliverAll();
             }
 
-            var changes = network.drainConfigurationChanges();
+            var changes = network.drainMembershipChanges();
             assertFalse(changes.isEmpty());
 
             var leaderChange = changes.stream()

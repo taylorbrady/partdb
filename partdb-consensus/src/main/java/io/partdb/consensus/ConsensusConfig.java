@@ -1,7 +1,7 @@
 package io.partdb.consensus;
 
 import io.partdb.cluster.ClusterMembership;
-import io.partdb.raft.RaftConfig;
+import io.partdb.raft.RaftOptions;
 
 import java.time.Duration;
 import java.util.Objects;
@@ -27,7 +27,7 @@ public record ConsensusConfig(
         if (tickInterval.isZero() || tickInterval.isNegative()) {
             throw new IllegalArgumentException("tickInterval must be positive");
         }
-        new RaftConfig(
+        new RaftOptions(
             electionTimeoutMinTicks,
             electionTimeoutMaxTicks,
             heartbeatIntervalTicks,
@@ -39,8 +39,8 @@ public record ConsensusConfig(
         return new Builder(nodeId);
     }
 
-    RaftConfig toRaftConfig() {
-        return new RaftConfig(
+    RaftOptions toRaftOptions() {
+        return new RaftOptions(
             electionTimeoutMinTicks,
             electionTimeoutMaxTicks,
             heartbeatIntervalTicks,
@@ -52,10 +52,10 @@ public record ConsensusConfig(
         private final String nodeId;
         private ClusterMembership membership;
         private Duration tickInterval = DEFAULT_TICK_INTERVAL;
-        private int electionTimeoutMinTicks = RaftConfig.defaults().electionTimeoutMin();
-        private int electionTimeoutMaxTicks = RaftConfig.defaults().electionTimeoutMax();
-        private int heartbeatIntervalTicks = RaftConfig.defaults().heartbeatInterval();
-        private int maxEntriesPerAppend = RaftConfig.defaults().maxEntriesPerAppend();
+        private int electionTimeoutMinTicks = RaftOptions.defaults().electionTimeoutMin();
+        private int electionTimeoutMaxTicks = RaftOptions.defaults().electionTimeoutMax();
+        private int heartbeatIntervalTicks = RaftOptions.defaults().heartbeatInterval();
+        private int maxEntriesPerAppend = RaftOptions.defaults().maxEntriesPerAppend();
 
         private Builder(String nodeId) {
             this.nodeId = requireNonBlank(nodeId, "nodeId");

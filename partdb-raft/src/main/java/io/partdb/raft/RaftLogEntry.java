@@ -4,11 +4,11 @@ import io.partdb.bytes.Bytes;
 
 import java.util.Objects;
 
-public sealed interface LogEntry {
+public sealed interface RaftLogEntry {
     long index();
     long term();
 
-    record Data(long index, long term, Bytes data) implements LogEntry {
+    record Data(long index, long term, Bytes data) implements RaftLogEntry {
         public Data {
             if (index < 1) {
                 throw new IllegalArgumentException("index must be positive");
@@ -20,7 +20,7 @@ public sealed interface LogEntry {
         }
     }
 
-    record NoOp(long index, long term) implements LogEntry {
+    record NoOp(long index, long term) implements RaftLogEntry {
         public NoOp {
             if (index < 1) {
                 throw new IllegalArgumentException("index must be positive");
@@ -31,7 +31,7 @@ public sealed interface LogEntry {
         }
     }
 
-    record Config(long index, long term, RaftConfiguration configuration) implements LogEntry {
+    record Config(long index, long term, RaftMembership membership) implements RaftLogEntry {
         public Config {
             if (index < 1) {
                 throw new IllegalArgumentException("index must be positive");
@@ -39,8 +39,8 @@ public sealed interface LogEntry {
             if (term < 0) {
                 throw new IllegalArgumentException("term must be non-negative");
             }
-            if (configuration == null) {
-                throw new IllegalArgumentException("configuration must not be null");
+            if (membership == null) {
+                throw new IllegalArgumentException("membership must not be null");
             }
         }
     }

@@ -1,7 +1,7 @@
 package io.partdb.consensus;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.raft.RaftConfiguration;
+import io.partdb.raft.RaftMembership;
 import io.partdb.raft.RaftSnapshot;
 
 import java.nio.file.Files;
@@ -37,7 +37,7 @@ public final class ConsensusBootstrap {
             return;
         }
 
-        RaftConfiguration configuration = RaftConfigurationMapper.toRaftConfiguration(config.membership());
+        RaftMembership configuration = RaftMembershipMapper.toRaftMembership(config.membership());
         try (RaftStore store = DurableRaftStore.create(dataDirectory, configuration)) {
             store.saveSnapshot(new RaftSnapshot(
                 snapshotIndex,

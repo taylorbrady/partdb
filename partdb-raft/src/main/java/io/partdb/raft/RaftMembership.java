@@ -4,8 +4,8 @@ import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 
-public record RaftConfiguration(Set<String> voters, Set<String> learners) {
-    public RaftConfiguration {
+public record RaftMembership(Set<String> voters, Set<String> learners) {
+    public RaftMembership {
         voters = normalizeIds(voters, "voters");
         learners = normalizeIds(learners, "learners");
         if (voters.isEmpty()) {
@@ -16,9 +16,9 @@ public record RaftConfiguration(Set<String> voters, Set<String> learners) {
         }
     }
 
-    public static RaftConfiguration ofVoters(String... voters) {
+    public static RaftMembership voters(String... voters) {
         Objects.requireNonNull(voters, "voters must not be null");
-        return new RaftConfiguration(Set.of(voters), Set.of());
+        return new RaftMembership(Set.of(voters), Set.of());
     }
 
     public boolean isVoter(String nodeId) {
@@ -58,27 +58,27 @@ public record RaftConfiguration(Set<String> voters, Set<String> learners) {
         return Set.copyOf(peers);
     }
 
-    public RaftConfiguration apply(ConfigurationChange change) {
+    public RaftMembership apply(MembershipChange change) {
         Objects.requireNonNull(change, "change must not be null");
         return switch (change) {
-            case ConfigurationChange.AddLearner(var nodeId) -> addLearner(nodeId);
-            case ConfigurationChange.PromoteToVoter(var nodeId) -> promoteToVoter(nodeId);
-            case ConfigurationChange.DemoteToLearner(var nodeId) -> demoteToLearner(nodeId);
-            case ConfigurationChange.RemoveNode(var nodeId) -> removeNode(nodeId);
+            case MembershipChange.AddLearner(var nodeId) -> addLearner(nodeId);
+            case MembershipChange.PromoteToVoter(var nodeId) -> promoteToVoter(nodeId);
+            case MembershipChange.DemoteToLearner(var nodeId) -> demoteToLearner(nodeId);
+            case MembershipChange.RemoveNode(var nodeId) -> removeNode(nodeId);
         };
     }
 
-    public RaftConfiguration addLearner(String nodeId) {
+    public RaftMembership addLearner(String nodeId) {
         requireNonBlank(nodeId, "nodeId");
         if (isMember(nodeId)) {
             throw new IllegalArgumentException("node already a member: " + nodeId);
         }
         var updatedLearners = new LinkedHashSet<>(learners);
         updatedLearners.add(nodeId);
-        return new RaftConfiguration(voters, updatedLearners);
+        return new RaftMembership(voters, updatedLearners);
     }
 
-    public RaftConfiguration promoteToVoter(String nodeId) {
+    public RaftMembership promoteToVoter(String nodeId) {
         requireNonBlank(nodeId, "nodeId");
         if (!learners.contains(nodeId)) {
             throw new IllegalArgumentException("node must be a learner to promote: " + nodeId);
@@ -87,10 +87,10 @@ public record RaftConfiguration(Set<String> voters, Set<String> learners) {
         updatedLearners.remove(nodeId);
         var updatedVoters = new LinkedHashSet<>(voters);
         updatedVoters.add(nodeId);
-        return new RaftConfiguration(updatedVoters, updatedLearners);
+        return new RaftMembership(updatedVoters, updatedLearners);
     }
 
-    public RaftConfiguration demoteToLearner(String nodeId) {
+    public RaftMembership demoteToLearner(String nodeId) {
         requireNonBlank(nodeId, "nodeId");
         if (!voters.contains(nodeId)) {
             throw new IllegalArgumentException("node must be a voter to demote: " + nodeId);
@@ -102,10 +102,10 @@ public record RaftConfiguration(Set<String> voters, Set<String> learners) {
         updatedVoters.remove(nodeId);
         var updatedLearners = new LinkedHashSet<>(learners);
         updatedLearners.add(nodeId);
-        return new RaftConfiguration(updatedVoters, updatedLearners);
+        return new RaftMembership(updatedVoters, updatedLearners);
     }
 
-    public RaftConfiguration removeNode(String nodeId) {
+    public RaftMembership removeNode(String nodeId) {
         requireNonBlank(nodeId, "nodeId");
         if (!isMember(nodeId)) {
             throw new IllegalArgumentException("node not a member: " + nodeId);
@@ -117,7 +117,7 @@ public record RaftConfiguration(Set<String> voters, Set<String> learners) {
         updatedVoters.remove(nodeId);
         var updatedLearners = new LinkedHashSet<>(learners);
         updatedLearners.remove(nodeId);
-        return new RaftConfiguration(updatedVoters.isEmpty() ? voters : updatedVoters, updatedLearners);
+        return new RaftMembership(updatedVoters.isEmpty() ? voters : updatedVoters, updatedLearners);
     }
 
     private static Set<String> normalizeIds(Set<String> ids, String name) {

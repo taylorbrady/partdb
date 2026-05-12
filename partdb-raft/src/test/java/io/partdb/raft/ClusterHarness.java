@@ -18,9 +18,9 @@ final class ClusterHarness {
     private final Deque<Envelope> inFlight = new ArrayDeque<>();
     private final Set<String> isolated = new HashSet<>();
     private final List<ReadState> readStates = new ArrayList<>();
-    private final List<ConfigurationChangeEvent> configurationChanges = new ArrayList<>();
+    private final List<MembershipChangeEvent> configurationChanges = new ArrayList<>();
 
-    private record SimulatedNode(Raft raft, InMemoryStorage storage) {}
+    private record SimulatedNode(RaftNode raft, InMemoryStorage storage) {}
 
     private record Envelope(String from, String to, RaftMessage message) {}
 
@@ -35,7 +35,7 @@ final class ClusterHarness {
         }
     }
 
-    record ConfigurationChangeEvent(String nodeId, long index, RaftConfiguration previous, RaftConfiguration current) {}
+    record MembershipChangeEvent(String nodeId, long index, RaftMembership previous, RaftMembership current) {}
 
     private ClusterHarness() {}
 
@@ -44,14 +44,14 @@ final class ClusterHarness {
     }
 
     static ClusterHarness create(int voterCount) {
-        return create(voterCount, 0, RaftConfig.defaults());
+        return create(voterCount, 0, RaftOptions.defaults());
     }
 
     static ClusterHarness create(int voterCount, int learnerCount) {
-        return create(voterCount, learnerCount, RaftConfig.defaults());
+        return create(voterCount, learnerCount, RaftOptions.defaults());
     }
 
-    static ClusterHarness create(int voterCount, int learnerCount, RaftConfig config) {
+    static ClusterHarness create(int voterCount, int learnerCount, RaftOptions options) {
         var cluster = new ClusterHarness();
 
         var voters = new HashSet<String>();
@@ -64,16 +64,16 @@ final class ClusterHarness {
             learners.add(nodeId(i));
         }
 
-        var configuration = new RaftConfiguration(voters, learners);
+        var configuration = new RaftMembership(voters, learners);
 
         int nodeIndex = 0;
         for (String nodeId : voters) {
             int jitter = nodeIndex++;
-            cluster.addNode(nodeId, configuration, config, jitter);
+            cluster.addNode(nodeId, configuration, options, jitter);
         }
         for (String nodeId : learners) {
             int jitter = nodeIndex++;
-            cluster.addNode(nodeId, configuration, config, jitter);
+            cluster.addNode(nodeId, configuration, options, jitter);
         }
 
         return cluster;
@@ -88,7 +88,7 @@ final class ClusterHarness {
     void tickNode(String nodeId) {
         var node = nodes.get(nodeId);
         if (node != null) {
-            var ready = node.raft().step(new RaftEvent.Tick());
+            var ready = node.raft().step(new RaftInput.Tick());
             processReady(nodeId, ready);
         }
     }
@@ -105,7 +105,7 @@ final class ClusterHarness {
 
         var node = nodes.get(envelope.to);
         if (node != null) {
-            var ready = node.raft().step(new RaftEvent.Receive(envelope.from, envelope.message));
+            var ready = node.raft().step(new RaftInput.MessageReceived(envelope.from, envelope.message));
             processReady(envelope.to, ready);
         }
         return true;
@@ -124,7 +124,7 @@ final class ClusterHarness {
                 if (!isolated.contains(from) && !isolated.contains(to)) {
                     var node = nodes.get(to);
                     if (node != null) {
-                        var ready = node.raft().step(new RaftEvent.Receive(from, envelope.message()));
+                        var ready = node.raft().step(new RaftInput.MessageReceived(from, envelope.message()));
                         processReady(to, ready);
                     }
                 }
@@ -143,16 +143,30 @@ final class ClusterHarness {
         isolated.remove(nodeId);
     }
 
-    Raft node(String id) {
+    RaftNode node(String id) {
         var node = nodes.get(id);
         return node != null ? node.raft() : null;
     }
 
-    Raft node(int index) {
+    RaftNode node(int index) {
         return node(nodeId(index));
     }
 
-    List<Raft> allNodes() {
+    Optional<RaftSnapshot> snapshot(String nodeId) {
+        var node = nodes.get(nodeId);
+        return node != null ? node.storage().snapshot() : Optional.empty();
+    }
+
+    void compactWithSnapshot(String nodeId, long index, Bytes data) {
+        var node = nodes.get(nodeId);
+        if (node == null) {
+            throw new IllegalArgumentException("Unknown node: " + nodeId);
+        }
+        long term = node.storage().term(index);
+        node.storage().saveSnapshot(new RaftSnapshot(index, term, node.raft().membership(), data));
+    }
+
+    List<RaftNode> allNodes() {
         return nodes.values().stream()
             .map(SimulatedNode::raft)
             .toList();
@@ -168,14 +182,14 @@ final class ClusterHarness {
     long leaderCount() {
         return nodes.values().stream()
             .map(SimulatedNode::raft)
-            .filter(Raft::isLeader)
+            .filter(RaftNode::isLeader)
             .count();
     }
 
     void propose(String nodeId, byte[] data) {
         var node = nodes.get(nodeId);
         if (node != null) {
-            var ready = node.raft().step(new RaftEvent.Propose(Bytes.copyOf(data)));
+            var ready = node.raft().step(new RaftInput.CommandProposed(Bytes.copyOf(data)));
             processReady(nodeId, ready);
         }
     }
@@ -183,7 +197,7 @@ final class ClusterHarness {
     void readIndex(String nodeId, byte[] context) {
         var node = nodes.get(nodeId);
         if (node != null) {
-            var ready = node.raft().step(new RaftEvent.ReadIndex(Bytes.copyOf(context)));
+            var ready = node.raft().step(new RaftInput.ReadRequested(Bytes.copyOf(context)));
             processReady(nodeId, ready);
         }
     }
@@ -198,21 +212,21 @@ final class ClusterHarness {
         return !readStates.isEmpty();
     }
 
-    void proposeConfigChange(String nodeId, ConfigurationChange change) {
+    void proposeConfigChange(String nodeId, MembershipChange change) {
         var node = nodes.get(nodeId);
         if (node != null) {
-            var ready = node.raft().step(new RaftEvent.ChangeConfiguration(change));
+            var ready = node.raft().step(new RaftInput.MembershipChangeProposed(change));
             processReady(nodeId, ready);
         }
     }
 
-    List<ConfigurationChangeEvent> drainConfigurationChanges() {
+    List<MembershipChangeEvent> drainMembershipChanges() {
         var result = List.copyOf(configurationChanges);
         configurationChanges.clear();
         return result;
     }
 
-    void addNode(String nodeId, Raft raft, InMemoryStorage storage) {
+    void addNode(String nodeId, RaftNode raft, InMemoryStorage storage) {
         nodes.put(nodeId, new SimulatedNode(raft, storage));
     }
 
@@ -223,7 +237,7 @@ final class ClusterHarness {
         }
     }
 
-    private void processReady(String from, RaftReady ready) {
+    private void processReady(String from, RaftEffects ready) {
         if (!ready.hasWork()) {
             return;
         }
@@ -236,16 +250,16 @@ final class ClusterHarness {
         // Mirror the node runtime contract: persist first, then send, then apply.
         var persistence = ready.persistence();
         if (persistence.hasWork()) {
-            node.storage().append(persistence.persistentState().orElse(null), persistence.entries());
+            node.storage().append(persistence.hardState().orElse(null), persistence.entries());
             persistence.incomingSnapshot().ifPresent(node.storage()::saveSnapshot);
             if (persistence.requiresSync()) {
                 node.storage().sync();
             }
             if (!persistence.entries().isEmpty()) {
                 var lastPersisted = persistence.entries().getLast();
-                node.raft().acknowledgeEntryPersistence(lastPersisted.index(), lastPersisted.term());
+                node.raft().step(new RaftInput.EntriesPersisted(lastPersisted.index(), lastPersisted.term()));
             }
-            persistence.incomingSnapshot().ifPresent(_ -> node.raft().acknowledgeSnapshotPersistence());
+            persistence.incomingSnapshot().ifPresent(_ -> node.raft().step(new RaftInput.SnapshotPersisted()));
         }
 
         for (var outbound : ready.messages()) {
@@ -254,8 +268,8 @@ final class ClusterHarness {
 
         long lastAppliedIndex = 0;
         long lastAppliedTerm = 0;
-        for (var change : ready.application().configurationTransitions()) {
-            configurationChanges.add(new ConfigurationChangeEvent(from, change.index(), change.previous(), change.current()));
+        for (var change : ready.application().membershipTransitions()) {
+            configurationChanges.add(new MembershipChangeEvent(from, change.index(), change.previous(), change.current()));
             if (change.index() > lastAppliedIndex) {
                 lastAppliedIndex = change.index();
                 lastAppliedTerm = node.storage().term(change.index());
@@ -267,7 +281,7 @@ final class ClusterHarness {
             lastAppliedTerm = entry.term();
         }
         if (lastAppliedIndex > 0) {
-            node.raft().acknowledgeApplication(lastAppliedIndex);
+            node.raft().step(new RaftInput.Applied(lastAppliedIndex));
         }
 
         for (var readState : ready.application().readStates()) {
@@ -277,23 +291,23 @@ final class ClusterHarness {
         var snapshot = ready.snapshotTransfer().orElse(null);
         if (snapshot != null) {
             var outgoingSnapshot = node.storage().snapshot()
-                .orElseGet(() -> new RaftSnapshot(snapshot.index(), snapshot.term(), node.raft().configuration(), Bytes.EMPTY));
+                .orElseGet(() -> new RaftSnapshot(snapshot.index(), snapshot.term(), node.raft().membership(), Bytes.EMPTY));
             var msg = new RaftMessage.InstallSnapshot(
                 node.raft().term(),
                 from,
                 outgoingSnapshot.index(),
                 outgoingSnapshot.term(),
-                outgoingSnapshot.configuration(),
+                outgoingSnapshot.membership(),
                 outgoingSnapshot.data()
             );
             inFlight.addLast(new Envelope(from, snapshot.peer(), msg));
         }
     }
 
-    private void addNode(String nodeId, RaftConfiguration configuration, RaftConfig config, int jitter) {
+    private void addNode(String nodeId, RaftMembership configuration, RaftOptions options, int jitter) {
         var storage = new InMemoryStorage(configuration);
-        var raft = Raft.builder(nodeId, configuration, config, storage)
-            .random(_ -> jitter)
+        var raft = RaftNode.builder(nodeId, configuration, options, storage)
+            .electionJitter(_ -> jitter)
             .build();
         addNode(nodeId, raft, storage);
     }

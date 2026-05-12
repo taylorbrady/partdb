@@ -1,6 +1,6 @@
 package io.partdb.consensus;
 
-import io.partdb.raft.LogEntry;
+import io.partdb.raft.RaftLogEntry;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
@@ -82,7 +82,7 @@ final class SealedSegment implements LogSegment {
         arena.close();
     }
 
-    public LogEntry readEntry(long offset) {
+    public RaftLogEntry readEntry(long offset) {
         RecordHeader header = readHeader(offset);
         if (header.type() != LogRecord.TYPE_ENTRY) {
             throw new IllegalArgumentException("Record at offset " + offset + " is not an entry");

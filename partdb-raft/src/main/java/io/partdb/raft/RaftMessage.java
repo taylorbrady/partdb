@@ -16,7 +16,7 @@ public sealed interface RaftMessage {
         String leaderId,
         long prevLogIndex,
         long prevLogTerm,
-        List<LogEntry> entries,
+        List<RaftLogEntry> entries,
         long leaderCommit
     ) implements Request {
         public AppendEntries {
@@ -70,7 +70,7 @@ public sealed interface RaftMessage {
         String leaderId,
         long lastIncludedIndex,
         long lastIncludedTerm,
-        RaftConfiguration configuration,
+        RaftMembership membership,
         Bytes data
     ) implements Request {
         public InstallSnapshot {
@@ -78,7 +78,7 @@ public sealed interface RaftMessage {
                 throw new IllegalArgumentException("term must be non-negative");
             }
             Objects.requireNonNull(leaderId, "leaderId must not be null");
-            Objects.requireNonNull(configuration, "configuration must not be null");
+            Objects.requireNonNull(membership, "membership must not be null");
             data = Objects.requireNonNull(data, "data must not be null");
         }
     }
@@ -116,11 +116,11 @@ public sealed interface RaftMessage {
         }
     }
 
-    record ReadIndex(
+    record ReadRequested(
         long term,
         Bytes context
     ) implements Request {
-        public ReadIndex {
+        public ReadRequested {
             if (term < 0) {
                 throw new IllegalArgumentException("term must be non-negative");
             }

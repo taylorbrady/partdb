@@ -13,8 +13,8 @@ import io.grpc.Server;
 import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
+import io.partdb.consensus.RaftPeerTransport;
 import io.partdb.raft.RaftMessage;
-import io.partdb.raft.transport.RaftPeerTransport;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 import io.partdb.transport.grpc.raft.proto.RaftServiceGrpc;
 import org.slf4j.Logger;
@@ -82,7 +82,7 @@ public final class GrpcRaftPeerTransport implements RaftPeerTransport {
             case RaftMessage.PreVote msg -> sendPreVote(stub, msg);
             case RaftMessage.AppendEntries msg -> sendAppendEntries(stub, msg);
             case RaftMessage.InstallSnapshot msg -> sendInstallSnapshot(stub, msg);
-            case RaftMessage.ReadIndex msg -> sendReadIndex(stub, msg);
+            case RaftMessage.ReadRequested msg -> sendReadIndex(stub, msg);
         };
     }
 
@@ -270,7 +270,7 @@ public final class GrpcRaftPeerTransport implements RaftPeerTransport {
 
     private CompletableFuture<RaftMessage.Response> sendReadIndex(
             RaftServiceGrpc.RaftServiceStub stub,
-            RaftMessage.ReadIndex msg) {
+            RaftMessage.ReadRequested msg) {
         var future = new CompletableFuture<RaftMessage.Response>();
         stub.readIndex(RaftProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override

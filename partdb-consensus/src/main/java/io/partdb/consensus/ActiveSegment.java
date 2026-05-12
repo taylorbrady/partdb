@@ -1,7 +1,7 @@
 package io.partdb.consensus;
 
-import io.partdb.raft.RaftPersistentState;
-import io.partdb.raft.LogEntry;
+import io.partdb.raft.RaftHardState;
+import io.partdb.raft.RaftLogEntry;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -116,7 +116,7 @@ final class ActiveSegment implements LogSegment {
         }
 
         switch (record) {
-            case LogRecord.Entry(LogEntry entry) -> lastIndex = entry.index();
+            case LogRecord.Entry(RaftLogEntry entry) -> lastIndex = entry.index();
             case LogRecord.State _, LogRecord.SnapshotMarker _ -> {}
         }
     }
@@ -152,13 +152,13 @@ final class ActiveSegment implements LogSegment {
 
     private byte[] encodePayload(LogRecord record) {
         return switch (record) {
-            case LogRecord.Entry(LogEntry entry) -> {
+            case LogRecord.Entry(RaftLogEntry entry) -> {
                 int size = LogCodec.entrySize(entry);
                 ByteBuffer buf = ByteBuffer.allocate(size).order(BYTE_ORDER);
                 LogCodec.writeEntry(buf, entry);
                 yield buf.array();
             }
-            case LogRecord.State(RaftPersistentState state) -> {
+            case LogRecord.State(RaftHardState state) -> {
                 int size = LogCodec.hardStateSize(state);
                 ByteBuffer buf = ByteBuffer.allocate(size).order(BYTE_ORDER);
                 LogCodec.writeHardState(buf, state);

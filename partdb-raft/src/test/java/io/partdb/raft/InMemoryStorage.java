@@ -4,30 +4,30 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-final class InMemoryStorage implements RaftLogView {
-    private volatile RaftPersistentState hardState = RaftPersistentState.INITIAL;
-    private final List<LogEntry> entries = new ArrayList<>();
+final class InMemoryStorage implements RaftLogReader {
+    private volatile RaftHardState hardState = RaftHardState.INITIAL;
+    private final List<RaftLogEntry> entries = new ArrayList<>();
     private volatile RaftSnapshot snapshot;
-    private volatile RaftConfiguration configuration;
+    private volatile RaftMembership configuration;
 
     InMemoryStorage() {
         this(null);
     }
 
-    InMemoryStorage(RaftConfiguration initialConfiguration) {
+    InMemoryStorage(RaftMembership initialConfiguration) {
         this.configuration = initialConfiguration;
     }
 
     @Override
-    public List<LogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
-        List<LogEntry> result = new ArrayList<>();
+    public List<RaftLogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
+        List<RaftLogEntry> result = new ArrayList<>();
         long bytes = 0;
-        for (LogEntry entry : entries) {
+        for (RaftLogEntry entry : entries) {
             if (entry.index() >= fromIndex && entry.index() < toIndex) {
                 result.add(entry);
                 switch (entry) {
-                    case LogEntry.Data data -> bytes += data.data().size();
-                    case LogEntry.NoOp _, LogEntry.Config _ -> {}
+                    case RaftLogEntry.Data data -> bytes += data.data().size();
+                    case RaftLogEntry.NoOp _, RaftLogEntry.Config _ -> {}
                 }
                 if (bytes >= maxBytes && !result.isEmpty()) {
                     break;
@@ -42,7 +42,7 @@ final class InMemoryStorage implements RaftLogView {
         if (snapshot != null && index == snapshot.index()) {
             return snapshot.term();
         }
-        for (LogEntry entry : entries) {
+        for (RaftLogEntry entry : entries) {
             if (entry.index() == index) {
                 return entry.term();
             }
@@ -66,7 +66,7 @@ final class InMemoryStorage implements RaftLogView {
         return entries.getLast().index();
     }
 
-    public void append(RaftPersistentState hardState, List<LogEntry> newEntries) {
+    public void append(RaftHardState hardState, List<RaftLogEntry> newEntries) {
         if (hardState != null) {
             this.hardState = hardState;
         }
@@ -79,10 +79,10 @@ final class InMemoryStorage implements RaftLogView {
         entries.removeIf(e -> e.index() >= firstNewIndex);
         entries.addAll(newEntries);
 
-        for (LogEntry entry : newEntries) {
+        for (RaftLogEntry entry : newEntries) {
             switch (entry) {
-                case LogEntry.Config config -> this.configuration = config.configuration();
-                case LogEntry.Data _, LogEntry.NoOp _ -> {}
+                case RaftLogEntry.Config config -> this.configuration = config.membership();
+                case RaftLogEntry.Data _, RaftLogEntry.NoOp _ -> {}
             }
         }
     }
@@ -96,7 +96,7 @@ final class InMemoryStorage implements RaftLogView {
 
     public void saveSnapshot(RaftSnapshot snapshot) {
         this.snapshot = snapshot;
-        this.configuration = snapshot.configuration();
+        this.configuration = snapshot.membership();
         entries.removeIf(e -> e.index() <= snapshot.index());
     }
 

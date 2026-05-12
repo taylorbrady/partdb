@@ -1,7 +1,6 @@
 package io.partdb.consensus;
 
 import io.partdb.raft.RaftMessage;
-import io.partdb.raft.transport.RaftPeerTransport;
 
 import java.util.concurrent.CompletableFuture;
 

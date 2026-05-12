@@ -97,7 +97,7 @@ Role: pure Raft algorithm and Raft domain types.
 Decision: keep.
 
 This is a core module. It should stay deterministic and mostly effect-free:
-input event, output ready/effects. Persistence, IO, clocks, threads, and network
+input event, output effects. Persistence, IO, clocks, threads, and network
 transport belong outside this module.
 
 Allowed dependencies: `partdb-bytes`.
@@ -185,7 +185,8 @@ That is acceptable while both are small and share gRPC infrastructure. If either
 side grows substantially, split into public API transport and Raft transport
 modules.
 
-Allowed dependencies: `partdb-grpc`, `partdb-node`, `partdb-raft`.
+Allowed dependencies: `partdb-grpc`, `partdb-node`, `partdb-consensus`,
+`partdb-raft`.
 
 Must not own: process assembly, CLI behavior, storage internals, or consensus
 runtime policy.

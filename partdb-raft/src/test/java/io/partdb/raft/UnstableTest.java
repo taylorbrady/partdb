@@ -11,10 +11,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class UnstableTest {
 
-    private static final RaftConfiguration CONFIGURATION = RaftConfiguration.ofVoters("n1", "n2", "n3");
+    private static final RaftMembership CONFIGURATION = RaftMembership.voters("n1", "n2", "n3");
 
-    private LogEntry entry(long index, long term) {
-        return new LogEntry.Data(index, term, Bytes.EMPTY);
+    private RaftLogEntry entry(long index, long term) {
+        return new RaftLogEntry.Data(index, term, Bytes.EMPTY);
     }
 
     @Nested

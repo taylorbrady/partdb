@@ -1,4 +1,4 @@
-package io.partdb.raft.transport;
+package io.partdb.consensus;
 
 import io.partdb.raft.RaftMessage;
 

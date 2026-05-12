@@ -40,7 +40,7 @@ PartDB should read like idiomatic modern Java:
   records instead of passing raw primitives through multiple layers.
 - Keep transport classes at the edge. Core modules should be testable without
   gRPC.
-- Keep Raft event handling explicit: input event, ready effects, persistence,
+- Keep Raft event handling explicit: input event, output effects, persistence,
   transport, and application are separate responsibilities.
 - Avoid framework magic. Plain Java is a feature of this codebase.
 

@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class UnstableLog {
-    private final List<LogEntry> entries = new ArrayList<>();
+    private final List<RaftLogEntry> entries = new ArrayList<>();
     private long offset;
     private RaftSnapshot snapshot;
 
@@ -12,7 +12,7 @@ final class UnstableLog {
         this.offset = offset;
     }
 
-    void append(LogEntry entry) {
+    void append(RaftLogEntry entry) {
         long idx = entry.index();
 
         if (idx < offset) {
@@ -60,7 +60,7 @@ final class UnstableLog {
         snapshot = null;
     }
 
-    LogEntry get(long index) {
+    RaftLogEntry get(long index) {
         if (index < offset || index >= offset + entries.size()) {
             return null;
         }
@@ -71,11 +71,11 @@ final class UnstableLog {
         if (snapshot != null && index == snapshot.index()) {
             return snapshot.term();
         }
-        LogEntry entry = get(index);
+        RaftLogEntry entry = get(index);
         return entry != null ? entry.term() : null;
     }
 
-    List<LogEntry> slice(long from, long to) {
+    List<RaftLogEntry> slice(long from, long to) {
         if (from >= offset + entries.size() || to <= offset || from >= to) {
             return List.of();
         }
@@ -85,7 +85,7 @@ final class UnstableLog {
         return List.copyOf(entries.subList(start, end));
     }
 
-    List<LogEntry> entries() {
+    List<RaftLogEntry> entries() {
         return List.copyOf(entries);
     }
 

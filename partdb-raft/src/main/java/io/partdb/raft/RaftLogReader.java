@@ -2,9 +2,9 @@ package io.partdb.raft;
 
 import java.util.List;
 
-public interface RaftLogView {
+public interface RaftLogReader {
 
-    List<LogEntry> entries(long fromIndex, long toIndex, long maxBytes);
+    List<RaftLogEntry> entries(long fromIndex, long toIndex, long maxBytes);
 
     long term(long index);
 

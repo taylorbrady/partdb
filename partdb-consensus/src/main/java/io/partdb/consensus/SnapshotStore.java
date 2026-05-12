@@ -1,7 +1,7 @@
 package io.partdb.consensus;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.raft.RaftConfiguration;
+import io.partdb.raft.RaftMembership;
 import io.partdb.raft.RaftSnapshot;
 
 import java.io.IOException;
@@ -50,7 +50,7 @@ final class SnapshotStore implements AutoCloseable {
                 StandardOpenOption.WRITE,
                 StandardOpenOption.TRUNCATE_EXISTING)) {
 
-            byte[] configurationBytes = encodeConfiguration(snapshot.configuration());
+            byte[] configurationBytes = encodeConfiguration(snapshot.membership());
             int configurationLen = configurationBytes.length;
             Bytes data = snapshot.data();
 
@@ -157,7 +157,7 @@ final class SnapshotStore implements AutoCloseable {
             ByteBuffer configurationBuf = ByteBuffer.allocate(configurationLen).order(BYTE_ORDER);
             channel.read(configurationBuf);
             configurationBuf.flip();
-            RaftConfiguration configuration = LogCodec.readConfiguration(configurationBuf);
+            RaftMembership configuration = LogCodec.readConfiguration(configurationBuf);
 
             int dataLen = (int) (fileSize - HEADER_SIZE - 4 - configurationLen - 4);
             byte[] data = new byte[dataLen];
@@ -187,7 +187,7 @@ final class SnapshotStore implements AutoCloseable {
         }
     }
 
-    private byte[] encodeConfiguration(RaftConfiguration configuration) {
+    private byte[] encodeConfiguration(RaftMembership configuration) {
         int size = LogCodec.configurationSize(configuration);
         ByteBuffer buf = ByteBuffer.allocate(size).order(BYTE_ORDER);
         LogCodec.writeConfiguration(buf, configuration);

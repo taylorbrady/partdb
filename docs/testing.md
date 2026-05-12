@@ -3,7 +3,7 @@
 PartDB's highest-value tests are the ones that exercise the whole stack:
 
 ```text
-client -> public gRPC -> server -> node -> consensus/Raft -> Raft gRPC -> storage
+client -> public gRPC -> server -> node -> consensus/Raft -> Raft peer gRPC -> storage
 ```
 
 The test taxonomy keeps fast feedback, behavioral confidence, packaged-artifact
@@ -44,7 +44,7 @@ Run:
 
 Integration tests live in `src/integrationTest`. They exercise multiple PartDB
 modules together inside the Gradle test JVM. These tests may start real
-`PartDbServer` instances with public gRPC and Raft gRPC transports, but they do
+`PartDbServer` instances with public gRPC and Raft peer gRPC transports, but they do
 not use the installed application distribution.
 
 Use this suite for:

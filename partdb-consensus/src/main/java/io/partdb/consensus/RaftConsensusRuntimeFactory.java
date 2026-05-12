@@ -1,6 +1,5 @@
 package io.partdb.consensus;
 
-import io.partdb.raft.transport.RaftPeerTransport;
 
 import java.nio.file.Path;
 import java.util.Objects;
