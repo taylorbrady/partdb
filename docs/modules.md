@@ -239,7 +239,7 @@ Allowed dependencies: `partdb-server`, `partdb-client`.
 Must not own: node internals, consensus internals, storage internals, or gRPC
 service implementations.
 
-### `partdb-benchmark`
+### `partdb-benchmarks`
 
 Role: benchmark assembly.
 

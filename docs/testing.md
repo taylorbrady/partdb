@@ -103,7 +103,8 @@ Run:
 ## Benchmarks
 
 Run JMH benchmarks explicitly. They are performance tools, not correctness
-checks, and must not be attached to `check` or `ci`.
+checks, and must not be attached to `check` or `ci`. See
+[benchmarks.md](benchmarks.md) for benchmark tasks and conventions.
 
 ## Known Gaps
 

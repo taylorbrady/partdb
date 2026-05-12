@@ -59,7 +59,7 @@ The short version:
 - `partdb-client`: Java client API
 - `partdb-server`: process-level server composition
 - `partdb-app`: CLI and executable packaging
-- `partdb-benchmark`: JMH benchmarks
+- `partdb-benchmarks`: JMH benchmarks
 
 See [modules.md](modules.md) for detailed module charters, dependency rules,
 and keep/merge/split decisions.

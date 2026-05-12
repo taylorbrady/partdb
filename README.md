@@ -76,7 +76,7 @@ partdb-client
 - **partdb-client**: Java client API for KV and cluster operations
 - **partdb-server**: process runtime assembly
 - **partdb-app**: unified executable for node startup and operational commands
-- **partdb-benchmark**: JMH benchmarks
+- **partdb-benchmarks**: JMH benchmarks
 
 ## CLI
 

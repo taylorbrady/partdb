@@ -1,3 +1,7 @@
+pluginManagement {
+    includeBuild("build-logic")
+}
+
 rootProject.name = "partdb"
 
 include(
@@ -12,5 +16,5 @@ include(
     "partdb-server",
     "partdb-client",
     "partdb-app",
-    "partdb-benchmark"
+    "partdb-benchmarks"
 )

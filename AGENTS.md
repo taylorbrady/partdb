@@ -9,7 +9,7 @@ Core modules include `partdb-bytes`, `partdb-cluster`, `partdb-raft`,
 `partdb-storage`, `partdb-consensus`, and `partdb-node`. Transport and API
 modules include `partdb-grpc`, `partdb-transport-grpc`, and `partdb-client`.
 Runtime assembly lives in `partdb-server` and `partdb-app`. Benchmarks live in
-`partdb-storage/src/jmh` and `partdb-benchmark/src/jmh`.
+`partdb-storage/src/jmh` and `partdb-benchmarks/src/jmh`.
 
 Keep module dependencies aligned with `docs/modules.md`. Core modules should not
 depend on gRPC, CLI code, packaging, or process lifecycle concerns.
