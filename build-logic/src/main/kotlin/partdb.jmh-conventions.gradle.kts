@@ -64,3 +64,52 @@ tasks.register<JavaExec>("jmhQuick") {
         else -> emptyList()
     }
 }
+
+tasks.register<JavaExec>("jmhBaseline") {
+    group = "benchmark"
+    description = "Run the curated PartDB JMH performance baseline for this module."
+    dependsOn(jmhJar)
+    classpath = files(jmhJar.flatMap { it.archiveFile })
+    mainClass.set("org.openjdk.jmh.Main")
+    jvmArgs(jmhJvmArgs)
+    doFirst {
+        layout.buildDirectory.dir("reports/jmh").get().asFile.mkdirs()
+    }
+    args = listOf(
+        "-wi", "2",
+        "-i", "3",
+        "-w", "2s",
+        "-r", "2s",
+        "-f", "1",
+        "-foe", "true",
+        "-rf", "JSON",
+        "-rff", layout.buildDirectory.file("reports/jmh/baseline-results.json").get().asFile.absolutePath,
+        "-o", layout.buildDirectory.file("reports/jmh/baseline-results.txt").get().asFile.absolutePath
+    ) + when (project.name) {
+        "partdb-storage" -> listOf(
+            ".*(BlockCodecBenchmark\\.(compress|decompress)|BlockCacheBenchmark\\.hotHit|BloomFilterBenchmark\\.miss|DataBlockReadBenchmark\\.(findMiddle|scanFull)).*",
+            "-p", "codecName=DEFLATE",
+            "-p", "payloadSize=4096",
+            "-p", "payloadKind=SEMI_COMPRESSIBLE",
+            "-p", "cacheSizeBytes=8388608",
+            "-p", "blockValueSize=2048",
+            "-p", "blockCount=512",
+            "-p", "keyCount=100000",
+            "-p", "falsePositiveRate=0.01",
+            "-p", "keyShape=RANDOMISH",
+            "-p", "entryCount=1024",
+            "-p", "valueSize=256",
+            "-p", "restartInterval=16"
+        )
+        "partdb-benchmarks" -> listOf(
+            ".*(StoragePointReadBenchmark\\.(hotHit|persistedHit)|StorageWriteBenchmark\\.steadyStateUpdateRandom|StorageScanBenchmark\\.persistedRange1000|StorageCheckpointBenchmark\\.checkpoint|StorageCompactionBenchmark\\.flushToL0Burst).*",
+            "-p", "keyCount=100000",
+            "-p", "valueSize=100",
+            "-p", "initialKeyCount=100000",
+            "-p", "compressionName=DEFLATE",
+            "-p", "valuePattern=FIXED_REPEAT",
+            "-p", "burstPayloadBytes=2097152"
+        )
+        else -> emptyList()
+    }
+}

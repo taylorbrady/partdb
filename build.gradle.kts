@@ -52,3 +52,9 @@ tasks.register("ci") {
     description = "Runs all checks required before merge."
     dependsOn("check", "integrationTest", "packagedIntegrationTest")
 }
+
+tasks.register("jmhBaseline") {
+    group = "benchmark"
+    description = "Runs the curated PartDB JMH performance baseline."
+    dependsOn(":partdb-storage:jmhBaseline", ":partdb-benchmarks:jmhBaseline")
+}
