@@ -89,14 +89,14 @@ public final class RaftNode {
 
         switch (event) {
             case RaftInput.Tick() -> tick(accumulator);
-            case RaftInput.CommandProposed(var data) -> propose(data, accumulator);
+            case RaftInput.EntryProposed(var data) -> propose(data, accumulator);
             case RaftInput.MessageReceived(var from, var msg) -> receive(from, msg, accumulator);
-            case RaftInput.ReadRequested(var context) -> handleReadIndexEvent(context, accumulator);
+            case RaftInput.ReadIndexRequested(var context) -> handleReadIndexEvent(context, accumulator);
             case RaftInput.MembershipChangeProposed(var change) -> proposeMembershipChange(change, accumulator);
             case RaftInput.EntriesPersisted(var index, var entryTerm) -> unstable.stableTo(index, entryTerm);
             case RaftInput.SnapshotPersisted() -> unstable.snapshotStabilized();
             case RaftInput.Applied(var index) -> lastApplied = Math.max(lastApplied, index);
-            case RaftInput.RecoverCommitted() -> {}
+            case RaftInput.ReplayCommitted() -> {}
         }
 
         prepareEntriesToApply(accumulator);
@@ -344,7 +344,7 @@ public final class RaftNode {
         boolean checkTerm = switch (msg) {
             case RaftMessage.PreVote _,
                  RaftMessage.PreVoteResponse _,
-                 RaftMessage.ReadRequested _,
+                 RaftMessage.ReadIndexRequested _,
                  RaftMessage.ReadIndexResponse _ -> false;
             default -> true;
         };
@@ -362,7 +362,7 @@ public final class RaftNode {
             case RaftMessage.AppendEntriesResponse aer -> handleAppendEntriesResponse(from, aer, accumulator);
             case RaftMessage.InstallSnapshot is -> handleInstallSnapshot(from, is, accumulator);
             case RaftMessage.InstallSnapshotResponse isr -> handleInstallSnapshotResponse(from, isr);
-            case RaftMessage.ReadRequested ri -> handleReadIndex(from, ri, accumulator);
+            case RaftMessage.ReadIndexRequested ri -> handleReadIndex(from, ri, accumulator);
             case RaftMessage.ReadIndexResponse rir -> handleReadIndexResponse(from, rir, accumulator);
         }
     }
@@ -617,11 +617,11 @@ public final class RaftNode {
         if (role == RaftRole.LEADER) {
             startReadIndexConfirmation(null, context, accumulator);
         } else if (leaderId != null) {
-            accumulator.send(leaderId, new RaftMessage.ReadRequested(term, context));
+            accumulator.send(leaderId, new RaftMessage.ReadIndexRequested(term, context));
         }
     }
 
-    private void handleReadIndex(String from, RaftMessage.ReadRequested ri, RaftEffectAccumulator accumulator) {
+    private void handleReadIndex(String from, RaftMessage.ReadIndexRequested ri, RaftEffectAccumulator accumulator) {
         if (role != RaftRole.LEADER) {
             accumulator.send(from, new RaftMessage.ReadIndexResponse(term, 0, ri.context()));
             return;
@@ -700,7 +700,7 @@ public final class RaftNode {
         long prevIndex = next - 1;
 
         if (prevIndex < lastIncludedIndex()) {
-            requestSnapshotTransfer(peer, accumulator);
+            requestSnapshot(peer, accumulator);
             return;
         }
 
@@ -712,8 +712,8 @@ public final class RaftNode {
         ));
     }
 
-    private void requestSnapshotTransfer(String peer, RaftEffectAccumulator accumulator) {
-        accumulator.setSnapshotTransfer(peer, lastIncludedIndex(), lastIncludedTerm());
+    private void requestSnapshot(String peer, RaftEffectAccumulator accumulator) {
+        accumulator.setSnapshotNeeded(peer, lastIncludedIndex(), lastIncludedTerm());
     }
 
     private void advanceCommitIndex(RaftEffectAccumulator accumulator) {

@@ -221,6 +221,73 @@ class StorageEngineInternalsCompactionTest extends StorageEngineInternalTestSupp
     }
 
     @Test
+    void reopenAfterCompactionPreservesUpdatesDeletesAndScanOrder() {
+        StorageOptions options = smallWriteBufferOptions(1024);
+
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
+            for (int i = 0; i < 80; i++) {
+                put(tree, key(String.format("key-%03d", i)), value("initial-" + i), nextRevision());
+            }
+            drainToDurableState(tree);
+
+            for (int i = 0; i < 80; i += 2) {
+                put(tree, key(String.format("key-%03d", i)), value("updated-" + i), nextRevision());
+            }
+            drainToDurableState(tree);
+
+            for (int i = 0; i < 80; i += 5) {
+                delete(tree, key(String.format("key-%03d", i)), nextRevision());
+            }
+            for (int i = 80; i < 100; i++) {
+                put(tree, key(String.format("key-%03d", i)), value("new-" + i), nextRevision());
+            }
+            drainToDurableState(tree);
+
+            awaitCompaction(tree, () -> {
+                SSTableManifest manifest = readManifest(tempDir);
+                return !manifest.level(1).isEmpty();
+            });
+        }
+
+        try (StorageEngine tree = StorageEngine.open(tempDir, options)) {
+            for (int i = 0; i < 100; i++) {
+                String currentKeyText = String.format("key-%03d", i);
+                Slice currentKey = key(currentKeyText);
+                Optional<ValueRecord> result = get(tree, currentKey);
+
+                if (i < 80 && i % 5 == 0) {
+                    assertTrue(result.isEmpty(), "Expected deleted key to stay deleted: " + currentKeyText);
+                } else {
+                    assertTrue(result.isPresent(), "Expected key to be present after reopen: " + currentKeyText);
+                    String expectedValue;
+                    if (i >= 80) {
+                        expectedValue = "new-" + i;
+                    } else if (i % 2 == 0) {
+                        expectedValue = "updated-" + i;
+                    } else {
+                        expectedValue = "initial-" + i;
+                    }
+                    assertEquals(expectedValue, result.get().value().utf8());
+                }
+            }
+
+            List<EntryRecord> entries = readAll(tree.scan(KeyRange.between(bytes(key("key-000")), bytes(key("key-100")))));
+            assertEquals(84, entries.size());
+            var previousKey = io.partdb.bytes.Bytes.EMPTY;
+            boolean first = true;
+            for (EntryRecord entry : entries) {
+                if (!first) {
+                    assertTrue(previousKey.compareTo(entry.key()) < 0);
+                }
+                first = false;
+                previousKey = entry.key();
+                int suffix = Integer.parseInt(entry.key().utf8().substring("key-".length()));
+                assertTrue(suffix >= 80 || suffix % 5 != 0);
+            }
+        }
+    }
+
+    @Test
     void scanAfterCompaction() {
         StorageOptions options = smallWriteBufferOptions(1024);
 

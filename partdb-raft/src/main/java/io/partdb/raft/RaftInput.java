@@ -6,14 +6,14 @@ import java.util.Objects;
 
 public sealed interface RaftInput {
     record Tick() implements RaftInput {}
-    record CommandProposed(Bytes data) implements RaftInput {
-        public CommandProposed {
+    record EntryProposed(Bytes data) implements RaftInput {
+        public EntryProposed {
             data = Objects.requireNonNull(data, "data must not be null");
         }
     }
     record MessageReceived(String from, RaftMessage message) implements RaftInput {}
-    record ReadRequested(Bytes context) implements RaftInput {
-        public ReadRequested {
+    record ReadIndexRequested(Bytes context) implements RaftInput {
+        public ReadIndexRequested {
             context = Objects.requireNonNull(context, "context must not be null");
         }
     }
@@ -45,5 +45,5 @@ public sealed interface RaftInput {
         }
     }
 
-    record RecoverCommitted() implements RaftInput {}
+    record ReplayCommitted() implements RaftInput {}
 }

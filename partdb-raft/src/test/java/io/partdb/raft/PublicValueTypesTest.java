@@ -34,11 +34,11 @@ class PublicValueTypesTest {
     @Test
     void readIndexMessageHasValueSemantics() {
         byte[] context = "ctx".getBytes(StandardCharsets.UTF_8);
-        var message = new RaftMessage.ReadRequested(4, Bytes.copyOf(context));
+        var message = new RaftMessage.ReadIndexRequested(4, Bytes.copyOf(context));
 
         context[0] = 'C';
         assertEquals(Bytes.utf8("ctx"), message.context());
-        assertEquals(new RaftMessage.ReadRequested(4, Bytes.utf8("ctx")), message);
+        assertEquals(new RaftMessage.ReadIndexRequested(4, Bytes.utf8("ctx")), message);
     }
 
     @Test

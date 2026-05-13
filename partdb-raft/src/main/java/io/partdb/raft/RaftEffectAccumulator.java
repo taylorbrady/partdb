@@ -15,7 +15,7 @@ final class RaftEffectAccumulator {
     private final List<RaftEffects.MembershipTransition> membershipTransitions = new ArrayList<>();
     private long appliedThroughIndex;
     private RaftSnapshot incomingSnapshot;
-    private RaftEffects.SnapshotTransfer snapshotTransfer;
+    private RaftEffects.SnapshotNeeded snapshotNeeded;
 
     void setHardState(RaftHardState hardState) {
         this.hardState = hardState;
@@ -49,8 +49,8 @@ final class RaftEffectAccumulator {
         this.incomingSnapshot = snapshot;
     }
 
-    void setSnapshotTransfer(String peer, long index, long term) {
-        this.snapshotTransfer = new RaftEffects.SnapshotTransfer(peer, index, term);
+    void setSnapshotNeeded(String peer, long index, long term) {
+        this.snapshotNeeded = new RaftEffects.SnapshotNeeded(peer, index, term);
     }
 
     RaftEffects finish() {
@@ -70,6 +70,6 @@ final class RaftEffectAccumulator {
             appliedThroughIndex
         );
 
-        return new RaftEffects(persistence, List.copyOf(messages), application, Optional.ofNullable(snapshotTransfer));
+        return new RaftEffects(persistence, List.copyOf(messages), application, Optional.ofNullable(snapshotNeeded));
     }
 }

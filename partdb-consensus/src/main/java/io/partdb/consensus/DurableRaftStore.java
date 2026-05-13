@@ -88,6 +88,9 @@ final class DurableRaftStore implements RaftStore {
     public List<RaftLogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
         lock.readLock().lock();
         try {
+            if (currentSnapshot != null && fromIndex <= currentSnapshot.index()) {
+                throw new ConsensusException.Compaction(fromIndex, currentSnapshot.index() + 1);
+            }
             return wal.entries(fromIndex, toIndex, maxBytes);
         } finally {
             lock.readLock().unlock();

@@ -185,13 +185,13 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
     public void readIndex(RaftProto.ReadIndexRequest request,
                           StreamObserver<RaftProto.ReadIndexResponse> responseObserver) {
         String from = getSenderId();
-        RaftMessage.ReadRequested msg = RaftProtoConverters.fromProto(request);
+        RaftMessage.ReadIndexRequested msg = RaftProtoConverters.fromProto(request);
 
         handler.handle(from, msg)
             .whenComplete((response, ex) -> {
                 if (ex != null) {
                     log.atDebug()
-                        .addKeyValue("rpc", "ReadRequested")
+                        .addKeyValue("rpc", "ReadIndexRequested")
                         .addKeyValue("from", from)
                         .addKeyValue("error", ex.getMessage())
                         .log("RPC failed");

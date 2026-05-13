@@ -82,7 +82,7 @@ public final class GrpcRaftPeerTransport implements RaftPeerTransport {
             case RaftMessage.PreVote msg -> sendPreVote(stub, msg);
             case RaftMessage.AppendEntries msg -> sendAppendEntries(stub, msg);
             case RaftMessage.InstallSnapshot msg -> sendInstallSnapshot(stub, msg);
-            case RaftMessage.ReadRequested msg -> sendReadIndex(stub, msg);
+            case RaftMessage.ReadIndexRequested msg -> sendReadIndex(stub, msg);
         };
     }
 
@@ -270,7 +270,7 @@ public final class GrpcRaftPeerTransport implements RaftPeerTransport {
 
     private CompletableFuture<RaftMessage.Response> sendReadIndex(
             RaftServiceGrpc.RaftServiceStub stub,
-            RaftMessage.ReadRequested msg) {
+            RaftMessage.ReadIndexRequested msg) {
         var future = new CompletableFuture<RaftMessage.Response>();
         stub.readIndex(RaftProtoConverters.toProto(msg), new StreamObserver<>() {
             @Override

@@ -127,14 +127,14 @@ final class RaftProtoConverters {
             .build();
     }
 
-    static RaftMessage.ReadRequested fromProto(RaftProto.ReadIndexRequest proto) {
-        return new RaftMessage.ReadRequested(
+    static RaftMessage.ReadIndexRequested fromProto(RaftProto.ReadIndexRequest proto) {
+        return new RaftMessage.ReadIndexRequested(
             proto.getTerm(),
             Bytes.copyOf(proto.getContext().toByteArray())
         );
     }
 
-    static RaftProto.ReadIndexRequest toProto(RaftMessage.ReadRequested msg) {
+    static RaftProto.ReadIndexRequest toProto(RaftMessage.ReadIndexRequested msg) {
         return RaftProto.ReadIndexRequest.newBuilder()
             .setTerm(msg.term())
             .setContext(ByteString.copyFrom(msg.context().asReadOnlyByteBuffer()))

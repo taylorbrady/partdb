@@ -116,11 +116,11 @@ public sealed interface RaftMessage {
         }
     }
 
-    record ReadRequested(
+    record ReadIndexRequested(
         long term,
         Bytes context
     ) implements Request {
-        public ReadRequested {
+        public ReadIndexRequested {
             if (term < 0) {
                 throw new IllegalArgumentException("term must be non-negative");
             }

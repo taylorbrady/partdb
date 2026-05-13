@@ -436,7 +436,7 @@ class ClusterTest {
     }
 
     @Nested
-    class ReadRequested {
+    class ReadIndexRequested {
         @Test
         void leaderServesReadIndexDirectly() {
             var network = ClusterHarness.create(3);

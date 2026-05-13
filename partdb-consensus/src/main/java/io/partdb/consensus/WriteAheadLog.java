@@ -6,8 +6,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -70,19 +72,21 @@ final class WriteAheadLog implements AutoCloseable {
     }
 
     public void append(RaftHardState newHardState, List<RaftLogEntry> entries) {
+        if (!entries.isEmpty()) {
+            truncateSuffixFrom(entries.getFirst().index());
+        }
+
         if (newHardState != null) {
             active.append(new LogRecord.State(newHardState));
             hardState = newHardState;
         }
-
-        int activeSegmentIndex = sealed.size();
 
         for (RaftLogEntry entry : entries) {
             maybeRollSegment();
 
             long offset = active.fileSize();
             active.append(new LogRecord.Entry(entry));
-            index.put(entry.index(), new EntryLocation(activeSegmentIndex, offset));
+            index.put(entry.index(), new EntryLocation(sealed.size(), offset));
             lastIndex = entry.index();
 
             if (firstIndex == 1 && lastIndex == 1) {
@@ -318,6 +322,100 @@ final class WriteAheadLog implements AutoCloseable {
 
         active = ActiveSegment.create(directory, nextSequence, lastIndex + 1);
         nextSequence++;
+    }
+
+    private void truncateSuffixFrom(long firstReplacementIndex) {
+        if (firstReplacementIndex > lastIndex) {
+            return;
+        }
+        if (firstReplacementIndex < firstIndex) {
+            throw new ConsensusException.Compaction(firstReplacementIndex, firstIndex);
+        }
+
+        EntryLocation location = index.get(firstReplacementIndex);
+        if (location == null) {
+            return;
+        }
+
+        removeIndexEntriesFrom(firstReplacementIndex);
+
+        if (location.segmentIndex() < sealed.size()) {
+            truncateSealedSuffix(location);
+        } else {
+            active.truncateTo(location.offset(), firstReplacementIndex - 1);
+        }
+
+        lastIndex = firstReplacementIndex - 1;
+        if (lastIndex < firstIndex) {
+            firstIndex = firstReplacementIndex;
+        }
+    }
+
+    private void truncateSealedSuffix(EntryLocation location) {
+        SealedSegment target = sealed.get(location.segmentIndex());
+        for (int i = sealed.size() - 1; i > location.segmentIndex(); i--) {
+            deleteSealedSegment(i);
+        }
+
+        active.close();
+        deleteFile(active.path());
+
+        sealed.remove(location.segmentIndex());
+        target.close();
+
+        truncateFile(target.path(), location.offset());
+        active = ActiveSegment.openForAppend(
+            target.path(),
+            target.sequence(),
+            target.firstIndex(),
+            lastIndexAfterTruncatingSegment(target.firstIndex(), location.offset())
+        );
+    }
+
+    private long lastIndexAfterTruncatingSegment(long segmentFirstIndex, long truncateOffset) {
+        return truncateOffset == 0 ? segmentFirstIndex - 1 : lastIndexBeforeOffset(truncateOffset);
+    }
+
+    private long lastIndexBeforeOffset(long truncateOffset) {
+        long result = firstIndex - 1;
+        for (Map.Entry<Long, EntryLocation> entry : index.entrySet()) {
+            EntryLocation location = entry.getValue();
+            if (location.segmentIndex() <= sealed.size() && location.offset() < truncateOffset) {
+                result = Math.max(result, entry.getKey());
+            }
+        }
+        return result;
+    }
+
+    private void removeIndexEntriesFrom(long firstReplacementIndex) {
+        index.keySet().removeIf(i -> i >= firstReplacementIndex);
+    }
+
+    private void deleteSealedSegment(int segmentIndex) {
+        SealedSegment segment = sealed.remove(segmentIndex);
+        try {
+            segment.close();
+            Files.deleteIfExists(segment.path());
+        } catch (IOException e) {
+            throw new ConsensusStorageException.IO("Failed to delete WAL segment: " + segment.path(), e);
+        }
+    }
+
+    private void deleteFile(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            throw new ConsensusStorageException.IO("Failed to delete WAL segment: " + path, e);
+        }
+    }
+
+    private void truncateFile(Path path, long offset) {
+        try (var channel = FileChannel.open(path, StandardOpenOption.WRITE)) {
+            channel.truncate(offset);
+            channel.force(true);
+        } catch (IOException e) {
+            throw new ConsensusStorageException.IO("Failed to truncate WAL segment: " + path, e);
+        }
     }
 
     private RaftLogEntry readEntry(EntryLocation loc) {

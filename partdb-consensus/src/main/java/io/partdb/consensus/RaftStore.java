@@ -14,6 +14,14 @@ interface RaftStore extends RaftLogReader, AutoCloseable {
 
     Bootstrap bootstrap();
 
+    /**
+     * Appends one Raft persistence batch.
+     *
+     * <p>If {@code entries} is non-empty, the store must replace any durable
+     * suffix beginning at the first new entry index before exposing the new
+     * entries. After close and reopen, reads must observe the replacement log
+     * and never the stale suffix.</p>
+     */
     void append(RaftHardState hardState, List<RaftLogEntry> entries);
 
     void sync();

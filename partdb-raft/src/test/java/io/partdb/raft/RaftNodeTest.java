@@ -515,7 +515,7 @@ class RaftNodeTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2"));
 
-            var ready = raft.step(new RaftInput.CommandProposed(bytes("hello")));
+            var ready = raft.step(new RaftInput.EntryProposed(bytes("hello")));
 
             long appendCount = ready.messages().stream()
                 .filter(m -> m.message() instanceof RaftMessage.AppendEntries)
@@ -528,7 +528,7 @@ class RaftNodeTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2"));
 
-            raft.step(new RaftInput.CommandProposed(bytes("hello")));
+            raft.step(new RaftInput.EntryProposed(bytes("hello")));
 
             var response = new RaftMessage.AppendEntriesResponse(1, true, 2);
             raft.step(new RaftInput.MessageReceived("n2", response));
@@ -558,7 +558,7 @@ class RaftNodeTest {
             var raft = createRaft("n1", "n1");
             tickUntilTimeout(raft);
 
-            raft.step(new RaftInput.CommandProposed(bytes("hello")));
+            raft.step(new RaftInput.EntryProposed(bytes("hello")));
 
             assertEquals(2, raft.commitIndex());
         }
@@ -567,7 +567,7 @@ class RaftNodeTest {
         void nonLeaderIgnoresPropose() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var ready = raft.step(new RaftInput.CommandProposed(bytes("hello")));
+            var ready = raft.step(new RaftInput.EntryProposed(bytes("hello")));
 
             assertTrue(ready.persistence().entries().isEmpty());
             assertTrue(ready.messages().isEmpty());
@@ -599,7 +599,7 @@ class RaftNodeTest {
             var raft = createRaft("n1", "n1");
             tickUntilTimeout(raft);
 
-            raft.step(new RaftInput.CommandProposed(bytes("data")));
+            raft.step(new RaftInput.EntryProposed(bytes("data")));
 
             long commitIndex = raft.commitIndex();
             assertTrue(commitIndex > 0);
@@ -649,8 +649,8 @@ class RaftNodeTest {
             var reject = new RaftMessage.AppendEntriesResponse(1, false, 0);
             var ready = raft.step(new RaftInput.MessageReceived("n2", reject));
 
-            assertNotNull(ready.snapshotTransfer().orElse(null));
-            assertEquals("n2", ready.snapshotTransfer().orElse(null).peer());
+            assertNotNull(ready.snapshotNeeded().orElse(null));
+            assertEquals("n2", ready.snapshotNeeded().orElse(null).peer());
         }
 
         @Test
@@ -680,15 +680,15 @@ class RaftNodeTest {
 
             var reject = new RaftMessage.AppendEntriesResponse(1, false, 0);
             var snapshotReady = raft.step(new RaftInput.MessageReceived("n2", reject));
-            assertNotNull(snapshotReady.snapshotTransfer().orElse(null));
-            assertEquals("n2", snapshotReady.snapshotTransfer().orElse(null).peer());
+            assertNotNull(snapshotReady.snapshotNeeded().orElse(null));
+            assertEquals("n2", snapshotReady.snapshotNeeded().orElse(null).peer());
 
             var oldTermResponse = new RaftMessage.InstallSnapshotResponse(0);
             raft.step(new RaftInput.MessageReceived("n2", oldTermResponse));
 
             var ready = tickHeartbeat(raft);
 
-            var snapshotToN2 = ready.snapshotTransfer().orElse(null);
+            var snapshotToN2 = ready.snapshotNeeded().orElse(null);
             assertNotNull(snapshotToN2);
             assertEquals("n2", snapshotToN2.peer());
         }
@@ -862,7 +862,7 @@ class RaftNodeTest {
             assertTrue(raft.isLeader());
             assertEquals(2, raft.term());
 
-            raft.step(new RaftInput.CommandProposed(bytes("new-data")));
+            raft.step(new RaftInput.EntryProposed(bytes("new-data")));
             assertEquals(3, raft.commitIndex());
         }
 
@@ -1280,14 +1280,14 @@ class RaftNodeTest {
     }
 
     @Nested
-    class ReadRequested {
+    class ReadIndexRequested {
         @Test
         void leaderConfirmsReadIndexImmediatelyForSingleNode() {
             var raft = createRaft("n1", "n1");
             tickUntilTimeout(raft);
             assertTrue(raft.isLeader());
 
-            var ready = raft.step(new RaftInput.ReadRequested(bytes("req-1")));
+            var ready = raft.step(new RaftInput.ReadIndexRequested(bytes("req-1")));
 
             assertEquals(1, ready.application().readStates().size());
             var readState = ready.application().readStates().get(0);
@@ -1300,7 +1300,7 @@ class RaftNodeTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var ready = raft.step(new RaftInput.ReadRequested(bytes("req-1")));
+            var ready = raft.step(new RaftInput.ReadIndexRequested(bytes("req-1")));
 
             assertTrue(ready.application().readStates().isEmpty());
             var appendEntries = getAppendEntries(ready);
@@ -1312,7 +1312,7 @@ class RaftNodeTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftInput.ReadRequested(bytes("req-1")));
+            raft.step(new RaftInput.ReadIndexRequested(bytes("req-1")));
 
             var ackReady = raft.step(new RaftInput.MessageReceived("n2",
                 new RaftMessage.AppendEntriesResponse(raft.term(), true, 1)));
@@ -1327,7 +1327,7 @@ class RaftNodeTest {
             becomeLeader(raft, List.of("n2", "n3"));
 
             long commitIndexAtRequest = raft.commitIndex();
-            var readIndexMsg = new RaftMessage.ReadRequested(raft.term(), bytes("req-1"));
+            var readIndexMsg = new RaftMessage.ReadIndexRequested(raft.term(), bytes("req-1"));
             raft.step(new RaftInput.MessageReceived("n2", readIndexMsg));
 
             var ackReady = raft.step(new RaftInput.MessageReceived("n3",
@@ -1344,7 +1344,7 @@ class RaftNodeTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftInput.ReadRequested(bytes("req-1")));
+            raft.step(new RaftInput.ReadIndexRequested(bytes("req-1")));
 
             var higherTermMsg = new RaftMessage.AppendEntries(10, "n2", 0, 0, List.of(), 0);
             raft.step(new RaftInput.MessageReceived("n2", higherTermMsg));
@@ -1364,12 +1364,12 @@ class RaftNodeTest {
             raft.step(new RaftInput.MessageReceived("n2", heartbeat));
             assertEquals("n2", raft.leaderId().orElseThrow());
 
-            var ready = raft.step(new RaftInput.ReadRequested(bytes("req-1")));
+            var ready = raft.step(new RaftInput.ReadIndexRequested(bytes("req-1")));
 
             var readIndexMsg = ready.messages().stream()
                 .filter(m -> m.to().equals("n2"))
-                .filter(m -> m.message() instanceof RaftMessage.ReadRequested)
-                .map(m -> (RaftMessage.ReadRequested) m.message())
+                .filter(m -> m.message() instanceof RaftMessage.ReadIndexRequested)
+                .map(m -> (RaftMessage.ReadIndexRequested) m.message())
                 .findFirst();
 
             assertTrue(readIndexMsg.isPresent());
@@ -1396,7 +1396,7 @@ class RaftNodeTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             assertTrue(raft.leaderId().isEmpty());
 
-            var ready = raft.step(new RaftInput.ReadRequested(bytes("req-1")));
+            var ready = raft.step(new RaftInput.ReadIndexRequested(bytes("req-1")));
 
             assertTrue(ready.messages().isEmpty());
             assertTrue(ready.application().readStates().isEmpty());
@@ -1419,7 +1419,7 @@ class RaftNodeTest {
         void nonLeaderRespondsWithZeroReadIndex() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var readIndexMsg = new RaftMessage.ReadRequested(1, bytes("req-1"));
+            var readIndexMsg = new RaftMessage.ReadIndexRequested(1, bytes("req-1"));
             var ready = raft.step(new RaftInput.MessageReceived("n2", readIndexMsg));
 
             var response = findResponse(ready, RaftMessage.ReadIndexResponse.class).orElseThrow();
@@ -1431,8 +1431,8 @@ class RaftNodeTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            raft.step(new RaftInput.ReadRequested(bytes("req-1")));
-            raft.step(new RaftInput.ReadRequested(bytes("req-2")));
+            raft.step(new RaftInput.ReadIndexRequested(bytes("req-1")));
+            raft.step(new RaftInput.ReadIndexRequested(bytes("req-2")));
 
             var ackReady = raft.step(new RaftInput.MessageReceived("n2",
                 new RaftMessage.AppendEntriesResponse(raft.term(), true, 1)));
@@ -1445,7 +1445,7 @@ class RaftNodeTest {
             var raft = createRaft("n1", "n1", "n2", "n3");
             assertEquals(0, raft.term());
 
-            var readIndexMsg = new RaftMessage.ReadRequested(10, bytes("req-1"));
+            var readIndexMsg = new RaftMessage.ReadIndexRequested(10, bytes("req-1"));
             raft.step(new RaftInput.MessageReceived("n2", readIndexMsg));
 
             assertEquals(0, raft.term());
@@ -1535,7 +1535,7 @@ class RaftNodeTest {
             var leader = createRaft("n1", configuration, CONFIG);
             becomeLeader(leader, List.of("n2", "n3"));
 
-            leader.step(new RaftInput.CommandProposed(bytes("hello")));
+            leader.step(new RaftInput.EntryProposed(bytes("hello")));
             assertEquals(0, leader.commitIndex());
 
             var learnerResponse = new RaftMessage.AppendEntriesResponse(1, true, 2);
@@ -1555,12 +1555,12 @@ class RaftNodeTest {
             learner.step(new RaftInput.MessageReceived("n1", heartbeat));
             assertEquals("n1", learner.leaderId().orElseThrow());
 
-            var ready = learner.step(new RaftInput.ReadRequested(bytes("req-1")));
+            var ready = learner.step(new RaftInput.ReadIndexRequested(bytes("req-1")));
 
             var readIndexMsg = ready.messages().stream()
                 .filter(m -> m.to().equals("n1"))
-                .filter(m -> m.message() instanceof RaftMessage.ReadRequested)
-                .map(m -> (RaftMessage.ReadRequested) m.message())
+                .filter(m -> m.message() instanceof RaftMessage.ReadIndexRequested)
+                .map(m -> (RaftMessage.ReadIndexRequested) m.message())
                 .findFirst();
 
             assertTrue(readIndexMsg.isPresent());
@@ -1605,7 +1605,7 @@ class RaftNodeTest {
             var leader = createRaft("n1", configuration, CONFIG);
             becomeLeader(leader, List.of("n2"));
 
-            var ready = leader.step(new RaftInput.CommandProposed(bytes("hello")));
+            var ready = leader.step(new RaftInput.EntryProposed(bytes("hello")));
 
             var targets = ready.messages().stream()
                 .filter(m -> m.message() instanceof RaftMessage.AppendEntries)

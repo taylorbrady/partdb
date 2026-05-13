@@ -96,9 +96,10 @@ Role: pure Raft algorithm and Raft domain types.
 
 Decision: keep.
 
-This is a core module. It should stay deterministic and mostly effect-free:
-input event, output effects. Persistence, IO, clocks, threads, and network
-transport belong outside this module.
+This is a core module. It owns the Raft protocol state machine: one explicit
+`RaftInput` in, one `RaftEffects` description out. It should stay deterministic
+and side-effect-free. Persistence, IO, clocks, threads, application execution,
+and network transport belong outside this module.
 
 Allowed dependencies: `partdb-bytes`.
 

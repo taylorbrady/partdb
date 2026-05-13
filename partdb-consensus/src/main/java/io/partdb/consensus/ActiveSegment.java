@@ -212,6 +212,19 @@ final class ActiveSegment implements LogSegment {
         }
     }
 
+    public void truncateTo(long offset, long lastIndex) {
+        flush();
+        try {
+            channel.truncate(offset);
+            channel.position(offset);
+            fileSize = offset;
+            this.lastIndex = lastIndex;
+            writeBuffer.clear();
+        } catch (IOException e) {
+            throw new ConsensusStorageException.IO("Failed to truncate WAL segment: " + path, e);
+        }
+    }
+
     public SealedSegment seal() {
         sync();
         try {

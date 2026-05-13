@@ -291,7 +291,7 @@ public final class ConsensusNode implements ConsensusRuntime {
             return;
         }
 
-        var effects = raft.step(new RaftInput.CommandProposed(data));
+        var effects = raft.step(new RaftInput.EntryProposed(data));
 
         if (!effects.persistence().entries().isEmpty()) {
             long index = effects.persistence().entries().getLast().index();
@@ -411,10 +411,10 @@ public final class ConsensusNode implements ConsensusRuntime {
             }
         }
 
-        effects.snapshotTransfer().ifPresent(transfer -> ioExecutor.execute(() -> sendSnapshot(transfer)));
+        effects.snapshotNeeded().ifPresent(transfer -> ioExecutor.execute(() -> sendSnapshot(transfer)));
     }
 
-    private void sendSnapshot(RaftEffects.SnapshotTransfer request) {
+    private void sendSnapshot(RaftEffects.SnapshotNeeded request) {
         var snapshot = store.snapshot();
         if (snapshot.isEmpty()) {
             Bytes data = stateMachine.snapshot();
@@ -464,7 +464,7 @@ public final class ConsensusNode implements ConsensusRuntime {
             case RaftMessage.RequestVoteResponse _ -> RaftMessage.RequestVote.class;
             case RaftMessage.InstallSnapshotResponse _ -> RaftMessage.InstallSnapshot.class;
             case RaftMessage.PreVoteResponse _ -> RaftMessage.PreVote.class;
-            case RaftMessage.ReadIndexResponse _ -> RaftMessage.ReadRequested.class;
+            case RaftMessage.ReadIndexResponse _ -> RaftMessage.ReadIndexRequested.class;
         };
 
         var key = new RpcKey(to, requestType);
@@ -506,7 +506,7 @@ public final class ConsensusNode implements ConsensusRuntime {
         long id = readContextCounter.incrementAndGet();
         var future = new CompletableFuture<ReadResult>();
         pendingReads.put(id, future);
-        events.offer(new NodeEvent.RaftStep(new RaftInput.ReadRequested(Bytes.copyOf(longToBytes(id)))));
+        events.offer(new NodeEvent.RaftStep(new RaftInput.ReadIndexRequested(Bytes.copyOf(longToBytes(id)))));
         return future;
     }
 
@@ -547,7 +547,7 @@ public final class ConsensusNode implements ConsensusRuntime {
             .build();
 
         snapshot.ifPresent(s -> stateMachine.restore(s.index(), s.data()));
-        var recoveredEffects = raft.step(new RaftInput.RecoverCommitted());
+        var recoveredEffects = raft.step(new RaftInput.ReplayCommitted());
         for (var entry : recoveredEffects.application().entries()) {
             stateMachine.apply(entry.index(), entry.data());
         }

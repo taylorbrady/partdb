@@ -6,17 +6,24 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * Side-effect description returned by one {@link RaftNode#step(RaftInput)} call.
+ *
+ * <p>The runtime must make persistence effects durable before it treats
+ * dependent messages, application effects, or acknowledgements from this step
+ * as complete.</p>
+ */
 public record RaftEffects(
     Persistence persistence,
     List<Outbound> messages,
     Application application,
-    Optional<SnapshotTransfer> snapshotTransfer
+    Optional<SnapshotNeeded> snapshotNeeded
 ) {
     public RaftEffects {
         persistence = Objects.requireNonNull(persistence, "persistence must not be null");
         messages = List.copyOf(Objects.requireNonNull(messages, "messages must not be null"));
         application = Objects.requireNonNull(application, "application must not be null");
-        snapshotTransfer = Objects.requireNonNull(snapshotTransfer, "snapshotTransfer must not be null");
+        snapshotNeeded = Objects.requireNonNull(snapshotNeeded, "snapshotNeeded must not be null");
     }
 
     public static final RaftEffects EMPTY = new RaftEffects(
@@ -27,7 +34,7 @@ public record RaftEffects(
     );
 
     public boolean hasWork() {
-        return persistence.hasWork() || !messages.isEmpty() || application.hasWork() || snapshotTransfer.isPresent();
+        return persistence.hasWork() || !messages.isEmpty() || application.hasWork() || snapshotNeeded.isPresent();
     }
 
     public record Persistence(
@@ -79,7 +86,7 @@ public record RaftEffects(
         }
     }
 
-    public record SnapshotTransfer(String peer, long index, long term) {}
+    public record SnapshotNeeded(String peer, long index, long term) {}
 
     public record ReadState(long index, Bytes context) {
         public ReadState {
