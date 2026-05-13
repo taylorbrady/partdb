@@ -22,6 +22,25 @@ one module. Use them for value objects, config validation, codecs, Raft state
 transitions, storage invariants, command parsing, and small server/client
 behavior.
 
+### `partdb-raft`
+
+`partdb-raft` tests are deterministic protocol simulations. They must not use
+real files, sockets, clocks, threads, transports, WALs, or PartDB command
+semantics. Test behavior through `RaftInput`, `RaftEffects`, `RaftMessage`,
+`RaftLogEntry`, and in-memory `RaftLogReader` state.
+
+Keep focused suites by protocol concern:
+
+- `RaftNodeElectionTest`: local election, pre-vote, voting, term changes.
+- `RaftNodeReplicationTest`: append entries, conflicts, commits, heartbeats.
+- `RaftNodeReadIndexTest`: local and forwarded read-index behavior.
+- `RaftNodeMembershipTest` and `RaftNodeLearnerTest`: voter/learner mechanics.
+- `RaftNodeSnapshotTest` and `RaftNodeRecoveryTest`: protocol-level snapshots
+  and recovery.
+- `Cluster*Test`: deterministic multi-node simulation scenarios.
+- `UnstableTest`, `PublicValueTypesTest`, and `RaftModuleBoundaryTest`: helper,
+  value-type, and module-boundary coverage.
+
 ## Project Checks
 
 Run:

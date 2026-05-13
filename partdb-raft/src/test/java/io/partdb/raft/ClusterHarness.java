@@ -20,7 +20,7 @@ final class ClusterHarness {
     private final List<ReadState> readStates = new ArrayList<>();
     private final List<MembershipChangeEvent> configurationChanges = new ArrayList<>();
 
-    private record SimulatedNode(RaftNode raft, InMemoryStorage storage) {}
+    private record SimulatedNode(RaftNode raft, InMemoryRaftLog storage) {}
 
     private record Envelope(String from, String to, RaftMessage message) {}
 
@@ -226,7 +226,7 @@ final class ClusterHarness {
         return result;
     }
 
-    void addNode(String nodeId, RaftNode raft, InMemoryStorage storage) {
+    void addNode(String nodeId, RaftNode raft, InMemoryRaftLog storage) {
         nodes.put(nodeId, new SimulatedNode(raft, storage));
     }
 
@@ -305,7 +305,7 @@ final class ClusterHarness {
     }
 
     private void addNode(String nodeId, RaftMembership configuration, RaftOptions options, int jitter) {
-        var storage = new InMemoryStorage(configuration);
+        var storage = new InMemoryRaftLog(configuration);
         var raft = RaftNode.builder(nodeId, configuration, options, storage)
             .electionJitter(_ -> jitter)
             .build();
