@@ -38,7 +38,7 @@ public final class ConsensusBootstrap {
         }
 
         RaftMembership configuration = RaftMembershipMapper.toRaftMembership(config.membership());
-        try (RaftStore store = DurableRaftStore.create(dataDirectory, configuration)) {
+        try (RaftStorage store = FileRaftStorage.create(dataDirectory, configuration)) {
             store.saveSnapshot(new RaftSnapshot(
                 snapshotIndex,
                 0,

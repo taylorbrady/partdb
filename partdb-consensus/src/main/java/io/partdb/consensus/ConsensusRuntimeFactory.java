@@ -7,10 +7,10 @@ public interface ConsensusRuntimeFactory {
     ConsensusRuntime open(Path dataDirectory, ConsensusConfig config, ReplicatedStateMachine stateMachine);
 
     static ConsensusRuntimeFactory singleNode() {
-        return (dataDirectory, config, stateMachine) -> ConsensusNode.open(
+        return (dataDirectory, config, stateMachine) -> RaftRuntime.open(
             dataDirectory,
             config,
-            new SingleNodeRaftPeerTransport(),
+            new LocalRaftTransport(),
             stateMachine
         );
     }

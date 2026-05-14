@@ -10,16 +10,16 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-final class DurableRaftStore implements RaftStore {
+final class FileRaftStorage implements RaftStorage {
 
-    private final WriteAheadLog wal;
-    private final SnapshotStore snapshots;
+    private final SegmentedRaftLog wal;
+    private final FileSnapshotStore snapshots;
     private final ReentrantReadWriteLock lock;
 
     private RaftSnapshot currentSnapshot;
     private RaftMembership configuration;
 
-    private DurableRaftStore(WriteAheadLog wal, SnapshotStore snapshots,
+    private FileRaftStorage(SegmentedRaftLog wal, FileSnapshotStore snapshots,
                              RaftSnapshot currentSnapshot, RaftMembership configuration) {
         this.wal = wal;
         this.snapshots = snapshots;
@@ -28,24 +28,24 @@ final class DurableRaftStore implements RaftStore {
         this.configuration = configuration;
     }
 
-    public static DurableRaftStore create(Path directory, RaftMembership initialConfiguration) {
+    public static FileRaftStorage create(Path directory, RaftMembership initialConfiguration) {
         Path walDir = directory.resolve("wal");
         Path snapDir = directory.resolve("snap");
 
-        WriteAheadLog wal = WriteAheadLog.create(walDir);
-        SnapshotStore snapshots = SnapshotStore.open(snapDir);
+        SegmentedRaftLog wal = SegmentedRaftLog.create(walDir);
+        FileSnapshotStore snapshots = FileSnapshotStore.open(snapDir);
 
-        return new DurableRaftStore(wal, snapshots, null, initialConfiguration);
+        return new FileRaftStorage(wal, snapshots, null, initialConfiguration);
     }
 
-    public static DurableRaftStore open(Path directory) {
+    public static FileRaftStorage open(Path directory) {
         Path walDir = directory.resolve("wal");
         Path snapDir = directory.resolve("snap");
 
-        SnapshotStore snapshots = SnapshotStore.open(snapDir);
+        FileSnapshotStore snapshots = FileSnapshotStore.open(snapDir);
         RaftSnapshot snapshot = snapshots.latest().orElse(null);
 
-        WriteAheadLog wal = WriteAheadLog.open(walDir);
+        SegmentedRaftLog wal = SegmentedRaftLog.open(walDir);
 
         RaftMembership configuration = null;
         if (snapshot != null) {
@@ -54,10 +54,10 @@ final class DurableRaftStore implements RaftStore {
 
         configuration = recoverConfigurationFromLog(wal, configuration);
 
-        return new DurableRaftStore(wal, snapshots, snapshot, configuration);
+        return new FileRaftStorage(wal, snapshots, snapshot, configuration);
     }
 
-    private static RaftMembership recoverConfigurationFromLog(WriteAheadLog wal, RaftMembership initial) {
+    private static RaftMembership recoverConfigurationFromLog(SegmentedRaftLog wal, RaftMembership initial) {
         RaftMembership configuration = initial;
         long from = wal.firstIndex();
         long committedThrough = Math.min(wal.hardState().commit(), wal.lastIndex());
@@ -75,10 +75,10 @@ final class DurableRaftStore implements RaftStore {
     }
 
     @Override
-    public RaftStore.Bootstrap bootstrap() {
+    public RaftStorage.Bootstrap bootstrap() {
         lock.readLock().lock();
         try {
-            return new RaftStore.Bootstrap(Optional.of(wal.hardState()), Optional.ofNullable(configuration));
+            return new RaftStorage.Bootstrap(Optional.of(wal.hardState()), Optional.ofNullable(configuration));
         } finally {
             lock.readLock().unlock();
         }

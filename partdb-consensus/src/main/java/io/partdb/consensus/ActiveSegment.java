@@ -10,7 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.zip.CRC32C;
 
-import static io.partdb.consensus.LogCodec.BYTE_ORDER;
+import static io.partdb.consensus.LogRecordCodec.BYTE_ORDER;
 
 final class ActiveSegment implements LogSegment {
 
@@ -153,15 +153,15 @@ final class ActiveSegment implements LogSegment {
     private byte[] encodePayload(LogRecord record) {
         return switch (record) {
             case LogRecord.Entry(RaftLogEntry entry) -> {
-                int size = LogCodec.entrySize(entry);
+                int size = LogRecordCodec.entrySize(entry);
                 ByteBuffer buf = ByteBuffer.allocate(size).order(BYTE_ORDER);
-                LogCodec.writeEntry(buf, entry);
+                LogRecordCodec.writeEntry(buf, entry);
                 yield buf.array();
             }
             case LogRecord.State(RaftHardState state) -> {
-                int size = LogCodec.hardStateSize(state);
+                int size = LogRecordCodec.hardStateSize(state);
                 ByteBuffer buf = ByteBuffer.allocate(size).order(BYTE_ORDER);
-                LogCodec.writeHardState(buf, state);
+                LogRecordCodec.writeHardState(buf, state);
                 yield buf.array();
             }
             case LogRecord.SnapshotMarker(long index, long term) -> {

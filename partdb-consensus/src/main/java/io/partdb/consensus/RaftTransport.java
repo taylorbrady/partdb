@@ -4,7 +4,7 @@ import io.partdb.raft.RaftMessage;
 
 import java.util.concurrent.CompletableFuture;
 
-public interface RaftPeerTransport extends AutoCloseable {
+public interface RaftTransport extends AutoCloseable {
     void start(RpcHandler handler);
 
     CompletableFuture<RaftMessage.Response> send(String to, RaftMessage.Request request);

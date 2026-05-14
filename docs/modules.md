@@ -192,7 +192,7 @@ Allowed dependencies: `partdb-grpc`, `partdb-node`, `partdb-consensus`,
 Must not own: process assembly, CLI behavior, storage internals, or consensus
 runtime policy.
 
-Watch point: `GrpcServer` is public API transport; `GrpcRaftPeerTransport` is
+Watch point: `GrpcServer` is public API transport; `GrpcRaftTransport` is
 internal replication transport. Keep their responsibilities separate even while
 they live in one module.
 

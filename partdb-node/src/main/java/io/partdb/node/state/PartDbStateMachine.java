@@ -1,8 +1,10 @@
 package io.partdb.node.state;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.consensus.ApplyResult;
+import io.partdb.consensus.CommittedCommand;
+import io.partdb.consensus.StateMachineResult;
 import io.partdb.consensus.ReplicatedStateMachine;
+import io.partdb.consensus.StoredSnapshot;
 import io.partdb.node.internal.command.PartDbCommand;
 import io.partdb.node.internal.command.PartDbCommandCodec;
 import io.partdb.node.internal.command.PartDbCommandResult;
@@ -48,10 +50,11 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
     }
 
     @Override
-    public ApplyResult apply(long index, Bytes data) {
-        PartDbCommand command = PartDbCommandCodec.decode(data);
+    public StateMachineResult apply(CommittedCommand committed) {
+        PartDbCommand command = PartDbCommandCodec.decode(committed.payload());
+        long index = committed.index();
 
-        ApplyResult result = switch (command) {
+        StateMachineResult result = switch (command) {
             case PartDbCommand.Put(var key, var value) -> {
                 store.apply(new Revision(index), Mutation.put(key, value));
                 yield applied(new PartDbCommandResult.PutApplied(index));
@@ -137,7 +140,7 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
     public record LocalValue(Bytes value, long modRevision) {}
 
     @Override
-    public Bytes snapshot() {
+    public StoredSnapshot snapshot() {
         try {
             byte[] storageData = store.checkpoint().bytes().toByteArray();
 
@@ -148,15 +151,15 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
             baos.write(header.array());
             baos.write(storageData);
 
-            return Bytes.copyOf(baos.toByteArray());
+            return new StoredSnapshot(lastApplied, 0, Bytes.copyOf(baos.toByteArray()));
         } catch (IOException e) {
             throw new RuntimeException("Failed to create snapshot", e);
         }
     }
 
     @Override
-    public void restore(long index, Bytes data) {
-        ByteBuffer buffer = ByteBuffer.wrap(data.toByteArray());
+    public void restore(StoredSnapshot snapshot) {
+        ByteBuffer buffer = ByteBuffer.wrap(snapshot.data().toByteArray());
         buffer.getLong();
         int storageLen = buffer.getInt();
 
@@ -165,7 +168,7 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
 
         store.restore(new StorageCheckpoint(Bytes.copyOf(storageData)));
 
-        lastApplied = index;
+        lastApplied = snapshot.index();
     }
 
     public long lastAppliedIndex() {
@@ -181,7 +184,7 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
         store.close();
     }
 
-    private static ApplyResult applied(PartDbCommandResult.AppliedCommandResult result) {
-        return new ApplyResult.Applied(PartDbCommandResultCodec.encode(result));
+    private static StateMachineResult applied(PartDbCommandResult.AppliedCommandResult result) {
+        return new StateMachineResult.Applied(PartDbCommandResultCodec.encode(result));
     }
 }

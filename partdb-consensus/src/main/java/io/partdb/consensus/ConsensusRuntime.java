@@ -6,9 +6,9 @@ import io.partdb.cluster.ClusterMembership;
 import java.util.concurrent.CompletableFuture;
 
 public interface ConsensusRuntime extends AutoCloseable {
-    CompletableFuture<CommitResult> commit(Bytes data);
+    CompletableFuture<ProposalResult> propose(Bytes data);
 
-    CompletableFuture<Long> linearizableBarrier();
+    CompletableFuture<ReadBarrier> readBarrier();
 
     ConsensusStatus status();
 

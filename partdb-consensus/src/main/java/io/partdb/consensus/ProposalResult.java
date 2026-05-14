@@ -4,14 +4,14 @@ import io.partdb.bytes.Bytes;
 
 import java.util.Objects;
 
-public sealed interface CommitResult permits CommitResult.Applied, CommitResult.Rejected {
+public sealed interface ProposalResult permits ProposalResult.Applied, ProposalResult.Rejected {
     long index();
 
     long term();
 
     Bytes result();
 
-    record Applied(long index, long term, Bytes result) implements CommitResult {
+    record Applied(long index, long term, Bytes result) implements ProposalResult {
         public Applied {
             if (index <= 0) {
                 throw new IllegalArgumentException("index must be positive");
@@ -23,7 +23,7 @@ public sealed interface CommitResult permits CommitResult.Applied, CommitResult.
         }
     }
 
-    record Rejected(long index, long term, Bytes result) implements CommitResult {
+    record Rejected(long index, long term, Bytes result) implements ProposalResult {
         public Rejected {
             if (index <= 0) {
                 throw new IllegalArgumentException("index must be positive");

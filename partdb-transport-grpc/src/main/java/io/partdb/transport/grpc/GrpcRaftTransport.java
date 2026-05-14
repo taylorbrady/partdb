@@ -13,7 +13,7 @@ import io.grpc.Server;
 import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
-import io.partdb.consensus.RaftPeerTransport;
+import io.partdb.consensus.RaftTransport;
 import io.partdb.raft.RaftMessage;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 import io.partdb.transport.grpc.raft.proto.RaftServiceGrpc;
@@ -28,25 +28,25 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-public final class GrpcRaftPeerTransport implements RaftPeerTransport {
+public final class GrpcRaftTransport implements RaftTransport {
 
-    private static final Logger log = LoggerFactory.getLogger(GrpcRaftPeerTransport.class);
+    private static final Logger log = LoggerFactory.getLogger(GrpcRaftTransport.class);
 
-    private final GrpcRaftPeerTransportConfig config;
+    private final GrpcRaftTransportConfig config;
     private final Map<String, ManagedChannel> channels = new ConcurrentHashMap<>();
     private final Map<String, RaftServiceGrpc.RaftServiceStub> stubs = new ConcurrentHashMap<>();
 
     private Server server;
 
-    public GrpcRaftPeerTransport(
+    public GrpcRaftTransport(
         String localNodeId,
         int port,
         Map<String, String> raftPeerAddresses
     ) {
-        this(GrpcRaftPeerTransportConfig.create(localNodeId, port, raftPeerAddresses));
+        this(GrpcRaftTransportConfig.create(localNodeId, port, raftPeerAddresses));
     }
 
-    GrpcRaftPeerTransport(GrpcRaftPeerTransportConfig config) {
+    GrpcRaftTransport(GrpcRaftTransportConfig config) {
         this.config = config;
     }
 

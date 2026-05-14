@@ -13,7 +13,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.function.Consumer;
 import java.util.zip.CRC32C;
 
-import static io.partdb.consensus.LogCodec.BYTE_ORDER;
+import static io.partdb.consensus.LogRecordCodec.BYTE_ORDER;
 
 final class SegmentScanner {
 
@@ -85,8 +85,8 @@ final class SegmentScanner {
     private static LogRecord decodeRecord(byte type, byte[] payload) {
         ByteBuffer buf = ByteBuffer.wrap(payload).order(BYTE_ORDER);
         return switch (type) {
-            case LogRecord.TYPE_ENTRY -> new LogRecord.Entry(LogCodec.readEntry(buf));
-            case LogRecord.TYPE_STATE -> new LogRecord.State(LogCodec.readHardState(buf));
+            case LogRecord.TYPE_ENTRY -> new LogRecord.Entry(LogRecordCodec.readEntry(buf));
+            case LogRecord.TYPE_STATE -> new LogRecord.State(LogRecordCodec.readHardState(buf));
             case LogRecord.TYPE_SNAPSHOT_MARKER -> {
                 long index = buf.getLong();
                 long term = buf.getLong();

@@ -3,7 +3,7 @@ package io.partdb.server;
 import io.partdb.consensus.ConsensusRuntimeFactory;
 import io.partdb.consensus.RaftConsensusRuntimeFactory;
 import io.partdb.node.PartDbNode;
-import io.partdb.transport.grpc.GrpcRaftPeerTransport;
+import io.partdb.transport.grpc.GrpcRaftTransport;
 import io.partdb.transport.grpc.GrpcServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,7 +38,7 @@ public final class PartDbServer implements AutoCloseable {
 
     private ConsensusRuntimeFactory createDefaultRuntimeFactory() {
         return new RaftConsensusRuntimeFactory(
-            () -> new GrpcRaftPeerTransport(
+            () -> new GrpcRaftTransport(
                 config.nodeId(),
                 config.raftPort(),
                 config.raftPeerAddresses()

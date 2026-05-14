@@ -7,7 +7,7 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.stub.StreamObserver;
-import io.partdb.consensus.RaftPeerTransport;
+import io.partdb.consensus.RaftTransport;
 import io.partdb.raft.RaftMessage;
 import io.partdb.transport.grpc.raft.proto.RaftProto;
 import io.partdb.transport.grpc.raft.proto.RaftServiceGrpc;
@@ -24,9 +24,9 @@ final class RaftServiceImpl extends RaftServiceGrpc.RaftServiceImplBase {
         Metadata.Key.of("x-raft-sender-id", Metadata.ASCII_STRING_MARSHALLER);
     static final Context.Key<String> SENDER_ID_CONTEXT_KEY = Context.key("sender-id");
 
-    private final RaftPeerTransport.RpcHandler handler;
+    private final RaftTransport.RpcHandler handler;
 
-    RaftServiceImpl(RaftPeerTransport.RpcHandler handler) {
+    RaftServiceImpl(RaftTransport.RpcHandler handler) {
         this.handler = handler;
     }
 

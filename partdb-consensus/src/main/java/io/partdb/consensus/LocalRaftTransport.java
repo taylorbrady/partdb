@@ -4,7 +4,7 @@ import io.partdb.raft.RaftMessage;
 
 import java.util.concurrent.CompletableFuture;
 
-final class SingleNodeRaftPeerTransport implements RaftPeerTransport {
+final class LocalRaftTransport implements RaftTransport {
     @Override
     public void start(RpcHandler handler) {
     }

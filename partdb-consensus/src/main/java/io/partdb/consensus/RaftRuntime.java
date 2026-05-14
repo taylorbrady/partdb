@@ -35,8 +35,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.Objects;
 
-public final class ConsensusNode implements ConsensusRuntime {
-    private static final Logger log = LoggerFactory.getLogger(ConsensusNode.class);
+public final class RaftRuntime implements ConsensusRuntime {
+    private static final Logger log = LoggerFactory.getLogger(RaftRuntime.class);
 
     private sealed interface NodeEvent {
         record Proposal(long id, Bytes data) implements NodeEvent {}
@@ -52,8 +52,8 @@ public final class ConsensusNode implements ConsensusRuntime {
     private final String nodeId;
     private final RaftNode raft;
     private final RaftOptions raftOptions;
-    private final RaftPeerTransport transport;
-    private final RaftStore store;
+    private final RaftTransport transport;
+    private final RaftStorage store;
     private final ReplicatedStateMachine stateMachine;
     private volatile RaftRole lastKnownRole;
     private volatile String lastKnownLeaderId;
@@ -64,24 +64,25 @@ public final class ConsensusNode implements ConsensusRuntime {
 
     private final AtomicLong tickCount = new AtomicLong();
     private final AtomicLong proposalCounter = new AtomicLong();
-    private final ConcurrentHashMap<Long, CompletableFuture<CommitResult>> pendingProposals = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, CompletableFuture<CommitResult>> pendingCommits = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<ProposalResult>> pendingProposals = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<ProposalResult>> pendingCommits = new ConcurrentHashMap<>();
 
     private final AtomicLong readContextCounter = new AtomicLong();
-    private final ConcurrentHashMap<Long, CompletableFuture<ReadResult>> pendingReads = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CompletableFuture<ReadBarrier>> pendingReads = new ConcurrentHashMap<>();
     private final ApplyTracker applyTracker = new ApplyTracker();
+    private final RaftEffectRunner effectRunner;
 
     private final ExecutorService ioExecutor;
     private final ScheduledExecutorService tickScheduler;
     private final Thread eventLoop;
     private volatile boolean running = true;
 
-    private ConsensusNode(
+    private RaftRuntime(
         String nodeId,
         RaftNode raft,
         RaftOptions raftOptions,
-        RaftPeerTransport transport,
-        RaftStore store,
+        RaftTransport transport,
+        RaftStorage store,
         ReplicatedStateMachine stateMachine,
         Duration tickInterval
     ) {
@@ -95,6 +96,19 @@ public final class ConsensusNode implements ConsensusRuntime {
         this.lastKnownLeaderId = raft.leaderId().orElse(null);
 
         this.ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        this.effectRunner = new RaftEffectRunner(
+            raft,
+            store,
+            stateMachine,
+            pendingCommits,
+            pendingReads,
+            applyTracker,
+            ioExecutor,
+            this::recordLeadershipChangeIfNeeded,
+            outbound -> sendRequest(outbound.to(), (RaftMessage.Request) outbound.message()),
+            outbound -> completeRpc(outbound.to(), (RaftMessage.Response) outbound.message()),
+            this::sendSnapshot
+        );
 
         this.tickScheduler = Executors.newSingleThreadScheduledExecutor(
             Thread.ofVirtual().name("raft-ticker-", 0).factory()
@@ -118,10 +132,10 @@ public final class ConsensusNode implements ConsensusRuntime {
         transport.start(this::handleIncomingRpc);
     }
 
-    public static ConsensusNode open(
+    public static RaftRuntime open(
         Path dataDirectory,
         ConsensusConfig config,
-        RaftPeerTransport transport,
+        RaftTransport transport,
         ReplicatedStateMachine stateMachine
     ) {
         Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
@@ -130,7 +144,7 @@ public final class ConsensusNode implements ConsensusRuntime {
         Objects.requireNonNull(stateMachine, "stateMachine must not be null");
 
         var membership = RaftMembershipMapper.toRaftMembership(config.membership());
-        RaftStore store = openStore(dataDirectory, membership);
+        RaftStorage store = openStore(dataDirectory, membership);
         return openRuntime(
             config.nodeId(),
             membership,
@@ -142,16 +156,17 @@ public final class ConsensusNode implements ConsensusRuntime {
         );
     }
 
-    public CompletableFuture<CommitResult> commit(Bytes data) {
+    public CompletableFuture<ProposalResult> propose(Bytes data) {
         Objects.requireNonNull(data, "data must not be null");
         return proposeInternal(data);
     }
 
-    public CompletableFuture<Long> linearizableBarrier() {
+    public CompletableFuture<ReadBarrier> readBarrier() {
         if (!running) {
             return CompletableFuture.failedFuture(new ConsensusException.Shutdown());
         }
-        return linearizableReadIndexInternal().thenCompose(result -> waitForAppliedInternal(result.index()));
+        return linearizableReadIndexInternal()
+            .thenCompose(barrier -> waitForAppliedInternal(barrier.index()).thenApply(_ -> barrier));
     }
 
     public ConsensusStatus status() {
@@ -212,7 +227,7 @@ public final class ConsensusNode implements ConsensusRuntime {
                     }
                     case NodeEvent.RaftStep(RaftInput input) -> {
                         var effects = raft.step(input);
-                        processEffects(effects);
+                        effectRunner.process(effects);
                     }
                 }
             } catch (InterruptedException e) {
@@ -300,7 +315,7 @@ public final class ConsensusNode implements ConsensusRuntime {
             future.completeExceptionally(new ConsensusException.NotLeader(raft.leaderId().orElse(null)));
         }
 
-        processEffects(effects);
+        effectRunner.process(effects);
     }
 
     private CompletableFuture<RaftMessage.Response> handleIncomingRpc(String from, RaftMessage.Request request) {
@@ -320,11 +335,7 @@ public final class ConsensusNode implements ConsensusRuntime {
         return responseFuture;
     }
 
-    private void processEffects(RaftEffects effects) {
-        if (!effects.hasWork()) {
-            return;
-        }
-
+    private void recordLeadershipChangeIfNeeded() {
         RaftRole currentRole = raft.role();
         String currentLeaderId = raft.leaderId().orElse(null);
         if (currentRole != lastKnownRole || !Objects.equals(currentLeaderId, lastKnownLeaderId)) {
@@ -348,76 +359,12 @@ public final class ConsensusNode implements ConsensusRuntime {
             lastKnownLeaderId = currentLeaderId;
             lastLeaderChangeEpochMillis.set(System.currentTimeMillis());
         }
-
-        var persistence = effects.persistence();
-        if (persistence.hasWork()) {
-            store.append(persistence.hardState().orElse(null), persistence.entries());
-
-            persistence.incomingSnapshot().ifPresent(snapshot -> {
-                store.saveSnapshot(snapshot);
-                stateMachine.restore(snapshot.index(), snapshot.data());
-                applyTracker.advance(snapshot.index());
-            });
-
-            if (persistence.requiresSync()) {
-                store.sync();
-            }
-
-            if (!persistence.entries().isEmpty()) {
-                var lastPersisted = persistence.entries().getLast();
-                raft.step(new RaftInput.EntriesPersisted(lastPersisted.index(), lastPersisted.term()));
-            }
-            persistence.incomingSnapshot().ifPresent(_ -> raft.step(new RaftInput.SnapshotPersisted()));
-        }
-
-        for (var outbound : effects.messages()) {
-            switch (outbound.message()) {
-                case RaftMessage.Request request -> {
-                    ioExecutor.execute(() -> sendRequest(outbound.to(), request));
-                }
-                case RaftMessage.Response response -> {
-                    completeRpc(outbound.to(), response);
-                }
-            }
-        }
-
-        for (var entry : effects.application().entries()) {
-            ApplyResult application = stateMachine.apply(entry.index(), entry.data());
-            var commitFuture = pendingCommits.remove(entry.index());
-            if (commitFuture != null) {
-                switch (application) {
-                    case ApplyResult.Applied(var result) ->
-                        commitFuture.complete(new CommitResult.Applied(entry.index(), entry.term(), result));
-                    case ApplyResult.Rejected(var result) ->
-                        commitFuture.complete(new CommitResult.Rejected(entry.index(), entry.term(), result));
-                }
-            }
-        }
-        long appliedThroughIndex = effects.application().appliedThroughIndex();
-        if (appliedThroughIndex > 0) {
-            raft.step(new RaftInput.Applied(appliedThroughIndex));
-            applyTracker.advance(appliedThroughIndex);
-        }
-
-        for (var readState : effects.application().readStates()) {
-            long id = bytesToLong(readState.context());
-            var future = pendingReads.remove(id);
-            if (future != null) {
-                if (readState.index() == 0) {
-                    future.completeExceptionally(new ConsensusException.NotLeader(raft.leaderId().orElse(null)));
-                } else {
-                    future.complete(new ReadResult(readState.index(), raft.term()));
-                }
-            }
-        }
-
-        effects.snapshotNeeded().ifPresent(transfer -> ioExecutor.execute(() -> sendSnapshot(transfer)));
     }
 
     private void sendSnapshot(RaftEffects.SnapshotNeeded request) {
         var snapshot = store.snapshot();
         if (snapshot.isEmpty()) {
-            Bytes data = stateMachine.snapshot();
+            Bytes data = stateMachine.snapshot().data();
             var newSnapshot = new RaftSnapshot(request.index(), request.term(), raft.membership(), data);
             store.saveSnapshot(newSnapshot);
             snapshot = Optional.of(newSnapshot);
@@ -488,23 +435,23 @@ public final class ConsensusNode implements ConsensusRuntime {
         return ByteBuffer.wrap(bytes.toByteArray()).getLong();
     }
 
-    private CompletableFuture<CommitResult> proposeInternal(Bytes data) {
+    private CompletableFuture<ProposalResult> proposeInternal(Bytes data) {
         if (!running) {
             return CompletableFuture.failedFuture(new ConsensusException.Shutdown());
         }
         long id = proposalCounter.incrementAndGet();
-        var future = new CompletableFuture<CommitResult>();
+        var future = new CompletableFuture<ProposalResult>();
         pendingProposals.put(id, future);
         events.offer(new NodeEvent.Proposal(id, data));
         return future;
     }
 
-    private CompletableFuture<ReadResult> linearizableReadIndexInternal() {
+    private CompletableFuture<ReadBarrier> linearizableReadIndexInternal() {
         if (!running) {
             return CompletableFuture.failedFuture(new ConsensusException.Shutdown());
         }
         long id = readContextCounter.incrementAndGet();
-        var future = new CompletableFuture<ReadResult>();
+        var future = new CompletableFuture<ReadBarrier>();
         pendingReads.put(id, future);
         events.offer(new NodeEvent.RaftStep(new RaftInput.ReadIndexRequested(Bytes.copyOf(longToBytes(id)))));
         return future;
@@ -514,21 +461,21 @@ public final class ConsensusNode implements ConsensusRuntime {
         return applyTracker.waitFor(index);
     }
 
-    private static RaftStore openStore(Path dataDirectory, RaftMembership membership) {
+    private static RaftStorage openStore(Path dataDirectory, RaftMembership membership) {
         Path raftDir = dataDirectory.resolve("wal");
         if (Files.exists(raftDir)) {
-            return DurableRaftStore.open(dataDirectory);
+            return FileRaftStorage.open(dataDirectory);
         }
-        return DurableRaftStore.create(dataDirectory, membership);
+        return FileRaftStorage.create(dataDirectory, membership);
     }
 
-    private static ConsensusNode openRuntime(
+    private static RaftRuntime openRuntime(
         String nodeId,
         RaftMembership membership,
         RaftOptions raftOptions,
         Duration tickInterval,
-        RaftPeerTransport transport,
-        RaftStore store,
+        RaftTransport transport,
+        RaftStorage store,
         ReplicatedStateMachine stateMachine
     ) {
         var bootstrap = store.bootstrap();
@@ -546,16 +493,16 @@ public final class ConsensusNode implements ConsensusRuntime {
             .restoredFrom(hardState, snapshotIndex)
             .build();
 
-        snapshot.ifPresent(s -> stateMachine.restore(s.index(), s.data()));
+        snapshot.ifPresent(s -> stateMachine.restore(StoredSnapshot.fromRaftSnapshot(s)));
         var recoveredEffects = raft.step(new RaftInput.ReplayCommitted());
         for (var entry : recoveredEffects.application().entries()) {
-            stateMachine.apply(entry.index(), entry.data());
+            stateMachine.apply(new CommittedCommand(entry.index(), entry.term(), entry.data()));
         }
         if (recoveredEffects.application().appliedThroughIndex() > 0) {
             raft.step(new RaftInput.Applied(recoveredEffects.application().appliedThroughIndex()));
         }
 
-        var node = new ConsensusNode(nodeId, raft, raftOptions, transport, store, stateMachine, tickInterval);
+        var node = new RaftRuntime(nodeId, raft, raftOptions, transport, store, stateMachine, tickInterval);
         if (raft.lastApplied() > 0) {
             node.applyTracker.advance(raft.lastApplied());
         }

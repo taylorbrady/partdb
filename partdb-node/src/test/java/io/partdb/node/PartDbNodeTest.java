@@ -22,7 +22,7 @@ class PartDbNodeTest {
     Path tempDir;
 
     @Test
-    void linearizableBarrierCompletesOnSingleNode() throws Exception {
+    void readBarrierCompletesOnSingleNode() throws Exception {
         var config = PartDbNodeConfig.builder("node-1", tempDir.resolve("node-1"))
             .tickInterval(Duration.ofMillis(1))
             .build();

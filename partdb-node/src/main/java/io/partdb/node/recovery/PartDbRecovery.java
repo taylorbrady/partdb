@@ -1,6 +1,7 @@
 package io.partdb.node.recovery;
 
 import io.partdb.consensus.ConsensusBootstrap;
+import io.partdb.consensus.StoredSnapshot;
 import io.partdb.node.PartDbNodeConfig;
 import io.partdb.node.state.PartDbStateMachine;
 
@@ -34,9 +35,9 @@ public final class PartDbRecovery {
                 dataDirectory.resolve("db"),
                 config.storage().toStorageOptions()
             )) {
-                stateMachine.restore(backup.appliedIndex(), backup.snapshotBytes());
+                stateMachine.restore(new StoredSnapshot(backup.appliedIndex(), 0, backup.snapshotBytes()));
                 result = new RecoveryResult(stateMachine.lastAppliedIndex());
-                recoveredBackup = new LogicalBackup(stateMachine.snapshot(), stateMachine.lastAppliedIndex());
+                recoveredBackup = new LogicalBackup(stateMachine.snapshot().data(), stateMachine.lastAppliedIndex());
             }
 
             ConsensusBootstrap.initializeFromSnapshot(

@@ -4,16 +4,16 @@ import io.partdb.bytes.Bytes;
 
 import java.util.Objects;
 
-public sealed interface ApplyResult permits ApplyResult.Applied, ApplyResult.Rejected {
+public sealed interface StateMachineResult permits StateMachineResult.Applied, StateMachineResult.Rejected {
     Bytes result();
 
-    record Applied(Bytes result) implements ApplyResult {
+    record Applied(Bytes result) implements StateMachineResult {
         public Applied {
             result = Objects.requireNonNull(result, "result must not be null");
         }
     }
 
-    record Rejected(Bytes result) implements ApplyResult {
+    record Rejected(Bytes result) implements StateMachineResult {
         public Rejected {
             result = Objects.requireNonNull(result, "result must not be null");
         }

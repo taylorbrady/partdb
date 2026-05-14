@@ -17,9 +17,9 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.zip.CRC32C;
 
-import static io.partdb.consensus.LogCodec.BYTE_ORDER;
+import static io.partdb.consensus.LogRecordCodec.BYTE_ORDER;
 
-final class SnapshotStore implements AutoCloseable {
+final class FileSnapshotStore implements AutoCloseable {
 
     private static final int MAGIC = 0x534E4150;
     private static final int VERSION = 1;
@@ -27,17 +27,17 @@ final class SnapshotStore implements AutoCloseable {
 
     private final Path directory;
 
-    private SnapshotStore(Path directory) {
+    private FileSnapshotStore(Path directory) {
         this.directory = directory;
     }
 
-    public static SnapshotStore open(Path directory) {
+    public static FileSnapshotStore open(Path directory) {
         try {
             Files.createDirectories(directory);
         } catch (IOException e) {
             throw new ConsensusStorageException.IO("Failed to create snapshot directory: " + directory, e);
         }
-        return new SnapshotStore(directory);
+        return new FileSnapshotStore(directory);
     }
 
     public void save(RaftSnapshot snapshot) {
@@ -157,7 +157,7 @@ final class SnapshotStore implements AutoCloseable {
             ByteBuffer configurationBuf = ByteBuffer.allocate(configurationLen).order(BYTE_ORDER);
             channel.read(configurationBuf);
             configurationBuf.flip();
-            RaftMembership configuration = LogCodec.readConfiguration(configurationBuf);
+            RaftMembership configuration = LogRecordCodec.readConfiguration(configurationBuf);
 
             int dataLen = (int) (fileSize - HEADER_SIZE - 4 - configurationLen - 4);
             byte[] data = new byte[dataLen];
@@ -188,9 +188,9 @@ final class SnapshotStore implements AutoCloseable {
     }
 
     private byte[] encodeConfiguration(RaftMembership configuration) {
-        int size = LogCodec.configurationSize(configuration);
+        int size = LogRecordCodec.configurationSize(configuration);
         ByteBuffer buf = ByteBuffer.allocate(size).order(BYTE_ORDER);
-        LogCodec.writeConfiguration(buf, configuration);
+        LogRecordCodec.writeConfiguration(buf, configuration);
         return buf.array();
     }
 

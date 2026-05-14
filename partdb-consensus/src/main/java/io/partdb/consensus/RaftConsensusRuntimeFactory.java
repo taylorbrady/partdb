@@ -6,15 +6,15 @@ import java.util.Objects;
 import java.util.function.Supplier;
 
 public final class RaftConsensusRuntimeFactory implements ConsensusRuntimeFactory {
-    private final Supplier<? extends RaftPeerTransport> transportFactory;
+    private final Supplier<? extends RaftTransport> transportFactory;
 
-    public RaftConsensusRuntimeFactory(Supplier<? extends RaftPeerTransport> transportFactory) {
+    public RaftConsensusRuntimeFactory(Supplier<? extends RaftTransport> transportFactory) {
         this.transportFactory = Objects.requireNonNull(transportFactory, "transportFactory must not be null");
     }
 
     @Override
     public ConsensusRuntime open(Path dataDirectory, ConsensusConfig config, ReplicatedStateMachine stateMachine) {
-        return ConsensusNode.open(
+        return RaftRuntime.open(
             dataDirectory,
             config,
             transportFactory.get(),

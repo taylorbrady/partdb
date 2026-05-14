@@ -11,7 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Set;
 
-final class LogCodec {
+final class LogRecordCodec {
 
     public static final ByteOrder BYTE_ORDER = ByteOrder.LITTLE_ENDIAN;
 
@@ -19,7 +19,7 @@ final class LogCodec {
     private static final byte ENTRY_TYPE_NOOP = 1;
     private static final byte ENTRY_TYPE_CONFIG = 2;
 
-    private LogCodec() {}
+    private LogRecordCodec() {}
 
     public static void writeEntry(ByteBuffer buf, RaftLogEntry entry) {
         switch (entry) {

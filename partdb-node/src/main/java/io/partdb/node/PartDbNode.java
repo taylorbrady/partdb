@@ -124,7 +124,7 @@ public final class PartDbNode implements AutoCloseable {
             Objects.requireNonNull(consistency, "consistency must not be null");
             return switch (consistency) {
                 case LOCAL -> CompletableFuture.completedFuture(getLocal(key));
-                case LINEARIZABLE -> mapFailure(consensus.linearizableBarrier()
+                case LINEARIZABLE -> mapFailure(consensus.readBarrier()
                     .thenApply(_ -> getLocal(key)));
             };
         }
@@ -152,7 +152,7 @@ public final class PartDbNode implements AutoCloseable {
             Objects.requireNonNull(consistency, "consistency must not be null");
             return switch (consistency) {
                 case LOCAL -> CompletableFuture.completedFuture(scanLocal(range));
-                case LINEARIZABLE -> mapFailure(consensus.linearizableBarrier()
+                case LINEARIZABLE -> mapFailure(consensus.readBarrier()
                     .thenApply(_ -> scanLocal(range)));
             };
         }
@@ -207,8 +207,8 @@ public final class PartDbNode implements AutoCloseable {
     private final class MaintenanceView implements MaintenanceOperations {
         @Override
         public CompletionStage<LogicalBackup> createBackup() {
-            return mapFailure(consensus.linearizableBarrier()
-                .thenApply(_ -> new LogicalBackup(stateMachine.snapshot(), stateMachine.lastAppliedIndex())));
+            return mapFailure(consensus.readBarrier()
+                .thenApply(_ -> new LogicalBackup(stateMachine.snapshot().data(), stateMachine.lastAppliedIndex())));
         }
 
         @Override

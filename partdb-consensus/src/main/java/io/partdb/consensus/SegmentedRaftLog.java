@@ -17,9 +17,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-final class WriteAheadLog implements AutoCloseable {
+final class SegmentedRaftLog implements AutoCloseable {
 
-    private static final Logger log = LoggerFactory.getLogger(WriteAheadLog.class);
+    private static final Logger log = LoggerFactory.getLogger(SegmentedRaftLog.class);
     private static final long DEFAULT_SEGMENT_SIZE = 64 * 1024 * 1024;
 
     private final Path directory;
@@ -33,7 +33,7 @@ final class WriteAheadLog implements AutoCloseable {
     private long lastIndex;
     private int nextSequence;
 
-    private WriteAheadLog(Path directory, long segmentSize) {
+    private SegmentedRaftLog(Path directory, long segmentSize) {
         this.directory = directory;
         this.segmentSize = segmentSize;
         this.sealed = new ArrayList<>();
@@ -44,29 +44,29 @@ final class WriteAheadLog implements AutoCloseable {
         this.nextSequence = 0;
     }
 
-    public static WriteAheadLog create(Path directory) {
+    public static SegmentedRaftLog create(Path directory) {
         return create(directory, DEFAULT_SEGMENT_SIZE);
     }
 
-    public static WriteAheadLog create(Path directory, long segmentSize) {
+    public static SegmentedRaftLog create(Path directory, long segmentSize) {
         try {
             Files.createDirectories(directory);
         } catch (IOException e) {
             throw new ConsensusStorageException.IO("Failed to create WAL directory: " + directory, e);
         }
 
-        WriteAheadLog wal = new WriteAheadLog(directory, segmentSize);
+        SegmentedRaftLog wal = new SegmentedRaftLog(directory, segmentSize);
         wal.active = ActiveSegment.create(directory, 0, 1);
         wal.nextSequence = 1;
         return wal;
     }
 
-    public static WriteAheadLog open(Path directory) {
+    public static SegmentedRaftLog open(Path directory) {
         return open(directory, DEFAULT_SEGMENT_SIZE);
     }
 
-    public static WriteAheadLog open(Path directory, long segmentSize) {
-        WriteAheadLog wal = new WriteAheadLog(directory, segmentSize);
+    public static SegmentedRaftLog open(Path directory, long segmentSize) {
+        SegmentedRaftLog wal = new SegmentedRaftLog(directory, segmentSize);
         wal.recover();
         return wal;
     }
@@ -109,7 +109,7 @@ final class WriteAheadLog implements AutoCloseable {
             }
 
             RaftLogEntry entry = readEntry(loc);
-            int entrySize = LogCodec.entrySize(entry);
+            int entrySize = LogRecordCodec.entrySize(entry);
 
             if (!result.isEmpty() && bytes + entrySize > maxBytes) {
                 break;

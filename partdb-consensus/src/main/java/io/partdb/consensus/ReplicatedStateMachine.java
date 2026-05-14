@@ -1,11 +1,9 @@
 package io.partdb.consensus;
 
-import io.partdb.bytes.Bytes;
-
 public interface ReplicatedStateMachine {
-    ApplyResult apply(long index, Bytes data);
+    StateMachineResult apply(CommittedCommand command);
 
-    Bytes snapshot();
+    StoredSnapshot snapshot();
 
-    void restore(long index, Bytes snapshot);
+    void restore(StoredSnapshot snapshot);
 }
