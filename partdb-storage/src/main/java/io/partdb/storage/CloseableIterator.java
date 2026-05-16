@@ -1,9 +1,0 @@
-package io.partdb.storage;
-
-import java.util.Iterator;
-
-interface CloseableIterator<T> extends Iterator<T>, AutoCloseable {
-
-    @Override
-    void close();
-}

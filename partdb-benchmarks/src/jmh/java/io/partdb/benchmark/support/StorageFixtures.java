@@ -5,7 +5,7 @@ import io.partdb.storage.CacheOptions;
 import io.partdb.storage.CompactionOptions;
 import io.partdb.storage.Mutation;
 import io.partdb.storage.Revision;
-import io.partdb.storage.SstableOptions;
+import io.partdb.storage.SSTableOptions;
 import io.partdb.storage.StorageOptions;
 import io.partdb.storage.StorageEngine;
 
@@ -22,16 +22,16 @@ public final class StorageFixtures {
     }
 
     public static StorageOptions compactionOptions() {
-        return compactionOptions(SstableOptions.Compression.NONE);
+        return compactionOptions(SSTableOptions.Compression.NONE);
     }
 
-    public static StorageOptions compactionOptions(SstableOptions.Compression compression) {
+    public static StorageOptions compactionOptions(SSTableOptions.Compression compression) {
         return StorageOptions.builder()
             .writeBufferMaxBytes(256L * KIB)
             .cacheOptions(CacheOptions.builder()
                 .blockCacheMaxBytes(0)
                 .build())
-            .sstableOptions(SstableOptions.builder()
+            .sstableOptions(SSTableOptions.builder()
                 .blockSizeBytes(16 * KIB)
                 .compression(compression)
                 .build())

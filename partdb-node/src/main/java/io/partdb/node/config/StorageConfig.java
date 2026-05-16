@@ -2,14 +2,14 @@ package io.partdb.node.config;
 
 import io.partdb.storage.CacheOptions;
 import io.partdb.storage.CompactionOptions;
-import io.partdb.storage.SstableOptions;
+import io.partdb.storage.SSTableOptions;
 import io.partdb.storage.StorageOptions;
 
 import java.util.Objects;
 
 public record StorageConfig(
     long writeBufferMaxBytes,
-    SstableConfig sstable,
+    SSTableConfig sstable,
     CacheConfig cache,
     CompactionConfig compaction
 ) {
@@ -37,13 +37,13 @@ public record StorageConfig(
     public StorageOptions toStorageOptions() {
         return StorageOptions.builder()
             .writeBufferMaxBytes(writeBufferMaxBytes)
-            .sstableOptions(new SstableOptions(
+            .sstableOptions(new SSTableOptions(
                 sstable.blockSizeBytes(),
                 sstable.blockRestartInterval(),
                 sstable.bloomFilterFalsePositiveRate(),
                 switch (sstable.compression()) {
-                    case NONE -> SstableOptions.Compression.NONE;
-                    case DEFLATE -> SstableOptions.Compression.DEFLATE;
+                    case NONE -> SSTableOptions.Compression.NONE;
+                    case DEFLATE -> SSTableOptions.Compression.DEFLATE;
                 }
             ))
             .cacheOptions(new CacheOptions(cache.blockCacheMaxBytes()))
@@ -62,7 +62,7 @@ public record StorageConfig(
         Objects.requireNonNull(options, "options must not be null");
         return new StorageConfig(
             options.writeBufferMaxBytes(),
-            new SstableConfig(
+            new SSTableConfig(
                 options.sstableOptions().blockSizeBytes(),
                 options.sstableOptions().blockRestartInterval(),
                 options.sstableOptions().bloomFilterFalsePositiveRate(),
@@ -88,13 +88,13 @@ public record StorageConfig(
         DEFLATE
     }
 
-    public record SstableConfig(
+    public record SSTableConfig(
         int blockSizeBytes,
         int blockRestartInterval,
         double bloomFilterFalsePositiveRate,
         Compression compression
     ) {
-        public SstableConfig {
+        public SSTableConfig {
             if (blockSizeBytes <= 0) {
                 throw new IllegalArgumentException("blockSizeBytes must be positive");
             }
@@ -107,7 +107,7 @@ public record StorageConfig(
             compression = Objects.requireNonNull(compression, "compression must not be null");
         }
 
-        public static SstableConfig defaults() {
+        public static SSTableConfig defaults() {
             return StorageConfig.defaults().sstable();
         }
     }
@@ -160,7 +160,7 @@ public record StorageConfig(
 
     public static final class Builder {
         private long writeBufferMaxBytes = StorageOptions.defaults().writeBufferMaxBytes();
-        private SstableConfig sstable = StorageConfig.defaults().sstable();
+        private SSTableConfig sstable = StorageConfig.defaults().sstable();
         private CacheConfig cache = StorageConfig.defaults().cache();
         private CompactionConfig compaction = StorageConfig.defaults().compaction();
 
@@ -179,7 +179,7 @@ public record StorageConfig(
             return this;
         }
 
-        public Builder sstable(SstableConfig sstable) {
+        public Builder sstable(SSTableConfig sstable) {
             this.sstable = Objects.requireNonNull(sstable, "sstable must not be null");
             return this;
         }

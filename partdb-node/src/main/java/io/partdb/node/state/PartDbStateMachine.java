@@ -14,14 +14,15 @@ import io.partdb.node.kv.WriteOperation;
 import io.partdb.storage.EntryRecord;
 import io.partdb.storage.KeyRange;
 import io.partdb.storage.Mutation;
+import io.partdb.storage.MutationBatch;
 import io.partdb.storage.Revision;
 import io.partdb.storage.Scan;
 import io.partdb.storage.StorageOptions;
 import io.partdb.storage.StorageCheckpoint;
 import io.partdb.storage.StorageEngine;
+import io.partdb.storage.StorageReadView;
 import io.partdb.storage.StorageStats;
 import io.partdb.storage.ValueRecord;
-import io.partdb.storage.WriteBatch;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -191,16 +192,18 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
     }
 
     private boolean conditionsMatch(List<Condition> conditions) {
-        for (Condition condition : conditions) {
-            if (!conditionMatches(condition)) {
-                return false;
+        try (StorageReadView view = store.readView()) {
+            for (Condition condition : conditions) {
+                if (!conditionMatches(view, condition)) {
+                    return false;
+                }
             }
+            return true;
         }
-        return true;
     }
 
-    private boolean conditionMatches(Condition condition) {
-        Optional<ValueRecord> value = store.get(condition.key());
+    private boolean conditionMatches(StorageReadView view, Condition condition) {
+        Optional<ValueRecord> value = view.get(condition.key());
         return switch (condition) {
             case Condition.Exists _ -> value.isPresent();
             case Condition.Missing _ -> value.isEmpty();
@@ -216,8 +219,8 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
         };
     }
 
-    private static WriteBatch toStorageBatch(List<WriteOperation> operations) {
-        WriteBatch.Builder storageBatch = WriteBatch.builder();
+    private static MutationBatch toStorageBatch(List<WriteOperation> operations) {
+        MutationBatch.Builder storageBatch = MutationBatch.builder();
         for (var operation : operations) {
             switch (operation) {
                 case WriteOperation.Put(var key, var value) -> storageBatch.put(key, value);

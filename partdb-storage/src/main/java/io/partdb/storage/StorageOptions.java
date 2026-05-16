@@ -4,7 +4,7 @@ import java.util.Objects;
 
 public record StorageOptions(
     long writeBufferMaxBytes,
-    SstableOptions sstableOptions,
+    SSTableOptions sstableOptions,
     CacheOptions cacheOptions,
     CompactionOptions compactionOptions
 ) {
@@ -30,26 +30,9 @@ public record StorageOptions(
         return new Builder(this);
     }
 
-    LsmConfig toLsmConfig() {
-        return new LsmConfig(
-            writeBufferMaxBytes,
-            sstableOptions.blockSizeBytes(),
-            sstableOptions.blockRestartInterval(),
-            sstableOptions.bloomFilterFalsePositiveRate(),
-            sstableOptions.compression().toBlockCodec(),
-            cacheOptions.blockCacheMaxBytes(),
-            compactionOptions.targetTableSizeBytes(),
-            compactionOptions.maxConcurrentCompactions(),
-            compactionOptions.l0CompactionTrigger(),
-            compactionOptions.maxBytesForLevelBase(),
-            compactionOptions.levelMultiplier(),
-            compactionOptions.maxLevels()
-        );
-    }
-
     public static final class Builder {
-        private long writeBufferMaxBytes = LsmConfig.DEFAULT_MEMTABLE_MAX_SIZE_BYTES;
-        private SstableOptions sstableOptions = SstableOptions.defaults();
+        private long writeBufferMaxBytes = 64 * 1024 * 1024;
+        private SSTableOptions sstableOptions = SSTableOptions.defaults();
         private CacheOptions cacheOptions = CacheOptions.defaults();
         private CompactionOptions compactionOptions = CompactionOptions.defaults();
 
@@ -68,7 +51,7 @@ public record StorageOptions(
             return this;
         }
 
-        public Builder sstableOptions(SstableOptions sstableOptions) {
+        public Builder sstableOptions(SSTableOptions sstableOptions) {
             this.sstableOptions = Objects.requireNonNull(sstableOptions, "sstableOptions must not be null");
             return this;
         }

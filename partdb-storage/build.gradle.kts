@@ -16,5 +16,5 @@ tasks.register<JavaExec>("codecReport") {
     description = "Print block codec compression ratios for benchmark payloads"
     dependsOn(tasks.named("jmhClasses"))
     classpath = jmhSourceSet.get().runtimeClasspath
-    mainClass.set("io.partdb.storage.CodecCompressionReport")
+    mainClass.set("io.partdb.storage.internal.CodecCompressionReport")
 }

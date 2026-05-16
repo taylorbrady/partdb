@@ -43,12 +43,12 @@ public record CompactionOptions(
     }
 
     public static final class Builder {
-        private long targetTableSizeBytes = LsmConfig.DEFAULT_TARGET_UNCOMPRESSED_SIZE;
-        private int maxConcurrentCompactions = LsmConfig.DEFAULT_MAX_CONCURRENT_COMPACTIONS;
-        private int l0CompactionTrigger = LsmConfig.DEFAULT_L0_COMPACTION_TRIGGER;
-        private long maxBytesForLevelBase = LsmConfig.DEFAULT_MAX_BYTES_FOR_LEVEL_BASE;
-        private int levelMultiplier = LsmConfig.DEFAULT_LEVEL_MULTIPLIER;
-        private int maxLevels = LsmConfig.DEFAULT_MAX_LEVELS;
+        private long targetTableSizeBytes = 64 * 1024 * 1024;
+        private int maxConcurrentCompactions = 4;
+        private int l0CompactionTrigger = 4;
+        private long maxBytesForLevelBase = 10 * 1024 * 1024;
+        private int levelMultiplier = 10;
+        private int maxLevels = 7;
 
         private Builder() {
         }

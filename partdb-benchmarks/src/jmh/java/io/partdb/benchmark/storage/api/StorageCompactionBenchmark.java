@@ -7,7 +7,7 @@ import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
 import io.partdb.storage.Mutation;
 import io.partdb.storage.Revision;
-import io.partdb.storage.SstableOptions;
+import io.partdb.storage.SSTableOptions;
 import io.partdb.storage.StorageOptions;
 import io.partdb.storage.StorageStats;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -74,7 +74,7 @@ public class StorageCompactionBenchmark {
 
         @Setup(Level.Trial)
         public void prepareTrial() {
-            options = StorageFixtures.compactionOptions(SstableOptions.Compression.valueOf(compressionName));
+            options = StorageFixtures.compactionOptions(SSTableOptions.Compression.valueOf(compressionName));
             burstKeys = BenchmarkKeys.storageKeys(entryCountForPayloadTarget(valueSize, burstPayloadBytes));
             burstValues = buildBurstValues(valueSize, valuePattern, burstKeys.length);
         }

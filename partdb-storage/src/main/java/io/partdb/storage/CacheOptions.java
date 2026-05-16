@@ -21,7 +21,7 @@ public record CacheOptions(long blockCacheMaxBytes) {
     }
 
     public static final class Builder {
-        private long blockCacheMaxBytes = LsmConfig.DEFAULT_BLOCK_CACHE_MAX_BYTES;
+        private long blockCacheMaxBytes = 64 * 1024 * 1024;
 
         private Builder() {
         }
