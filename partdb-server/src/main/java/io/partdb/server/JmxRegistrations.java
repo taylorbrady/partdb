@@ -1,8 +1,6 @@
 package io.partdb.server;
 
 import io.partdb.node.PartDbNode;
-import io.partdb.node.PartDbNodeMXBean;
-import io.partdb.node.PartDbStorageMXBean;
 
 import javax.management.InstanceNotFoundException;
 import javax.management.MBeanRegistrationException;
@@ -118,74 +116,74 @@ final class JmxRegistrations implements AutoCloseable {
 
         @Override
         public long getProposalCount() {
-            return node.maintenance().nodeMetrics().proposalCount();
+            return node.admin().nodeMetrics().proposalCount();
         }
 
         @Override
         public long getProposalFailureCount() {
-            return node.maintenance().nodeMetrics().proposalFailureCount();
+            return node.admin().nodeMetrics().proposalFailureCount();
         }
     }
 
     private record StorageMBean(PartDbNode node) implements PartDbStorageMXBean {
         @Override
         public long getActiveMemtableBytes() {
-            return node.maintenance().storageMetrics().activeMemtableBytes();
+            return node.admin().storageMetrics().activeMemtableBytes();
         }
 
         @Override
         public int getImmutableMemtableCount() {
-            return node.maintenance().storageMetrics().immutableMemtableCount();
+            return node.admin().storageMetrics().immutableMemtableCount();
         }
 
         @Override
         public int getSstableCount() {
-            return node.maintenance().storageMetrics().sstableCount();
+            return node.admin().storageMetrics().sstableCount();
         }
 
         @Override
         public long getTotalSstableBytes() {
-            return node.maintenance().storageMetrics().totalSstableBytes();
+            return node.admin().storageMetrics().totalSstableBytes();
         }
 
         @Override
         public int getActiveCompactions() {
-            return node.maintenance().storageMetrics().activeCompactions();
+            return node.admin().storageMetrics().activeCompactions();
         }
 
         @Override
         public long getCompletedCompactions() {
-            return node.maintenance().storageMetrics().completedCompactions();
+            return node.admin().storageMetrics().completedCompactions();
         }
 
         @Override
         public long getFailedCompactions() {
-            return node.maintenance().storageMetrics().failedCompactions();
+            return node.admin().storageMetrics().failedCompactions();
         }
 
         @Override
         public long getLastCompactionDurationMillis() {
-            return node.maintenance().storageMetrics().lastCompactionDuration().toMillis();
+            return node.admin().storageMetrics().lastCompactionDuration().toMillis();
         }
 
         @Override
         public long getCheckpointCount() {
-            return node.maintenance().storageMetrics().checkpointCount();
+            return node.admin().storageMetrics().checkpointCount();
         }
 
         @Override
         public long getRestoreCount() {
-            return node.maintenance().storageMetrics().restoreCount();
+            return node.admin().storageMetrics().restoreCount();
         }
 
         @Override
         public long getLastCheckpointDurationMillis() {
-            return node.maintenance().storageMetrics().lastCheckpointDuration().toMillis();
+            return node.admin().storageMetrics().lastCheckpointDuration().toMillis();
         }
 
         @Override
         public long getLastRestoreDurationMillis() {
-            return node.maintenance().storageMetrics().lastRestoreDuration().toMillis();
+            return node.admin().storageMetrics().lastRestoreDuration().toMillis();
         }
     }
 }

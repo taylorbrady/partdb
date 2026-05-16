@@ -1,4 +1,4 @@
-package io.partdb.node.metrics;
+package io.partdb.node.admin;
 
 import java.time.Duration;
 import java.util.Objects;

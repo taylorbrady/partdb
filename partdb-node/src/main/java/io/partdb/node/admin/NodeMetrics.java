@@ -1,3 +1,3 @@
-package io.partdb.node.metrics;
+package io.partdb.node.admin;
 
 public record NodeMetrics(long proposalCount, long proposalFailureCount) {}

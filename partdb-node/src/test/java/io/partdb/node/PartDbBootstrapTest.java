@@ -1,10 +1,10 @@
 package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.node.admin.BackupRestorer;
+import io.partdb.node.admin.PartDbBackup;
+import io.partdb.node.admin.RestoreResult;
 import io.partdb.node.cluster.NodeRole;
-import io.partdb.node.recovery.LogicalBackup;
-import io.partdb.node.recovery.PartDbRecovery;
-import io.partdb.node.recovery.RecoveryResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -26,7 +26,7 @@ class PartDbBootstrapTest {
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        LogicalBackup backup;
+        PartDbBackup backup;
         try (var node = PartDbNode.open(sourceConfig)) {
             awaitLeader(node);
 
@@ -34,16 +34,16 @@ class PartDbBootstrapTest {
                 .toCompletableFuture()
                 .get(5, TimeUnit.SECONDS);
 
-            backup = node.maintenance().createBackup().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            backup = node.admin().createBackup().toCompletableFuture().get(5, TimeUnit.SECONDS);
         }
 
         var recoveredConfig = PartDbNodeConfig.builder("node-1", tempDir.resolve("recovered"))
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        RecoveryResult result = PartDbRecovery.restore(recoveredConfig, backup);
+        RestoreResult result = BackupRestorer.restore(recoveredConfig, backup);
 
-        assertTrue(result.finalRevision() >= backup.appliedIndex());
+        assertTrue(result.revision() >= backup.appliedIndex());
 
         try (var recovered = PartDbNode.open(recoveredConfig)) {
             awaitLeader(recovered);
@@ -58,7 +58,7 @@ class PartDbBootstrapTest {
                 .put(bytes("post-recovery"), bytes("value"))
                 .toCompletableFuture()
                 .get(5, TimeUnit.SECONDS)
-                .modRevision();
+                .revision();
             assertTrue(nextWriteRevision > backup.appliedIndex());
         }
     }

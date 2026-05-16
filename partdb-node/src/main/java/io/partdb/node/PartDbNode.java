@@ -2,31 +2,27 @@ package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.cluster.ClusterMembership;
-import io.partdb.consensus.ConsensusException;
 import io.partdb.consensus.ConsensusRole;
-import io.partdb.consensus.ConsensusRuntime;
 import io.partdb.consensus.ConsensusRuntimeFactory;
+import io.partdb.node.admin.NodeAdmin;
+import io.partdb.node.admin.NodeMetrics;
+import io.partdb.node.admin.PartDbBackup;
+import io.partdb.node.admin.StorageMetrics;
 import io.partdb.node.cluster.ClusterView;
 import io.partdb.node.cluster.NodeRole;
 import io.partdb.node.cluster.NodeStatus;
-import io.partdb.node.internal.command.PartDbCommands;
-import io.partdb.node.internal.command.PartDbCommandExecutor;
-import io.partdb.node.kv.DeleteResult;
+import io.partdb.node.command.KvCommand;
 import io.partdb.node.kv.KeyRange;
 import io.partdb.node.kv.KeyValueEntry;
-import io.partdb.node.kv.KeyValueOperations;
-import io.partdb.node.kv.PutRequest;
-import io.partdb.node.kv.PutResult;
+import io.partdb.node.kv.KeyValueStore;
 import io.partdb.node.kv.ReadConsistency;
 import io.partdb.node.kv.ScanCursor;
 import io.partdb.node.kv.VersionedValue;
 import io.partdb.node.kv.WriteBatch;
-import io.partdb.node.kv.WriteBatchResult;
-import io.partdb.node.metrics.MaintenanceOperations;
-import io.partdb.node.metrics.NodeMetrics;
-import io.partdb.node.metrics.StorageMetrics;
-import io.partdb.node.recovery.LogicalBackup;
-import io.partdb.node.state.PartDbStateMachine;
+import io.partdb.node.kv.WriteResult;
+import io.partdb.node.runtime.NodeFailureMapper;
+import io.partdb.node.runtime.NodeRuntime;
+import io.partdb.node.state.StoredValue;
 import io.partdb.storage.StorageStats;
 
 import java.time.Duration;
@@ -36,44 +32,22 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
 public final class PartDbNode implements AutoCloseable {
 
-    private final PartDbStateMachine stateMachine;
-    private final ConsensusRuntime consensus;
-    private final PartDbCommandExecutor commandExecutor;
+    private final NodeRuntime runtime;
     private final AtomicLong proposalCount = new AtomicLong();
     private final AtomicLong proposalFailureCount = new AtomicLong();
 
-    private final KeyValueOperations keyValues = new KeyValuesView();
+    private final KeyValueStore keyValues = new KeyValuesView();
     private final ClusterView cluster = new ClusterViewImpl();
-    private final MaintenanceOperations maintenance = new MaintenanceView();
+    private final NodeAdmin admin = new AdminView();
 
     private PartDbNode(PartDbNodeConfig config, ConsensusRuntimeFactory runtimeFactory) {
-        Objects.requireNonNull(config, "config must not be null");
-        Objects.requireNonNull(runtimeFactory, "runtimeFactory must not be null");
-
-        this.stateMachine = PartDbStateMachine.open(
-            config.dataDirectory().resolve("db"),
-            config.storage().toStorageOptions()
-        );
-
-        try {
-            this.consensus = runtimeFactory.open(
-                config.dataDirectory().resolve("consensus"),
-                config.toConsensusConfig(),
-                stateMachine
-            );
-            this.commandExecutor = new PartDbCommandExecutor(consensus);
-        } catch (RuntimeException | Error e) {
-            stateMachine.close();
-            throw e;
-        }
+        this.runtime = new NodeRuntime(config, runtimeFactory);
     }
 
     public static PartDbNode open(PartDbNodeConfig config) {
@@ -88,7 +62,7 @@ public final class PartDbNode implements AutoCloseable {
         return new PartDbNode(config, runtimeFactory);
     }
 
-    public KeyValueOperations keyValues() {
+    public KeyValueStore keyValues() {
         return keyValues;
     }
 
@@ -96,23 +70,16 @@ public final class PartDbNode implements AutoCloseable {
         return cluster;
     }
 
-    public MaintenanceOperations maintenance() {
-        return maintenance;
+    public NodeAdmin admin() {
+        return admin;
     }
 
     @Override
     public void close() {
-        consensus.close();
-        stateMachine.close();
+        runtime.close();
     }
 
-    private final class KeyValuesView implements KeyValueOperations {
-        @Override
-        public Optional<VersionedValue> getLocal(Bytes key) {
-            Objects.requireNonNull(key, "key must not be null");
-            return stateMachine.getLocalValue(key).map(PartDbNode.this::toVersionedValue);
-        }
-
+    private final class KeyValuesView implements KeyValueStore {
         @Override
         public CompletionStage<Optional<VersionedValue>> get(Bytes key) {
             return get(key, ReadConsistency.LINEARIZABLE);
@@ -124,21 +91,9 @@ public final class PartDbNode implements AutoCloseable {
             Objects.requireNonNull(consistency, "consistency must not be null");
             return switch (consistency) {
                 case LOCAL -> CompletableFuture.completedFuture(getLocal(key));
-                case LINEARIZABLE -> mapFailure(consensus.readBarrier()
+                case LINEARIZABLE -> mapFailure(runtime.consensus().readBarrier()
                     .thenApply(_ -> getLocal(key)));
             };
-        }
-
-        @Override
-        public ScanCursor<KeyValueEntry> scanLocal(KeyRange range) {
-            Objects.requireNonNull(range, "range must not be null");
-            Stream<KeyValueEntry> stream = stateMachine.scanLocal(toStorageRange(range))
-                .map(entry -> new KeyValueEntry(
-                    entry.key(),
-                    entry.value(),
-                    entry.version()
-                ));
-            return new StreamBackedScanCursor<>(stream);
         }
 
         @Override
@@ -152,37 +107,51 @@ public final class PartDbNode implements AutoCloseable {
             Objects.requireNonNull(consistency, "consistency must not be null");
             return switch (consistency) {
                 case LOCAL -> CompletableFuture.completedFuture(scanLocal(range));
-                case LINEARIZABLE -> mapFailure(consensus.readBarrier()
+                case LINEARIZABLE -> mapFailure(runtime.consensus().readBarrier()
                     .thenApply(_ -> scanLocal(range)));
             };
         }
 
         @Override
-        public CompletionStage<PutResult> put(PutRequest request) {
-            Objects.requireNonNull(request, "request must not be null");
-            CompletableFuture<PutResult> proposal = commandExecutor.execute(
-                PartDbCommands.put(request.key(), request.value())
-            );
-            return mapFailure(trackProposal(proposal));
+        public CompletionStage<WriteResult> put(Bytes key, Bytes value) {
+            return propose(new KvCommand.Put(key, value));
         }
 
         @Override
-        public CompletionStage<DeleteResult> delete(Bytes key) {
+        public CompletionStage<WriteResult> delete(Bytes key) {
             Objects.requireNonNull(key, "key must not be null");
-            return mapFailure(trackProposal(commandExecutor.execute(PartDbCommands.delete(key))));
+            return propose(new KvCommand.Delete(key));
         }
 
         @Override
-        public CompletionStage<WriteBatchResult> writeBatch(WriteBatch batch) {
+        public CompletionStage<WriteResult> write(WriteBatch batch) {
             Objects.requireNonNull(batch, "batch must not be null");
-            return mapFailure(trackProposal(commandExecutor.execute(PartDbCommands.writeBatch(batch))));
+            return propose(new KvCommand.BatchWrite(batch));
+        }
+
+        private Optional<VersionedValue> getLocal(Bytes key) {
+            return runtime.stateMachine().getValue(key).map(PartDbNode.this::toVersionedValue);
+        }
+
+        private ScanCursor<KeyValueEntry> scanLocal(KeyRange range) {
+            Stream<KeyValueEntry> stream = runtime.stateMachine().scan(toStorageRange(range))
+                .map(entry -> new KeyValueEntry(
+                    entry.key(),
+                    entry.value(),
+                    entry.version()
+                ));
+            return new StreamBackedScanCursor<>(stream);
+        }
+
+        private CompletionStage<WriteResult> propose(KvCommand command) {
+            return mapFailure(trackProposal(runtime.commandProposer().propose(command)));
         }
     }
 
     private final class ClusterViewImpl implements ClusterView {
         @Override
         public NodeStatus status() {
-            var status = consensus.status();
+            var status = runtime.consensus().status();
             Optional<Instant> lastLeaderChangeTime = status.lastLeaderChangeEpochMillis() > 0
                 ? Optional.of(Instant.ofEpochMilli(status.lastLeaderChangeEpochMillis()))
                 : Optional.empty();
@@ -200,15 +169,18 @@ public final class PartDbNode implements AutoCloseable {
 
         @Override
         public ClusterMembership membership() {
-            return consensus.membership();
+            return runtime.consensus().membership();
         }
     }
 
-    private final class MaintenanceView implements MaintenanceOperations {
+    private final class AdminView implements NodeAdmin {
         @Override
-        public CompletionStage<LogicalBackup> createBackup() {
-            return mapFailure(consensus.readBarrier()
-                .thenApply(_ -> new LogicalBackup(stateMachine.snapshot().data(), stateMachine.lastAppliedIndex())));
+        public CompletionStage<PartDbBackup> createBackup() {
+            return mapFailure(runtime.consensus().readBarrier()
+                .thenApply(_ -> new PartDbBackup(
+                    runtime.stateMachine().snapshot().data(),
+                    runtime.stateMachine().lastAppliedIndex()
+                )));
         }
 
         @Override
@@ -218,7 +190,7 @@ public final class PartDbNode implements AutoCloseable {
 
         @Override
         public StorageMetrics storageMetrics() {
-            StorageStats stats = stateMachine.storageStats();
+            StorageStats stats = runtime.stateMachine().storageStats();
             return new StorageMetrics(
                 stats.activeMemtableBytes(),
                 stats.immutableMemtableCount(),
@@ -257,10 +229,10 @@ public final class PartDbNode implements AutoCloseable {
         return mapped;
     }
 
-    private VersionedValue toVersionedValue(PartDbStateMachine.LocalValue value) {
+    private VersionedValue toVersionedValue(StoredValue value) {
         return new VersionedValue(
             value.value(),
-            value.modRevision()
+            value.revision()
         );
     }
 
@@ -274,24 +246,7 @@ public final class PartDbNode implements AutoCloseable {
     }
 
     private static Throwable mapThrowable(Throwable error) {
-        Throwable cause = unwrap(error);
-        return switch (cause) {
-            case PartDbException _ -> cause;
-            case ConsensusException.NotLeader e -> new PartDbException.NotLeader(e.leaderId().orElse(null));
-            case ConsensusException.Shutdown _ -> new PartDbException.NodeClosed();
-            case IllegalArgumentException _ -> cause;
-            default -> new PartDbException.StorageFailure(
-                cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName(),
-                cause
-            );
-        };
-    }
-
-    private static Throwable unwrap(Throwable error) {
-        if (error instanceof CompletionException || error instanceof ExecutionException) {
-            return error.getCause() != null ? error.getCause() : error;
-        }
-        return error;
+        return NodeFailureMapper.map(error);
     }
 
     private static io.partdb.storage.KeyRange toStorageRange(KeyRange range) {

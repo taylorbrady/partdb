@@ -1,4 +1,4 @@
-package io.partdb.node.recovery;
+package io.partdb.node.admin;
 
 import io.partdb.consensus.ConsensusBootstrap;
 import io.partdb.consensus.StoredSnapshot;
@@ -12,14 +12,11 @@ import java.util.Comparator;
 import java.util.Objects;
 import java.util.stream.Stream;
 
-public final class PartDbRecovery {
-    private PartDbRecovery() {
+public final class BackupRestorer {
+    private BackupRestorer() {
     }
 
-    public static RecoveryResult restore(
-        PartDbNodeConfig config,
-        LogicalBackup backup
-    ) {
+    public static RestoreResult restore(PartDbNodeConfig config, PartDbBackup backup) {
         Objects.requireNonNull(config, "config must not be null");
         Objects.requireNonNull(backup, "backup must not be null");
 
@@ -29,15 +26,15 @@ public final class PartDbRecovery {
             ensureEmptyDataDirectory(dataDirectory);
             Files.createDirectories(dataDirectory);
 
-            LogicalBackup recoveredBackup;
-            RecoveryResult result;
+            PartDbBackup recoveredBackup;
+            RestoreResult result;
             try (PartDbStateMachine stateMachine = PartDbStateMachine.open(
                 dataDirectory.resolve("db"),
                 config.storage().toStorageOptions()
             )) {
                 stateMachine.restore(new StoredSnapshot(backup.appliedIndex(), 0, backup.snapshotBytes()));
-                result = new RecoveryResult(stateMachine.lastAppliedIndex());
-                recoveredBackup = new LogicalBackup(stateMachine.snapshot().data(), stateMachine.lastAppliedIndex());
+                result = new RestoreResult(stateMachine.lastAppliedIndex());
+                recoveredBackup = new PartDbBackup(stateMachine.snapshot().data(), stateMachine.lastAppliedIndex());
             }
 
             ConsensusBootstrap.initializeFromSnapshot(
@@ -49,7 +46,7 @@ public final class PartDbRecovery {
 
             return result;
         } catch (IOException e) {
-            throw new IllegalStateException("Failed to recover cluster backup", e);
+            throw new IllegalStateException("Failed to restore PartDB backup", e);
         } catch (RuntimeException e) {
             if (newDirectory) {
                 try {
@@ -68,7 +65,7 @@ public final class PartDbRecovery {
         }
         try (Stream<Path> entries = Files.list(dataDirectory)) {
             if (entries.findAny().isPresent()) {
-                throw new IllegalArgumentException("dataDirectory must be empty for disaster recovery: " + dataDirectory);
+                throw new IllegalArgumentException("dataDirectory must be empty for restore: " + dataDirectory);
             }
         }
     }

@@ -1,4 +1,4 @@
-package io.partdb.node;
+package io.partdb.server;
 
 public interface PartDbStorageMXBean {
     long getActiveMemtableBytes();

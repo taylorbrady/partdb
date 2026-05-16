@@ -4,11 +4,11 @@ import io.partdb.bytes.Bytes;
 
 import java.util.Objects;
 
-public record VersionedValue(Bytes value, long modRevision) {
+public record VersionedValue(Bytes value, long revision) {
     public VersionedValue {
         value = Objects.requireNonNull(value, "value must not be null");
-        if (modRevision <= 0) {
-            throw new IllegalArgumentException("modRevision must be positive");
+        if (revision <= 0) {
+            throw new IllegalArgumentException("revision must be positive");
         }
     }
 }

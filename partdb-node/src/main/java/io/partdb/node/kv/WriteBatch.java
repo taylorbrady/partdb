@@ -8,14 +8,14 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
-public record WriteBatch(List<WriteBatchOperation> operations) {
+public record WriteBatch(List<WriteOperation> operations) {
     public WriteBatch {
         operations = List.copyOf(Objects.requireNonNull(operations, "operations must not be null"));
         if (operations.isEmpty()) {
             throw new IllegalArgumentException("operations must not be empty");
         }
         Set<Bytes> keys = new LinkedHashSet<>(operations.size());
-        for (WriteBatchOperation operation : operations) {
+        for (WriteOperation operation : operations) {
             Objects.requireNonNull(operation, "operation must not be null");
             if (!keys.add(operation.key())) {
                 throw new IllegalArgumentException("write batch contains duplicate key");
@@ -28,15 +28,15 @@ public record WriteBatch(List<WriteBatchOperation> operations) {
     }
 
     public static final class Builder {
-        private final List<WriteBatchOperation> operations = new ArrayList<>();
+        private final List<WriteOperation> operations = new ArrayList<>();
 
         public Builder put(Bytes key, Bytes value) {
-            operations.add(WriteBatchOperation.Put.of(key, value));
+            operations.add(new WriteOperation.Put(key, value));
             return this;
         }
 
         public Builder delete(Bytes key) {
-            operations.add(new WriteBatchOperation.Delete(key));
+            operations.add(new WriteOperation.Delete(key));
             return this;
         }
 

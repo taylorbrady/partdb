@@ -60,7 +60,7 @@ public final class PartDbNodeConfig {
         return replication;
     }
 
-    ConsensusConfig toConsensusConfig() {
+    public ConsensusConfig toConsensusConfig() {
         return replication.toConsensusConfig(nodeId, membership);
     }
 

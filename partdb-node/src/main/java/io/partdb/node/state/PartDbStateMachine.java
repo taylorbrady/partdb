@@ -5,11 +5,11 @@ import io.partdb.consensus.CommittedCommand;
 import io.partdb.consensus.StateMachineResult;
 import io.partdb.consensus.ReplicatedStateMachine;
 import io.partdb.consensus.StoredSnapshot;
-import io.partdb.node.internal.command.PartDbCommand;
-import io.partdb.node.internal.command.PartDbCommandCodec;
-import io.partdb.node.internal.command.PartDbCommandResult;
-import io.partdb.node.internal.command.PartDbCommandResultCodec;
-import io.partdb.node.kv.WriteBatchOperation;
+import io.partdb.node.command.KvCommand;
+import io.partdb.node.command.KvCommandCodec;
+import io.partdb.node.command.KvCommandResult;
+import io.partdb.node.command.KvCommandResultCodec;
+import io.partdb.node.kv.WriteOperation;
 import io.partdb.storage.EntryRecord;
 import io.partdb.storage.KeyRange;
 import io.partdb.storage.Mutation;
@@ -51,31 +51,31 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
 
     @Override
     public StateMachineResult apply(CommittedCommand committed) {
-        PartDbCommand command = PartDbCommandCodec.decode(committed.payload());
+        KvCommand command = KvCommandCodec.decode(committed.payload());
         long index = committed.index();
 
         StateMachineResult result = switch (command) {
-            case PartDbCommand.Put(var key, var value) -> {
+            case KvCommand.Put(var key, var value) -> {
                 store.apply(new Revision(index), Mutation.put(key, value));
-                yield applied(new PartDbCommandResult.PutApplied(index));
+                yield applied(index);
             }
-            case PartDbCommand.Delete(var key) -> {
+            case KvCommand.Delete(var key) -> {
                 store.apply(new Revision(index), Mutation.delete(key));
-                yield applied(new PartDbCommandResult.DeleteApplied(index));
+                yield applied(index);
             }
-            case PartDbCommand.BatchWrite(var batch) -> {
+            case KvCommand.BatchWrite(var batch) -> {
                 WriteBatch.Builder storageBatch = WriteBatch.builder();
 
                 for (var operation : batch.operations()) {
                     switch (operation) {
-                        case WriteBatchOperation.Put(var key, var value) -> storageBatch.put(key, value);
-                        case WriteBatchOperation.Delete(var key) -> storageBatch.delete(key);
+                        case WriteOperation.Put(var key, var value) -> storageBatch.put(key, value);
+                        case WriteOperation.Delete(var key) -> storageBatch.delete(key);
                     }
                 }
 
                 store.apply(new Revision(index), storageBatch.build());
 
-                yield applied(new PartDbCommandResult.BatchWriteApplied(index));
+                yield applied(index);
             }
         };
 
@@ -83,22 +83,22 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
         return result;
     }
 
-    public Optional<Bytes> getLocal(Bytes key) {
-        return getLocalValue(key).map(LocalValue::value);
+    public Optional<Bytes> get(Bytes key) {
+        return getValue(key).map(StoredValue::value);
     }
 
-    public Optional<LocalValue> getLocalValue(Bytes key) {
+    public Optional<StoredValue> getValue(Bytes key) {
         Optional<ValueRecord> raw = store.get(key);
         if (raw.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(new LocalValue(
+        return Optional.of(new StoredValue(
             raw.get().value(),
             raw.get().modRevision().value()
         ));
     }
 
-    public Stream<KvEntry> scanLocal(KeyRange range) {
+    public Stream<KvEntry> scan(KeyRange range) {
         Scan cursor = store.scan(range);
         Iterator<EntryRecord> entries = cursor.iterator();
 
@@ -136,8 +136,6 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
     }
 
     public record KvEntry(Bytes key, Bytes value, long version) {}
-
-    public record LocalValue(Bytes value, long modRevision) {}
 
     @Override
     public StoredSnapshot snapshot() {
@@ -184,7 +182,7 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
         store.close();
     }
 
-    private static StateMachineResult applied(PartDbCommandResult.AppliedCommandResult result) {
-        return new StateMachineResult.Applied(PartDbCommandResultCodec.encode(result));
+    private static StateMachineResult applied(long revision) {
+        return new StateMachineResult.Applied(KvCommandResultCodec.encode(new KvCommandResult.Applied(revision)));
     }
 }

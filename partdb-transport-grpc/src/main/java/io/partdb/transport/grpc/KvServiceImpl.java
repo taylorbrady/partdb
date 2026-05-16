@@ -22,10 +22,11 @@ import io.partdb.node.PartDbNode;
 import io.partdb.node.PartDbException;
 import io.partdb.node.kv.KeyRange;
 import io.partdb.node.kv.KeyValueEntry;
-import io.partdb.node.kv.PutResult;
+import io.partdb.node.kv.ReadConsistency;
 import io.partdb.node.kv.ScanCursor;
 import io.partdb.node.kv.VersionedValue;
 import io.partdb.node.kv.WriteBatch;
+import io.partdb.node.kv.WriteResult;
 
 import java.time.Duration;
 import java.util.Optional;
@@ -50,8 +51,8 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         Duration timeout = resolveTimeout(request.getHeader());
         Bytes key = toBytes(request.getKey());
         CompletableFuture<Optional<VersionedValue>> future = switch (request.getConsistency()) {
-            case STALE -> CompletableFuture.completedFuture(node.keyValues().getLocal(key));
-            case LINEARIZABLE -> node.keyValues().get(key, io.partdb.node.kv.ReadConsistency.LINEARIZABLE).toCompletableFuture();
+            case STALE -> node.keyValues().get(key, ReadConsistency.LOCAL).toCompletableFuture();
+            case LINEARIZABLE -> node.keyValues().get(key, ReadConsistency.LINEARIZABLE).toCompletableFuture();
             case UNRECOGNIZED -> CompletableFuture.failedFuture(
                 new IllegalArgumentException("Unknown read consistency: " + request.getConsistency())
             );
@@ -75,7 +76,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                     responseObserver.onNext(GetResponse.newBuilder()
                         .setError(okError())
                         .setValue(toByteString(result.get().value()))
-                        .setRevision(result.get().modRevision())
+                        .setRevision(result.get().revision())
                         .build());
                 }
                 responseObserver.onCompleted();
@@ -88,7 +89,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         Bytes key = toBytes(request.getKey());
         Bytes value = toBytes(request.getValue());
 
-        CompletableFuture<PutResult> future = node.keyValues().put(key, value).toCompletableFuture();
+        CompletableFuture<WriteResult> future = node.keyValues().put(key, value).toCompletableFuture();
 
         future
             .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
@@ -100,7 +101,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                 } else {
                     responseObserver.onNext(PutResponse.newBuilder()
                         .setError(okError())
-                        .setRevision(result.modRevision())
+                        .setRevision(result.revision())
                         .build());
                 }
                 responseObserver.onCompleted();
@@ -123,7 +124,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                 } else {
                     responseObserver.onNext(DeleteResponse.newBuilder()
                         .setError(okError())
-                        .setRevision(result.modRevision())
+                        .setRevision(result.revision())
                         .build());
                 }
                 responseObserver.onCompleted();
@@ -138,8 +139,8 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         int limit = request.getLimit() > 0 ? request.getLimit() : Integer.MAX_VALUE;
 
         CompletableFuture<ScanCursor<KeyValueEntry>> future = switch (request.getConsistency()) {
-            case STALE -> CompletableFuture.completedFuture(node.keyValues().scanLocal(range));
-            case LINEARIZABLE -> node.keyValues().scan(range, io.partdb.node.kv.ReadConsistency.LINEARIZABLE).toCompletableFuture();
+            case STALE -> node.keyValues().scan(range, ReadConsistency.LOCAL).toCompletableFuture();
+            case LINEARIZABLE -> node.keyValues().scan(range, ReadConsistency.LINEARIZABLE).toCompletableFuture();
             case UNRECOGNIZED -> CompletableFuture.failedFuture(
                 new IllegalArgumentException("Unknown read consistency: " + request.getConsistency())
             );
@@ -164,7 +165,7 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
                             .setError(okError())
                             .setKey(toByteString(entry.key()))
                             .setValue(toByteString(entry.value()))
-                            .setRevision(entry.modRevision())
+                            .setRevision(entry.revision())
                             .build());
                         count++;
                     }
@@ -183,8 +184,8 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
         CompletableFuture<Long> future;
         try {
             future = node.keyValues()
-                .writeBatch(toWriteBatch(request))
-                .thenApply(result -> result.modRevision())
+                .write(toWriteBatch(request))
+                .thenApply(WriteResult::revision)
                 .toCompletableFuture();
         } catch (RuntimeException e) {
             future = CompletableFuture.failedFuture(e);

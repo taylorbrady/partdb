@@ -81,20 +81,20 @@ class PartDbNodeTest {
             awaitLeader(node);
 
             long revision = node.keyValues()
-                .writeBatch(WriteBatch.builder()
+                .write(WriteBatch.builder()
                     .put(bytes("key-1"), bytes("value-1"))
                     .put(bytes("key-2"), bytes("value-2"))
                     .build())
                 .toCompletableFuture()
                 .get(5, TimeUnit.SECONDS)
-                .modRevision();
+                .revision();
 
             assertEquals(revision, node.keyValues().get(bytes("key-1")).toCompletableFuture().get(5, TimeUnit.SECONDS)
                 .orElseThrow()
-                .modRevision());
+                .revision());
             assertEquals(revision, node.keyValues().get(bytes("key-2")).toCompletableFuture().get(5, TimeUnit.SECONDS)
                 .orElseThrow()
-                .modRevision());
+                .revision());
         }
     }
 
