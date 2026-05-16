@@ -44,12 +44,10 @@ partdb-transport-grpc
 partdb-node
   -> partdb-consensus
   -> partdb-storage
-  -> partdb-cluster
   -> partdb-bytes
 
 partdb-consensus
   -> partdb-raft
-  -> partdb-cluster
   -> partdb-bytes
 
 partdb-storage
@@ -66,10 +64,9 @@ partdb-client
 ## Modules
 
 - **partdb-bytes**: shared immutable byte values
-- **partdb-cluster**: cluster membership domain model
 - **partdb-raft**: reusable Raft consensus engine
 - **partdb-storage**: internal state-store module backed by an LSM engine
-- **partdb-consensus**: durable, effectful Raft runtime
+- **partdb-consensus**: durable, effectful Raft runtime and consensus membership model
 - **partdb-node**: PartDB node runtime and state-machine composition
 - **partdb-grpc**: public `.proto` schemas and generated classes
 - **partdb-transport-grpc**: gRPC server/bootstrap layer and consensus transport adapter

@@ -33,12 +33,10 @@ partdb-client
 partdb-node
   -> partdb-consensus
   -> partdb-storage
-  -> partdb-cluster
   -> partdb-bytes
 
 partdb-consensus
   -> partdb-raft
-  -> partdb-cluster
   -> partdb-bytes
 
 partdb-storage
@@ -75,21 +73,6 @@ Allowed dependencies: Java standard library only.
 Must not own: keys, values, storage records, protocol messages, or database
 semantics.
 
-### `partdb-cluster`
-
-Role: cluster membership domain model.
-
-Decision: keep for now.
-
-This module is small, but membership is shared across Raft, consensus, node
-configuration, and API surfaces. Keeping it separate avoids making membership a
-Raft-only or node-only concept.
-
-Allowed dependencies: Java standard library only.
-
-Must not own: live node status, transport endpoints, health, or dynamic
-membership workflows.
-
 ### `partdb-raft`
 
 Role: pure Raft algorithm and Raft domain types.
@@ -108,15 +91,16 @@ engine details, or process lifecycle.
 
 ### `partdb-consensus`
 
-Role: durable, effectful Raft runtime.
+Role: durable, effectful Raft runtime and consensus membership model.
 
 Decision: keep.
 
 This module adapts the pure Raft core to persistence, transport, snapshots,
-read barriers, proposal tracking, and state-machine application. It is generic
-over a `ReplicatedStateMachine`.
+read barriers, proposal tracking, state-machine application, and the
+runtime-facing `ConsensusMembership` model. It is generic over a
+`ReplicatedStateMachine`.
 
-Allowed dependencies: `partdb-raft`, `partdb-cluster`, `partdb-bytes`.
+Allowed dependencies: `partdb-raft`, `partdb-bytes`.
 
 Must not own: PartDB KV semantics, public gRPC schemas, CLI behavior, or storage
 engine internals.
@@ -148,8 +132,7 @@ This module composes the consensus runtime with the PartDB KV state machine. It
 owns node-facing domain APIs such as KV operations, cluster status, maintenance,
 backup, and recovery.
 
-Allowed dependencies: `partdb-consensus`, `partdb-storage`, `partdb-cluster`,
-`partdb-bytes`.
+Allowed dependencies: `partdb-consensus`, `partdb-storage`, `partdb-bytes`.
 
 Must not own: gRPC service implementations, CLI parsing, process ports, JMX
 registration, or transport endpoint parsing.
@@ -257,8 +240,8 @@ Must not own: product code.
 
 - Keep `partdb-bytes` despite being small because it owns a foundational value
   boundary.
-- Keep `partdb-cluster` despite being small because membership crosses Raft,
-  consensus, and node boundaries.
+- Remove `partdb-cluster`; its only type was consensus runtime membership, which
+  now lives in `partdb-consensus` as `ConsensusMembership`.
 - Keep `partdb-server` only as the process runtime assembly module.
 - Keep `partdb-transport-grpc` as one module for now. Revisit a split when
   public API transport or Raft peer transport grows.

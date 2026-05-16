@@ -1,6 +1,6 @@
 package io.partdb.node;
 
-import io.partdb.cluster.ClusterMembership;
+import io.partdb.consensus.ConsensusMembership;
 import io.partdb.consensus.ConsensusConfig;
 import io.partdb.node.config.ReplicationConfig;
 import io.partdb.node.config.StorageConfig;
@@ -13,7 +13,7 @@ import java.util.Set;
 public final class PartDbNodeConfig {
     private final String nodeId;
     private final Path dataDirectory;
-    private final ClusterMembership membership;
+    private final ConsensusMembership membership;
     private final StorageConfig storage;
     private final ReplicationConfig replication;
 
@@ -44,7 +44,7 @@ public final class PartDbNodeConfig {
         return dataDirectory;
     }
 
-    public ClusterMembership membership() {
+    public ConsensusMembership membership() {
         return membership;
     }
 
@@ -98,7 +98,7 @@ public final class PartDbNodeConfig {
     public static final class Builder {
         private final String nodeId;
         private final Path dataDirectory;
-        private ClusterMembership membership;
+        private ConsensusMembership membership;
         private StorageConfig storage = StorageConfig.defaults();
         private ReplicationConfig replication = ReplicationConfig.defaults();
         private ReplicationConfig.Builder replicationBuilder = ReplicationConfig.defaults().toBuilder();
@@ -106,7 +106,7 @@ public final class PartDbNodeConfig {
         private Builder(String nodeId, Path dataDirectory) {
             this.nodeId = requireNonBlank(nodeId, "nodeId");
             this.dataDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
-            this.membership = ClusterMembership.ofVoters(nodeId);
+            this.membership = ConsensusMembership.ofVoters(nodeId);
         }
 
         private Builder(PartDbNodeConfig config) {
@@ -119,16 +119,16 @@ public final class PartDbNodeConfig {
         }
 
         public Builder voters(String... voterIds) {
-            membership = new ClusterMembership(toIdSet(voterIds, "voterIds"), membership.learners());
+            membership = new ConsensusMembership(toIdSet(voterIds, "voterIds"), membership.learners());
             return this;
         }
 
         public Builder learners(String... learnerIds) {
-            membership = new ClusterMembership(membership.voters(), toIdSet(learnerIds, "learnerIds"));
+            membership = new ConsensusMembership(membership.voters(), toIdSet(learnerIds, "learnerIds"));
             return this;
         }
 
-        public Builder membership(ClusterMembership membership) {
+        public Builder membership(ConsensusMembership membership) {
             this.membership = Objects.requireNonNull(membership, "membership must not be null");
             return this;
         }

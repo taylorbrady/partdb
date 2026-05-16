@@ -1,7 +1,6 @@
 package io.partdb.consensus;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.cluster.ClusterMembership;
 import io.partdb.raft.RaftMembership;
 import io.partdb.raft.RaftHardState;
 import io.partdb.raft.RaftNode;
@@ -182,8 +181,8 @@ public final class RaftRuntime implements ConsensusRuntime {
         );
     }
 
-    public ClusterMembership membership() {
-        return RaftMembershipMapper.toClusterMembership(raft.membership());
+    public ConsensusMembership membership() {
+        return RaftMembershipMapper.toConsensusMembership(raft.membership());
     }
 
     @Override

@@ -1,7 +1,6 @@
 package io.partdb.consensus;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.cluster.ClusterMembership;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -12,7 +11,7 @@ public interface ConsensusRuntime extends AutoCloseable {
 
     ConsensusStatus status();
 
-    ClusterMembership membership();
+    ConsensusMembership membership();
 
     @Override
     void close();

@@ -1,14 +1,14 @@
-package io.partdb.cluster;
+package io.partdb.consensus;
 
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 
-public record ClusterMembership(
+public record ConsensusMembership(
     Set<String> voters,
     Set<String> learners
 ) {
-    public ClusterMembership {
+    public ConsensusMembership {
         voters = normalizeIds(voters, "voters");
         learners = normalizeIds(learners, "learners");
         if (voters.isEmpty()) {
@@ -19,9 +19,9 @@ public record ClusterMembership(
         }
     }
 
-    public static ClusterMembership ofVoters(String... voters) {
+    public static ConsensusMembership ofVoters(String... voters) {
         Objects.requireNonNull(voters, "voters must not be null");
-        return new ClusterMembership(Set.of(voters), Set.of());
+        return new ConsensusMembership(Set.of(voters), Set.of());
     }
 
     public boolean isVoter(String nodeId) {
@@ -43,14 +43,14 @@ public record ClusterMembership(
         return Set.copyOf(members);
     }
 
-    public ClusterMembership addLearner(String nodeId) {
+    public ConsensusMembership addLearner(String nodeId) {
         requireNonBlank(nodeId, "nodeId");
         if (isMember(nodeId)) {
             throw new IllegalArgumentException("node already a member: " + nodeId);
         }
         var updatedLearners = new LinkedHashSet<>(learners);
         updatedLearners.add(nodeId);
-        return new ClusterMembership(voters, updatedLearners);
+        return new ConsensusMembership(voters, updatedLearners);
     }
 
     private static Set<String> normalizeIds(Set<String> ids, String name) {

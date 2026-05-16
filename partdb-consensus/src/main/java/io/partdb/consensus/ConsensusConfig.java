@@ -1,6 +1,5 @@
 package io.partdb.consensus;
 
-import io.partdb.cluster.ClusterMembership;
 import io.partdb.raft.RaftOptions;
 
 import java.time.Duration;
@@ -8,7 +7,7 @@ import java.util.Objects;
 
 public record ConsensusConfig(
     String nodeId,
-    ClusterMembership membership,
+    ConsensusMembership membership,
     Duration tickInterval,
     int electionTimeoutMinTicks,
     int electionTimeoutMaxTicks,
@@ -50,7 +49,7 @@ public record ConsensusConfig(
 
     public static final class Builder {
         private final String nodeId;
-        private ClusterMembership membership;
+        private ConsensusMembership membership;
         private Duration tickInterval = DEFAULT_TICK_INTERVAL;
         private int electionTimeoutMinTicks = RaftOptions.defaults().electionTimeoutMin();
         private int electionTimeoutMaxTicks = RaftOptions.defaults().electionTimeoutMax();
@@ -59,10 +58,10 @@ public record ConsensusConfig(
 
         private Builder(String nodeId) {
             this.nodeId = requireNonBlank(nodeId, "nodeId");
-            this.membership = ClusterMembership.ofVoters(nodeId);
+            this.membership = ConsensusMembership.ofVoters(nodeId);
         }
 
-        public Builder membership(ClusterMembership membership) {
+        public Builder membership(ConsensusMembership membership) {
             this.membership = Objects.requireNonNull(membership, "membership must not be null");
             return this;
         }

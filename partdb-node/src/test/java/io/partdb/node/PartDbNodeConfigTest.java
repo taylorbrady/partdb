@@ -1,6 +1,6 @@
 package io.partdb.node;
 
-import io.partdb.cluster.ClusterMembership;
+import io.partdb.consensus.ConsensusMembership;
 import io.partdb.node.config.ReplicationConfig;
 import io.partdb.node.config.StorageConfig;
 import org.junit.jupiter.api.Test;
@@ -21,7 +21,7 @@ class PartDbNodeConfigTest {
 
         assertEquals("node1", config.nodeId());
         assertEquals(Path.of("data/node1"), config.dataDirectory());
-        assertEquals(ClusterMembership.ofVoters("node1"), config.membership());
+        assertEquals(ConsensusMembership.ofVoters("node1"), config.membership());
         assertEquals(Set.of("node1"), config.memberIds());
         assertEquals(StorageConfig.defaults(), config.storage());
         assertEquals(ReplicationConfig.defaults(), config.replication());
@@ -62,7 +62,7 @@ class PartDbNodeConfigTest {
     @Test
     void builderSupportsAdvancedMembershipOverrides() {
         var config = PartDbNodeConfig.builder("node3", Path.of("data/node3"))
-            .membership(ClusterMembership.ofVoters("node1", "node2").addLearner("node3"))
+            .membership(ConsensusMembership.ofVoters("node1", "node2").addLearner("node3"))
             .build();
 
         assertEquals(Set.of("node1", "node2", "node3"), config.memberIds());

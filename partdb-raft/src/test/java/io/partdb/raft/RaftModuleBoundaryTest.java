@@ -18,7 +18,6 @@ class RaftModuleBoundaryTest {
         "import java.time.",
         "import java.util.concurrent.",
         "import io.grpc.",
-        "import io.partdb.cluster.",
         "import io.partdb.consensus.",
         "import io.partdb.storage.",
         "import io.partdb.transport."

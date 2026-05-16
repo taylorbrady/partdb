@@ -1,6 +1,6 @@
 package io.partdb.node.config;
 
-import io.partdb.cluster.ClusterMembership;
+import io.partdb.consensus.ConsensusMembership;
 import io.partdb.consensus.ConsensusConfig;
 
 import java.time.Duration;
@@ -20,7 +20,7 @@ public record ReplicationConfig(
         }
         new ConsensusConfig(
             "validation-node",
-            ClusterMembership.ofVoters("validation-node"),
+            ConsensusMembership.ofVoters("validation-node"),
             tickInterval,
             electionTimeoutMinTicks,
             electionTimeoutMaxTicks,
@@ -48,7 +48,7 @@ public record ReplicationConfig(
         return new Builder(this);
     }
 
-    public ConsensusConfig toConsensusConfig(String nodeId, ClusterMembership membership) {
+    public ConsensusConfig toConsensusConfig(String nodeId, ConsensusMembership membership) {
         Objects.requireNonNull(nodeId, "nodeId must not be null");
         Objects.requireNonNull(membership, "membership must not be null");
         return ConsensusConfig.builder(nodeId)

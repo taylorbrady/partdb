@@ -1,7 +1,7 @@
 package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.cluster.ClusterMembership;
+import io.partdb.consensus.ConsensusMembership;
 import io.partdb.consensus.ConsensusRole;
 import io.partdb.consensus.ConsensusRuntimeFactory;
 import io.partdb.node.admin.NodeAdmin;
@@ -177,7 +177,7 @@ public final class PartDbNode implements AutoCloseable {
         }
 
         @Override
-        public ClusterMembership membership() {
+        public ConsensusMembership membership() {
             return runtime.consensus().membership();
         }
     }
