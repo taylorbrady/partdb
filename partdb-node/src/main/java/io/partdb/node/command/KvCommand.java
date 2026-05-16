@@ -1,11 +1,12 @@
 package io.partdb.node.command;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.node.kv.Transaction;
 import io.partdb.node.kv.WriteBatch;
 
 import java.util.Objects;
 
-public sealed interface KvCommand permits KvCommand.Put, KvCommand.Delete, KvCommand.BatchWrite {
+public sealed interface KvCommand permits KvCommand.Put, KvCommand.Delete, KvCommand.BatchWrite, KvCommand.CompareAndWrite {
     record Put(Bytes key, Bytes value) implements KvCommand {
         public Put {
             key = Objects.requireNonNull(key, "key must not be null");
@@ -22,6 +23,12 @@ public sealed interface KvCommand permits KvCommand.Put, KvCommand.Delete, KvCom
     record BatchWrite(WriteBatch batch) implements KvCommand {
         public BatchWrite {
             batch = Objects.requireNonNull(batch, "batch must not be null");
+        }
+    }
+
+    record CompareAndWrite(Transaction transaction) implements KvCommand {
+        public CompareAndWrite {
+            transaction = Objects.requireNonNull(transaction, "transaction must not be null");
         }
     }
 }

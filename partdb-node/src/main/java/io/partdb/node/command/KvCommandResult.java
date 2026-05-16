@@ -1,6 +1,6 @@
 package io.partdb.node.command;
 
-public sealed interface KvCommandResult permits KvCommandResult.Applied {
+public sealed interface KvCommandResult permits KvCommandResult.Applied, KvCommandResult.ConditionFailed {
     record Applied(long revision) implements KvCommandResult {
         public Applied {
             if (revision <= 0) {
@@ -8,4 +8,6 @@ public sealed interface KvCommandResult permits KvCommandResult.Applied {
             }
         }
     }
+
+    record ConditionFailed() implements KvCommandResult {}
 }

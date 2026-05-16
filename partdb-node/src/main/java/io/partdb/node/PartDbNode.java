@@ -17,6 +17,8 @@ import io.partdb.node.kv.KeyValueEntry;
 import io.partdb.node.kv.KeyValueStore;
 import io.partdb.node.kv.ReadConsistency;
 import io.partdb.node.kv.ScanCursor;
+import io.partdb.node.kv.Transaction;
+import io.partdb.node.kv.TransactionResult;
 import io.partdb.node.kv.VersionedValue;
 import io.partdb.node.kv.WriteBatch;
 import io.partdb.node.kv.WriteResult;
@@ -127,6 +129,13 @@ public final class PartDbNode implements AutoCloseable {
         public CompletionStage<WriteResult> write(WriteBatch batch) {
             Objects.requireNonNull(batch, "batch must not be null");
             return propose(new KvCommand.BatchWrite(batch));
+        }
+
+        @Override
+        public CompletionStage<TransactionResult> transact(Transaction transaction) {
+            Objects.requireNonNull(transaction, "transaction must not be null");
+            return mapFailure(trackProposal(runtime.commandProposer()
+                .proposeTransaction(new KvCommand.CompareAndWrite(transaction))));
         }
 
         private Optional<VersionedValue> getLocal(Bytes key) {

@@ -2,6 +2,9 @@ package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.node.cluster.NodeRole;
+import io.partdb.node.kv.Condition;
+import io.partdb.node.kv.Transaction;
+import io.partdb.node.kv.TransactionResult;
 import io.partdb.node.kv.WriteBatch;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -95,6 +98,86 @@ class PartDbNodeTest {
             assertEquals(revision, node.keyValues().get(bytes("key-2")).toCompletableFuture().get(5, TimeUnit.SECONDS)
                 .orElseThrow()
                 .revision());
+        }
+    }
+
+    @Test
+    void transactionAppliesWritesWhenConditionsMatch() throws Exception {
+        var config = PartDbNodeConfig.builder("node-1", tempDir.resolve("node-1"))
+            .tickInterval(Duration.ofMillis(1))
+            .build();
+
+        try (var node = PartDbNode.open(config)) {
+            awaitLeader(node);
+
+            long guardRevision = node.keyValues()
+                .put(bytes("guard"), bytes("expected"))
+                .toCompletableFuture()
+                .get(5, TimeUnit.SECONDS)
+                .revision();
+
+            var result = node.keyValues()
+                .transact(Transaction.builder()
+                    .require(Condition.exists(bytes("guard")))
+                    .require(Condition.valueEquals(bytes("guard"), bytes("expected")))
+                    .require(Condition.revisionEquals(bytes("guard"), guardRevision))
+                    .require(Condition.missing(bytes("missing")))
+                    .put(bytes("key-1"), bytes("value-1"))
+                    .delete(bytes("guard"))
+                    .build())
+                .toCompletableFuture()
+                .get(5, TimeUnit.SECONDS);
+
+            long transactionRevision = switch (result) {
+                case TransactionResult.Applied(long revision) -> revision;
+                case TransactionResult.ConditionFailed _ -> throw new AssertionError("Transaction should have applied");
+            };
+            assertTrue(transactionRevision > guardRevision);
+            assertEquals(
+                bytes("value-1"),
+                node.keyValues().get(bytes("key-1")).toCompletableFuture().get(5, TimeUnit.SECONDS)
+                    .orElseThrow()
+                    .value()
+            );
+            assertTrue(node.keyValues().get(bytes("guard")).toCompletableFuture().get(5, TimeUnit.SECONDS).isEmpty());
+        }
+    }
+
+    @Test
+    void transactionDoesNotApplyWritesWhenConditionsFail() throws Exception {
+        var config = PartDbNodeConfig.builder("node-1", tempDir.resolve("node-1"))
+            .tickInterval(Duration.ofMillis(1))
+            .build();
+
+        try (var node = PartDbNode.open(config)) {
+            awaitLeader(node);
+
+            node.keyValues().put(bytes("guard"), bytes("actual"))
+                .toCompletableFuture()
+                .get(5, TimeUnit.SECONDS);
+
+            var result = node.keyValues()
+                .transact(Transaction.builder()
+                    .require(Condition.valueEquals(bytes("guard"), bytes("expected")))
+                    .put(bytes("key-1"), bytes("value-1"))
+                    .build())
+                .toCompletableFuture()
+                .get(5, TimeUnit.SECONDS);
+
+            switch (result) {
+                case TransactionResult.Applied(long revision) -> throw new AssertionError(
+                    "Transaction should have failed but applied at revision " + revision
+                );
+                case TransactionResult.ConditionFailed _ -> {
+                }
+            }
+            assertTrue(node.keyValues().get(bytes("key-1")).toCompletableFuture().get(5, TimeUnit.SECONDS).isEmpty());
+            assertEquals(
+                bytes("actual"),
+                node.keyValues().get(bytes("guard")).toCompletableFuture().get(5, TimeUnit.SECONDS)
+                    .orElseThrow()
+                    .value()
+            );
         }
     }
 

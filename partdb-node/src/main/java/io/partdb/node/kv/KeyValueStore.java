@@ -19,4 +19,6 @@ public interface KeyValueStore {
     CompletionStage<WriteResult> delete(Bytes key);
 
     CompletionStage<WriteResult> write(WriteBatch batch);
+
+    CompletionStage<TransactionResult> transact(Transaction transaction);
 }

@@ -8,12 +8,13 @@ import java.nio.ByteOrder;
 public final class KvCommandResultCodec {
     private static final byte VERSION_1 = 1;
     private static final byte OP_APPLIED = 1;
+    private static final byte OP_CONDITION_FAILED = 2;
 
     private KvCommandResultCodec() {
     }
 
     public static Bytes encode(KvCommandResult result) {
-        var buffer = ByteBuffer.allocate(10).order(ByteOrder.BIG_ENDIAN);
+        var buffer = ByteBuffer.allocate(encodedSize(result)).order(ByteOrder.BIG_ENDIAN);
         buffer.put(VERSION_1);
 
         switch (result) {
@@ -21,6 +22,7 @@ public final class KvCommandResultCodec {
                 buffer.put(OP_APPLIED);
                 buffer.putLong(revision);
             }
+            case KvCommandResult.ConditionFailed _ -> buffer.put(OP_CONDITION_FAILED);
         }
 
         return Bytes.copyOf(buffer.array());
@@ -36,7 +38,15 @@ public final class KvCommandResultCodec {
         byte opcode = buffer.get();
         return switch (opcode) {
             case OP_APPLIED -> new KvCommandResult.Applied(buffer.getLong());
+            case OP_CONDITION_FAILED -> new KvCommandResult.ConditionFailed();
             default -> throw new IllegalArgumentException("Unknown KV command result opcode: " + opcode);
+        };
+    }
+
+    private static int encodedSize(KvCommandResult result) {
+        return switch (result) {
+            case KvCommandResult.Applied _ -> 1 + 1 + 8;
+            case KvCommandResult.ConditionFailed _ -> 1 + 1;
         };
     }
 }

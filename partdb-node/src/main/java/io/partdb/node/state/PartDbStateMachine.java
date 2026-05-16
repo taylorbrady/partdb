@@ -9,6 +9,7 @@ import io.partdb.node.command.KvCommand;
 import io.partdb.node.command.KvCommandCodec;
 import io.partdb.node.command.KvCommandResult;
 import io.partdb.node.command.KvCommandResultCodec;
+import io.partdb.node.kv.Condition;
 import io.partdb.node.kv.WriteOperation;
 import io.partdb.storage.EntryRecord;
 import io.partdb.storage.KeyRange;
@@ -27,6 +28,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.Iterator;
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Spliterator;
@@ -64,17 +66,15 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
                 yield applied(index);
             }
             case KvCommand.BatchWrite(var batch) -> {
-                WriteBatch.Builder storageBatch = WriteBatch.builder();
+                store.apply(new Revision(index), toStorageBatch(batch.operations()));
 
-                for (var operation : batch.operations()) {
-                    switch (operation) {
-                        case WriteOperation.Put(var key, var value) -> storageBatch.put(key, value);
-                        case WriteOperation.Delete(var key) -> storageBatch.delete(key);
-                    }
+                yield applied(index);
+            }
+            case KvCommand.CompareAndWrite(var transaction) -> {
+                if (!conditionsMatch(transaction.conditions())) {
+                    yield conditionFailed();
                 }
-
-                store.apply(new Revision(index), storageBatch.build());
-
+                store.apply(new Revision(index), toStorageBatch(transaction.operations()));
                 yield applied(index);
             }
         };
@@ -184,5 +184,46 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
 
     private static StateMachineResult applied(long revision) {
         return new StateMachineResult.Applied(KvCommandResultCodec.encode(new KvCommandResult.Applied(revision)));
+    }
+
+    private static StateMachineResult conditionFailed() {
+        return new StateMachineResult.Applied(KvCommandResultCodec.encode(new KvCommandResult.ConditionFailed()));
+    }
+
+    private boolean conditionsMatch(List<Condition> conditions) {
+        for (Condition condition : conditions) {
+            if (!conditionMatches(condition)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean conditionMatches(Condition condition) {
+        Optional<ValueRecord> value = store.get(condition.key());
+        return switch (condition) {
+            case Condition.Exists _ -> value.isPresent();
+            case Condition.Missing _ -> value.isEmpty();
+            case Condition.ValueEquals(var ignored, var expected) -> value
+                .map(ValueRecord::value)
+                .filter(expected::equals)
+                .isPresent();
+            case Condition.RevisionEquals(var ignored, long expectedRevision) -> value
+                .map(ValueRecord::modRevision)
+                .map(Revision::value)
+                .filter(revision -> revision == expectedRevision)
+                .isPresent();
+        };
+    }
+
+    private static WriteBatch toStorageBatch(List<WriteOperation> operations) {
+        WriteBatch.Builder storageBatch = WriteBatch.builder();
+        for (var operation : operations) {
+            switch (operation) {
+                case WriteOperation.Put(var key, var value) -> storageBatch.put(key, value);
+                case WriteOperation.Delete(var key) -> storageBatch.delete(key);
+            }
+        }
+        return storageBatch.build();
     }
 }
