@@ -219,10 +219,6 @@ final class MultiNodeClusterHarness implements AutoCloseable {
             .toList();
     }
 
-    String raftAddress(String nodeId) {
-        return "localhost:" + node(nodeId).raftPort();
-    }
-
     String grpcAddress(String nodeId) {
         return node(nodeId).grpcEndpoint().toString();
     }

@@ -15,18 +15,12 @@ import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
 import io.partdb.node.PartDbNode;
 import io.partdb.node.cluster.NodeStatus;
 
-import java.util.Map;
-
 final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase {
 
     private final PartDbNode node;
-    private final Map<String, String> raftPeerAddresses;
-    private final String selfRaftAddress;
 
-    ClusterServiceImpl(PartDbNode node, Map<String, String> raftPeerAddresses, String selfRaftAddress) {
+    ClusterServiceImpl(PartDbNode node) {
         this.node = node;
-        this.raftPeerAddresses = Map.copyOf(raftPeerAddresses);
-        this.selfRaftAddress = selfRaftAddress;
     }
 
     @Override
@@ -69,12 +63,8 @@ final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase
     }
 
     private Member buildMember(String nodeId, MemberRole role, String leaderId, String selfId) {
-        String raftAddress = nodeId.equals(selfId)
-            ? selfRaftAddress
-            : raftPeerAddresses.getOrDefault(nodeId, "");
         return Member.newBuilder()
             .setNodeId(nodeId)
-            .setRaftAddress(raftAddress)
             .setRole(role)
             .setIsLeader(nodeId.equals(leaderId))
             .setIsSelf(nodeId.equals(selfId))

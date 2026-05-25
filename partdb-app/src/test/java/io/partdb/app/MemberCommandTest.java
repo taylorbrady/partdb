@@ -3,7 +3,6 @@ package io.partdb.app;
 import io.partdb.client.ClusterMember;
 import io.partdb.client.ClusterMemberRole;
 import io.partdb.client.ClusterMembership;
-import io.partdb.client.ServerEndpoint;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -19,7 +18,6 @@ class MemberCommandTest {
             Optional.of("leader\"1"),
             List.of(new ClusterMember(
                 "node\n1",
-                Optional.of(new ServerEndpoint("::1", 8100)),
                 ClusterMemberRole.VOTER,
                 true,
                 false
@@ -28,8 +26,7 @@ class MemberCommandTest {
 
         assertEquals(
             "{\"leaderId\":\"leader\\\"1\",\"members\":[{\"nodeId\":\"node\\n1\","
-                + "\"raftAddress\":\"[::1]:8100\",\"role\":\"voter\","
-                + "\"isLeader\":true,\"isSelf\":false}]}",
+                + "\"role\":\"voter\",\"isLeader\":true,\"isSelf\":false}]}",
             MemberCommand.toJson(membership)
         );
     }

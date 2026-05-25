@@ -9,14 +9,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.Objects;
 
 public final class PartDbServer implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(PartDbServer.class);
 
     private final PartDbServerConfig config;
-    private final PartDbNode node;
-    private final GrpcServer grpcServer;
-    private final JmxRegistrations jmxRegistrations;
+    private final ConsensusRuntimeFactory runtimeFactory;
+    private PartDbNode node;
+    private GrpcServer grpcServer;
+    private JmxRegistrations jmxRegistrations;
     private AdminHttpServer adminHttpServer;
 
     public PartDbServer(PartDbServerConfig config) {
@@ -24,16 +26,8 @@ public final class PartDbServer implements AutoCloseable {
     }
 
     PartDbServer(PartDbServerConfig config, ConsensusRuntimeFactory runtimeFactory) {
-        this.config = config;
-        ConsensusRuntimeFactory consensusRuntimeFactory = runtimeFactory != null ? runtimeFactory : createDefaultRuntimeFactory();
-        this.node = PartDbNode.open(config.nodeConfig(), consensusRuntimeFactory);
-        this.grpcServer = new GrpcServer(
-            node,
-            config.raftPeerAddresses(),
-            config.selfRaftEndpoint().toString(),
-            config.grpcPort()
-        );
-        this.jmxRegistrations = new JmxRegistrations(node);
+        this.config = Objects.requireNonNull(config, "config must not be null");
+        this.runtimeFactory = runtimeFactory;
     }
 
     private ConsensusRuntimeFactory createDefaultRuntimeFactory() {
@@ -47,18 +41,23 @@ public final class PartDbServer implements AutoCloseable {
     }
 
     public void start() throws IOException {
+        if (node != null) {
+            throw new IllegalStateException("PartDB server already started");
+        }
         log.atInfo()
             .addKeyValue("nodeId", config.nodeId())
             .log("Starting PartDB server");
-        boolean grpcStarted = false;
-        boolean jmxRegistered = false;
         try {
+            ConsensusRuntimeFactory consensusRuntimeFactory = runtimeFactory != null
+                ? runtimeFactory
+                : createDefaultRuntimeFactory();
+            node = PartDbNode.open(config.nodeConfig(), consensusRuntimeFactory);
+            grpcServer = new GrpcServer(node, config.grpcPort());
+            jmxRegistrations = new JmxRegistrations(node);
             grpcServer.start();
-            grpcStarted = true;
             adminHttpServer = new AdminHttpServer(node, config.adminPort());
             adminHttpServer.start();
             jmxRegistrations.register();
-            jmxRegistered = true;
             log.atInfo()
                 .addKeyValue("nodeId", config.nodeId())
                 .addKeyValue("grpcPort", config.grpcPort())
@@ -66,19 +65,7 @@ public final class PartDbServer implements AutoCloseable {
                 .addKeyValue("adminPort", config.adminPort())
                 .log("PartDB server started");
         } catch (Exception e) {
-            if (jmxRegistered) {
-                jmxRegistrations.close();
-            }
-            if (adminHttpServer != null) {
-                try {
-                    adminHttpServer.close();
-                } finally {
-                    adminHttpServer = null;
-                }
-            }
-            if (grpcStarted) {
-                grpcServer.close();
-            }
+            close();
             if (e instanceof IOException ioException) {
                 throw ioException;
             }
@@ -104,12 +91,30 @@ public final class PartDbServer implements AutoCloseable {
             }
         } finally {
             try {
-                grpcServer.close();
+                if (grpcServer != null) {
+                    try {
+                        grpcServer.close();
+                    } finally {
+                        grpcServer = null;
+                    }
+                }
             } finally {
                 try {
-                    jmxRegistrations.close();
+                    if (jmxRegistrations != null) {
+                        try {
+                            jmxRegistrations.close();
+                        } finally {
+                            jmxRegistrations = null;
+                        }
+                    }
                 } finally {
-                    node.close();
+                    if (node != null) {
+                        try {
+                            node.close();
+                        } finally {
+                            node = null;
+                        }
+                    }
                     log.atInfo()
                         .addKeyValue("nodeId", config.nodeId())
                         .log("PartDB server shut down");

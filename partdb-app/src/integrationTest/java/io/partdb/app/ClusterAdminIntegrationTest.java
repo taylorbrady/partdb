@@ -50,7 +50,6 @@ class ClusterAdminIntegrationTest {
 
                 for (ClusterMember member : members) {
                     assertEquals(ClusterMemberRole.VOTER, member.role());
-                    assertEquals(cluster.raftAddress(member.nodeId()), member.raftEndpoint().orElseThrow().toString());
                     assertEquals(member.nodeId().equals(nodeId), member.self());
                     assertEquals(member.nodeId().equals(leaderId), member.leader());
                 }
@@ -94,7 +93,6 @@ class ClusterAdminIntegrationTest {
             assertTrue(membersResult.stdout().contains("\"leaderId\":\"" + newLeader.nodeId() + "\""));
             assertTrue(membersResult.stdout().contains("\"nodeId\":\"" + initialLeader.nodeId() + "\""));
             assertTrue(membersResult.stdout().contains("\"nodeId\":\"" + newLeader.nodeId() + "\""));
-            assertTrue(membersResult.stdout().contains("\"raftAddress\":\"" + cluster.raftAddress(newLeader.nodeId()) + "\""));
             assertEquals(1, countOccurrences(membersResult.stdout(), "\"isLeader\":true"));
         }
     }

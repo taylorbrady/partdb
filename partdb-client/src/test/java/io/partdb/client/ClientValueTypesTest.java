@@ -4,8 +4,6 @@ import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Optional;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ClientValueTypesTest {
@@ -44,16 +42,15 @@ class ClientValueTypesTest {
     }
 
     @Test
-    void clusterMemberCarriesTypedEndpoint() {
-        var endpoint = new ServerEndpoint("localhost", 8100);
+    void clusterMemberCarriesClusterIdentity() {
         var member = new ClusterMember(
             "node-1",
-            Optional.of(endpoint),
             ClusterMemberRole.VOTER,
             true,
             false
         );
 
-        assertEquals(Optional.of(endpoint), member.raftEndpoint());
+        assertEquals("node-1", member.nodeId());
+        assertEquals(ClusterMemberRole.VOTER, member.role());
     }
 }

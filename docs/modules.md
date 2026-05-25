@@ -190,7 +190,8 @@ This module exposes typed Java APIs over the public gRPC protocol.
 Allowed dependencies: `partdb-grpc`, `partdb-bytes`, gRPC/protobuf libraries.
 
 Must not own: server/node implementation details, consensus concepts, storage
-concepts, or generated-code leakage in public APIs.
+concepts, Raft peer transport endpoints, or generated-code leakage in public
+APIs.
 
 ### `partdb-server`
 
@@ -206,7 +207,8 @@ Allowed dependencies: `partdb-node`, `partdb-consensus`,
 `partdb-transport-grpc`.
 
 Must not own: CLI parsing, client commands, storage internals, Raft algorithm
-logic, or public Java client behavior.
+logic, public Java client behavior, generated protobuf classes, or gRPC service
+implementations.
 
 Merge condition: if this module stops owning health/observability/lifecycle and
 only wraps `GrpcServer`, fold it into `partdb-app`.

@@ -56,7 +56,6 @@ class LiveServerSmokeTest {
             var memberResult = runCommand("cluster", "members", "--endpoint", endpoint);
             assertEquals(0, memberResult.exitCode());
             assertTrue(memberResult.stdout().contains("node1"));
-            assertTrue(memberResult.stdout().contains("localhost:" + raftPort));
             assertTrue(memberResult.stdout().contains("leader"));
         }
     }

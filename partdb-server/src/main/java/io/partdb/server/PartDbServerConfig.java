@@ -11,7 +11,6 @@ import java.util.Objects;
 public final class PartDbServerConfig {
     private final PartDbNodeConfig nodeConfig;
     private final Map<String, String> raftPeerAddresses;
-    private final PeerEndpoint selfRaftEndpoint;
     private final int raftPort;
     private final int grpcPort;
     private final int adminPort;
@@ -19,14 +18,12 @@ public final class PartDbServerConfig {
     PartDbServerConfig(
         PartDbNodeConfig nodeConfig,
         Map<String, String> raftPeerAddresses,
-        PeerEndpoint selfRaftEndpoint,
         int raftPort,
         int grpcPort,
         int adminPort
     ) {
         Objects.requireNonNull(nodeConfig, "nodeConfig must not be null");
         Objects.requireNonNull(raftPeerAddresses, "raftPeerAddresses must not be null");
-        Objects.requireNonNull(selfRaftEndpoint, "selfRaftEndpoint must not be null");
         if (raftPort <= 0 || raftPort > 65535) {
             throw new IllegalArgumentException("raftPort must be between 1 and 65535");
         }
@@ -39,7 +36,6 @@ public final class PartDbServerConfig {
         validateDistinctPorts(raftPort, grpcPort, adminPort);
         this.nodeConfig = nodeConfig;
         this.raftPeerAddresses = Map.copyOf(raftPeerAddresses);
-        this.selfRaftEndpoint = selfRaftEndpoint;
         this.raftPort = raftPort;
         this.grpcPort = grpcPort;
         this.adminPort = adminPort;
@@ -55,10 +51,6 @@ public final class PartDbServerConfig {
 
     public Map<String, String> raftPeerAddresses() {
         return raftPeerAddresses;
-    }
-
-    PeerEndpoint selfRaftEndpoint() {
-        return selfRaftEndpoint;
     }
 
     public int raftPort() {
@@ -89,7 +81,6 @@ public final class PartDbServerConfig {
         return new PartDbServerConfig(
             nodeConfigBuilder.build(),
             normalizedRaftPeerAddresses,
-            resolveSelfRaftEndpoint(nodeId, normalizedRaftPeerAddresses, raftPort),
             raftPort,
             grpcPort,
             adminPort
@@ -100,18 +91,6 @@ public final class PartDbServerConfig {
         if (raftPort == grpcPort || raftPort == adminPort || grpcPort == adminPort) {
             throw new IllegalArgumentException("raftPort, grpcPort, and adminPort must be distinct");
         }
-    }
-
-    private static PeerEndpoint resolveSelfRaftEndpoint(
-        String nodeId,
-        Map<String, String> raftPeerAddresses,
-        int raftPort
-    ) {
-        String configuredAddress = raftPeerAddresses.get(nodeId);
-        if (configuredAddress != null) {
-            return PeerEndpoint.parse(configuredAddress);
-        }
-        return new PeerEndpoint("localhost", raftPort);
     }
 
     private static Map<String, String> normalizeRaftPeerAddresses(

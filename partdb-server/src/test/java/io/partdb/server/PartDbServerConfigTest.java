@@ -1,6 +1,5 @@
 package io.partdb.server;
 
-import io.partdb.transport.grpc.PeerEndpoint;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -63,20 +62,6 @@ class PartDbServerConfigTest {
         );
 
         assertEquals("[::1]:8100", config.raftPeerAddresses().get("node1"));
-    }
-
-    @Test
-    void createDefaultsSelfRaftEndpointForSingleNodeMode() {
-        var config = PartDbServerConfig.create(
-            "node1",
-            Map.of(),
-            Path.of("data/node1"),
-            8100,
-            8101,
-            8102
-        );
-
-        assertEquals(new PeerEndpoint("localhost", 8100), config.selfRaftEndpoint());
     }
 
     @Test

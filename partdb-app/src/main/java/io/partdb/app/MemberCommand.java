@@ -75,12 +75,11 @@ record MemberCommand(ServerEndpoint endpoint, OutputFormat format) implements Ap
     }
 
     private static void printText(ClusterMembership response, CliRuntime runtime) {
-        runtime.out().printf("%-12s %-24s %-8s %-8s%n", "NODE ID", "RAFT ADDRESS", "ROLE", "STATUS");
+        runtime.out().printf("%-12s %-8s %-8s%n", "NODE ID", "ROLE", "STATUS");
         for (ClusterMember member : response.members()) {
             String status = member.leader() ? "leader" : (member.self() ? "self" : "");
-            runtime.out().printf("%-12s %-24s %-8s %-8s%n",
+            runtime.out().printf("%-12s %-8s %-8s%n",
                 member.nodeId(),
-                member.raftEndpoint().map(Object::toString).orElse("(unknown)"),
                 member.role().name().toLowerCase(Locale.ROOT),
                 status);
         }
@@ -91,11 +90,6 @@ record MemberCommand(ServerEndpoint endpoint, OutputFormat format) implements Ap
             json.field("leaderId", response.leaderId());
             json.array("members", response.members(), (array, member) -> array.object(memberJson -> {
                 memberJson.field("nodeId", member.nodeId());
-                if (member.raftEndpoint().isPresent()) {
-                    memberJson.field("raftAddress", member.raftEndpoint().get().toString());
-                } else {
-                    memberJson.nullField("raftAddress");
-                }
                 memberJson.field("role", member.role().name().toLowerCase(Locale.ROOT));
                 memberJson.field("isLeader", member.leader());
                 memberJson.field("isSelf", member.self());

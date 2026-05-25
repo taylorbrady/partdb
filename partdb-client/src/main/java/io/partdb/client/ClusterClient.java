@@ -101,7 +101,6 @@ public final class ClusterClient implements AutoCloseable {
         var members = response.getMembersList().stream()
             .map(member -> new ClusterMember(
                 member.getNodeId(),
-                ServerEndpoint.tryParse(member.getRaftAddress()),
                 toClusterMemberRole(member.getRole()),
                 member.getIsLeader(),
                 member.getIsSelf()
