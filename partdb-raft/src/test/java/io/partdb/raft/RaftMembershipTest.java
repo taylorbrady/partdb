@@ -11,7 +11,6 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,7 +29,7 @@ class RaftMembershipTest {
     @Nested
     class Changes {
         @Test
-        void appendsMembershipEntryAndAppliesItOnCommit() {
+        void usesNewMembershipAsSoonAsItIsAppended() {
             var node = leader();
 
             var proposed = node.step(change(1, new MembershipChange.AddLearner("n4")));
@@ -38,11 +37,29 @@ class RaftMembershipTest {
             var expected = RaftMembership.of(Set.of("n1", "n2", "n3"), Set.of("n4"));
             assertEquals(List.of(new ProposalResult.Accepted(1, 2, 1)), proposed.proposals());
             assertEquals(List.of(new RaftLogEntry.Membership(2, 1, expected)), proposed.persisted());
-            assertFalse(node.raft.membership().isMember("n4"));
-
-            node.receive("n2", new AppendAccepted(1, 2));
-
             assertEquals(expected, node.raft.membership());
+        }
+
+        @Test
+        void newMemberJoinsReplication() {
+            var node = leader();
+            node.step(change(1, new MembershipChange.AddLearner("n4")));
+
+            var output = node.receive("n2", new AppendAccepted(1, 2));
+
+            assertEquals(1, output.sentTo("n4", AppendEntries.class).size());
+        }
+
+        @Test
+        void revertsMembershipWhenItsEntryIsTruncated() {
+            var node = TestNode.create("n2", "n1", "n2", "n3");
+            var added = RaftMembership.of(Set.of("n1", "n2", "n3"), Set.of("n4"));
+            node.receive("n1", new AppendEntries(1, 0, 0, List.of(new RaftLogEntry.NoOp(1, 1), new RaftLogEntry.Membership(2, 1, added)), 1));
+            assertEquals(added, node.raft.membership());
+
+            node.receive("n3", new AppendEntries(2, 1, 1, List.of(new RaftLogEntry.NoOp(2, 2)), 1));
+
+            assertEquals(RaftMembership.voters("n1", "n2", "n3"), node.raft.membership());
         }
 
         @Test
@@ -105,16 +122,6 @@ class RaftMembershipTest {
         }
 
         @Test
-        void newMemberJoinsReplication() {
-            var node = leader();
-            node.step(change(1, new MembershipChange.AddLearner("n4")));
-
-            var output = node.receive("n2", new AppendAccepted(1, 2));
-
-            assertEquals(1, output.sentTo("n4", AppendEntries.class).size());
-        }
-
-        @Test
         void removedMemberLeavesReplication() {
             var node = leader();
             node.step(change(1, new MembershipChange.RemoveNode("n3")));
@@ -139,36 +146,35 @@ class RaftMembershipTest {
         }
 
         @Test
-        void leaderStepsDownWhenItIsRemoved() {
+        void leaderRefusesToRemoveOrDemoteItself() {
             var node = leader();
-            node.step(change(1, new MembershipChange.RemoveNode("n1")));
 
-            node.receive("n2", new AppendAccepted(1, 2));
+            var output = node.step(
+                change(1, new MembershipChange.RemoveNode("n1")),
+                change(2, new MembershipChange.DemoteToLearner("n1"))
+            );
 
-            assertEquals(RaftRole.FOLLOWER, node.raft.role());
-            assertFalse(node.raft.membership().isMember("n1"));
-            assertTrue(node.tick(5 * TestNode.OPTIONS.electionTicks()).sent(PreVote.class).isEmpty());
+            assertEquals(List.of(new ProposalResult.Rejected(1), new ProposalResult.Rejected(2)), output.proposals());
+            assertEquals(RaftMembership.voters("n1", "n2", "n3"), node.raft.membership());
         }
 
         @Test
-        void leaderStepsDownWhenItIsDemoted() {
-            var node = leader();
-            node.step(change(1, new MembershipChange.DemoteToLearner("n1")));
+        void removedNodeStopsCampaigning() {
+            var node = TestNode.create("n3", "n1", "n2", "n3");
+            node.receive("n1", new AppendEntries(1, 0, 0,
+                List.of(new RaftLogEntry.Membership(1, 1, RaftMembership.voters("n1", "n2"))), 1));
 
-            node.receive("n2", new AppendAccepted(1, 2));
+            var output = node.tick(5 * TestNode.OPTIONS.electionTicks());
 
-            assertEquals(RaftRole.FOLLOWER, node.raft.role());
-            assertTrue(node.raft.membership().isLearner("n1"));
+            assertTrue(output.sent(PreVote.class).isEmpty());
         }
 
         @Test
-        void followerAppliesMembershipOnCommit() {
+        void followerUsesMembershipOnAppend() {
             var node = TestNode.create("n2", "n1", "n2", "n3");
             var next = RaftMembership.of(Set.of("n1", "n2", "n3"), Set.of("n4"));
-            node.receive("n1", new AppendEntries(1, 0, 0, List.of(new RaftLogEntry.Membership(1, 1, next)), 0));
-            assertFalse(node.raft.membership().isMember("n4"));
 
-            node.receive("n1", new AppendEntries(1, 1, 1, List.of(), 1));
+            node.receive("n1", new AppendEntries(1, 0, 0, List.of(new RaftLogEntry.Membership(1, 1, next)), 0));
 
             assertEquals(next, node.raft.membership());
         }

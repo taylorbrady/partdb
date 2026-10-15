@@ -49,18 +49,16 @@ class RaftRecoveryTest {
     }
 
     @Test
-    void recoversMembershipFromAppliedEntries() {
+    void recoversLatestMembershipInTheLog() {
         var log = new InMemoryRaftLog();
-        var applied = RaftMembership.of(Set.of("n1", "n2", "n3"), Set.of("n4"));
-        var pending = RaftMembership.of(Set.of("n1", "n2", "n3", "n4"), Set.of());
-        log.append(List.of(new RaftLogEntry.Membership(1, 1, applied), new RaftLogEntry.Membership(2, 1, pending)));
-        log.persistHardState(new RaftHardState(1, Optional.empty(), 2));
+        var learner = RaftMembership.of(Set.of("n1", "n2", "n3"), Set.of("n4"));
+        var voter = RaftMembership.of(Set.of("n1", "n2", "n3", "n4"), Set.of());
+        log.append(List.of(new RaftLogEntry.Membership(1, 1, learner), new RaftLogEntry.Membership(2, 1, voter)));
+        log.persistHardState(new RaftHardState(1, Optional.empty(), 1));
 
         var node = TestNode.restore("n1", MEMBERSHIP, log, 1);
-        assertEquals(applied, node.raft.membership());
 
-        node.drain();
-        assertEquals(pending, node.raft.membership());
+        assertEquals(voter, node.raft.membership());
     }
 
     @Test

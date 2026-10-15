@@ -320,15 +320,5 @@ class RaftElectionTest {
             assertEquals(RaftRole.FOLLOWER, node.raft.role());
             assertTrue(output.messages().isEmpty());
         }
-
-        @Test
-        void ignoresMessagesFromNonMembers() {
-            var node = TestNode.create("n1", "n1", "n2", "n3");
-
-            var output = node.receive("n9", new RequestVote(1, 0, 0, false));
-
-            assertTrue(output.messages().isEmpty());
-            assertEquals(0, node.raft.term());
-        }
     }
 }

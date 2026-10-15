@@ -5,8 +5,10 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -242,17 +244,28 @@ class ClusterTest {
         }
 
         @Test
-        void removedLeaderHandsOverToRemainingVoters() {
+        void leaderIsRemovedAfterTransferringLeadership() {
             var cluster = ClusterHarness.create(3);
             String leader = cluster.electLeader();
+            String successor = follower(cluster, leader);
             cluster.run(5);
 
-            cluster.changeMembership(leader, new MembershipChange.RemoveNode(leader));
-            cluster.runUntil(c -> c.leader().filter(id -> !id.equals(leader)).isPresent(), 100);
+            cluster.step(leader, new RaftInput.TransferLeadership(successor));
+            cluster.runUntil(c -> c.leader().filter(successor::equals).isPresent(), 20);
+            cluster.run(5);
+            cluster.changeMembership(successor, new MembershipChange.RemoveNode(leader));
+            cluster.run(10);
 
-            String successor = cluster.leader().orElseThrow();
-            assertTrue(!cluster.node(successor).membership().isMember(leader));
-            assertEquals(RaftRole.FOLLOWER, cluster.node(leader).role());
+            for (Raft raft : cluster.nodes()) {
+                if (!raft.id().equals(leader)) {
+                    assertFalse(raft.membership().isMember(leader), raft.id());
+                }
+            }
+            cluster.run(100);
+            assertEquals(Optional.of(successor), cluster.node(successor).leaderId());
+            cluster.propose(successor, "after");
+            cluster.run(5);
+            assertEquals(1, cluster.appliedCommands(successor).size());
         }
     }
 }

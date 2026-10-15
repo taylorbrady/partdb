@@ -22,6 +22,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -59,6 +60,7 @@ public final class Raft {
     private final RandomGenerator random;
     private final UnstableLog unstable;
     private final Map<Long, Long> forwardedReads = new LinkedHashMap<>();
+    private final NavigableMap<Long, RaftMembership> configurations = new TreeMap<>();
 
     private final List<Envelope> messages = new ArrayList<>();
     private final List<ProposalResult> proposals = new ArrayList<>();
@@ -72,7 +74,6 @@ public final class Raft {
     private String leaderId;
     private long commitIndex;
     private long appliedIndex;
-    private long pendingMembershipIndex;
     private long ticks;
     private long electionElapsed;
     private long heartbeatElapsed;
@@ -109,7 +110,7 @@ public final class Raft {
         this.votedFor = hardState.votedFor().orElse(null);
         this.appliedIndex = applied;
         this.commitIndex = Math.max(hardState.commit(), applied);
-        this.membership = recoverMembership(membership, snapshotIndex, applied);
+        recoverConfigurations(membership, snapshotIndex);
         this.lastHardState = hardState;
         resetElectionTimeout();
     }
@@ -205,16 +206,49 @@ public final class Raft {
         return effects;
     }
 
-    private RaftMembership recoverMembership(RaftMembership base, long snapshotIndex, long applied) {
-        var recovered = base;
-        if (applied > snapshotIndex) {
-            for (RaftLogEntry entry : log.entries(snapshotIndex + 1, applied + 1, Long.MAX_VALUE)) {
-                if (entry instanceof RaftLogEntry.Membership(_, _, var membership)) {
-                    recovered = membership;
+    private void recoverConfigurations(RaftMembership base, long snapshotIndex) {
+        configurations.put(snapshotIndex, base);
+        if (log.lastIndex() > snapshotIndex) {
+            for (RaftLogEntry entry : log.entries(snapshotIndex + 1, log.lastIndex() + 1, Long.MAX_VALUE)) {
+                if (entry instanceof RaftLogEntry.Membership(long index, _, var membership)) {
+                    configurations.put(index, membership);
                 }
             }
         }
-        return recovered;
+        membership = configurations.lastEntry().getValue();
+    }
+
+    private void append(RaftLogEntry entry) {
+        unstable.append(entry);
+        configurations.tailMap(entry.index(), true).clear();
+        if (entry instanceof RaftLogEntry.Membership(long index, _, var next)) {
+            configurations.put(index, next);
+        }
+        refreshMembership();
+    }
+
+    private void refreshMembership() {
+        var current = configurations.lastEntry().getValue();
+        if (current.equals(membership)) {
+            return;
+        }
+        membership = current;
+        if (!(role instanceof Leader leader)) {
+            return;
+        }
+        long nextIndex = lastIndex() + 1;
+        leader.progress.keySet().removeIf(member -> !member.equals(id) && !current.isMember(member));
+        for (String member : current.members()) {
+            leader.progress.computeIfAbsent(member, _ -> new Progress(nextIndex, options.maxInflightAppends()));
+        }
+        if (leader.transferTarget != null && !current.isVoter(leader.transferTarget)) {
+            leader.transferTarget = null;
+        }
+        maybeCommit(leader);
+    }
+
+    private boolean membershipPending() {
+        return configurations.lastKey() > commitIndex;
     }
 
     private void tick() {
@@ -359,8 +393,7 @@ public final class Raft {
         changeLeader(id);
         electionElapsed = 0;
         heartbeatElapsed = 0;
-        pendingMembershipIndex = lastIndex();
-        unstable.append(new RaftLogEntry.NoOp(next, term));
+        append(new RaftLogEntry.NoOp(next, term));
     }
 
     private void changeLeader(String leader) {
@@ -379,9 +412,6 @@ public final class Raft {
     }
 
     private void receive(String from, RaftMessage message) {
-        if (!membership.isMember(from)) {
-            return;
-        }
         if (message.term() > term) {
             boolean voteRequest = message instanceof PreVote || message instanceof RequestVote;
             boolean transfer = message instanceof RequestVote vote && vote.leadershipTransfer();
@@ -516,7 +546,7 @@ public final class Raft {
         for (RaftLogEntry entry : append.entries()) {
             if (conflicted || !matchesTerm(entry.index(), entry.term())) {
                 conflicted = true;
-                unstable.append(entry);
+                append(entry);
             }
         }
         commitTo(Math.min(append.commitIndex(), lastNewIndex));
@@ -552,7 +582,9 @@ public final class Raft {
         unstable.restore(snapshot);
         commitIndex = snapshot.index();
         appliedIndex = snapshot.index();
-        membership = snapshot.membership();
+        configurations.clear();
+        configurations.put(snapshot.index(), snapshot.membership());
+        refreshMembership();
         send(from, new InstallSnapshotResponse(term, snapshot.index()));
     }
 
@@ -687,14 +719,15 @@ public final class Raft {
             return;
         }
         var entry = new RaftLogEntry.Command(lastIndex() + 1, term, command);
-        unstable.append(entry);
+        append(entry);
         proposals.add(new ProposalResult.Accepted(proposal, entry.index(), term));
     }
 
     private void changeMembership(long proposal, MembershipChange change) {
         if (!(role instanceof Leader leader)
             || leader.transferTarget != null
-            || pendingMembershipIndex > appliedIndex
+            || change.revokesVote(id)
+            || membershipPending()
             || !committedInCurrentTerm()) {
             proposals.add(new ProposalResult.Rejected(proposal));
             return;
@@ -707,8 +740,7 @@ public final class Raft {
             return;
         }
         var entry = new RaftLogEntry.Membership(lastIndex() + 1, term, next);
-        unstable.append(entry);
-        pendingMembershipIndex = entry.index();
+        append(entry);
         proposals.add(new ProposalResult.Accepted(proposal, entry.index(), term));
     }
 
@@ -732,33 +764,8 @@ public final class Raft {
             return List.of();
         }
         var committed = slice(appliedIndex + 1, commitIndex + 1, options.maxApplyBytes());
-        for (RaftLogEntry entry : committed) {
-            if (entry instanceof RaftLogEntry.Membership(_, _, var next)) {
-                applyMembership(next);
-            }
-        }
         appliedIndex = committed.getLast().index();
         return committed;
-    }
-
-    private void applyMembership(RaftMembership next) {
-        membership = next;
-        if (!(role instanceof Leader leader)) {
-            return;
-        }
-        long nextIndex = lastIndex() + 1;
-        leader.progress.keySet().removeIf(member -> !member.equals(id) && !next.isMember(member));
-        for (String member : next.members()) {
-            leader.progress.computeIfAbsent(member, _ -> new Progress(nextIndex, options.maxInflightAppends()));
-        }
-        if (leader.transferTarget != null && !next.isVoter(leader.transferTarget)) {
-            leader.transferTarget = null;
-        }
-        if (!next.isVoter(id)) {
-            becomeFollower(term, null);
-            return;
-        }
-        maybeCommit(leader);
     }
 
     private void flush(Leader leader) {

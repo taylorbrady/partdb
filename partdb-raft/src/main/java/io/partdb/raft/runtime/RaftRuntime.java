@@ -346,6 +346,11 @@ public final class RaftRuntime implements AutoCloseable {
                 raft.step(new RaftInput.ReadIndex(id));
             }
             case Event.ChangeMembership(var change, var future) -> {
+                var invalid = validate(change);
+                if (invalid.isPresent()) {
+                    future.completeExceptionally(invalid.get());
+                    return;
+                }
                 long id = ++requestIds;
                 membershipChanges.put(id, future);
                 raft.step(new RaftInput.ChangeMembership(id, change));
@@ -431,14 +436,15 @@ public final class RaftRuntime implements AutoCloseable {
                 }
             }
             case ProposalResult.Rejected(long id) -> {
-                var error = notLeader();
                 var proposal = proposals.remove(id);
                 if (proposal != null) {
-                    proposal.completeExceptionally(error);
+                    proposal.completeExceptionally(notLeader());
                 }
                 var change = membershipChanges.remove(id);
                 if (change != null) {
-                    change.completeExceptionally(error);
+                    change.completeExceptionally(raft.role() == RaftRole.LEADER
+                        ? new IllegalStateException("the leader cannot change membership until its previous change and an entry of its term are committed")
+                        : notLeader());
                 }
             }
         }
@@ -484,6 +490,21 @@ public final class RaftRuntime implements AutoCloseable {
                 }
             });
             case ReadResult.Rejected _ -> future.completeExceptionally(notLeader());
+        }
+    }
+
+    private Optional<RuntimeException> validate(MembershipChange change) {
+        if (raft.role() != RaftRole.LEADER) {
+            return Optional.empty();
+        }
+        if (change.revokesVote(nodeId)) {
+            return Optional.of(new IllegalArgumentException("transfer leadership before removing or demoting the leader"));
+        }
+        try {
+            raft.membership().apply(change);
+            return Optional.empty();
+        } catch (IllegalArgumentException e) {
+            return Optional.of(e);
         }
     }
 
