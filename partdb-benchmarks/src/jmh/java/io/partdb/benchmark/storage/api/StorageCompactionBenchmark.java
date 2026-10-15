@@ -6,10 +6,8 @@ import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
 import io.partdb.storage.Mutation;
-import io.partdb.storage.Revision;
-import io.partdb.storage.SSTableOptions;
-import io.partdb.storage.StorageOptions;
-import io.partdb.storage.StorageStats;
+import io.partdb.storage.StoreOptions;
+import io.partdb.storage.StoreStats;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Level;
@@ -24,6 +22,7 @@ import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
@@ -64,11 +63,11 @@ public class StorageCompactionBenchmark {
         Bytes[] burstKeys;
         Bytes[] burstValues;
         long revisionCounter;
-        private StorageOptions options;
+        private StoreOptions options;
 
         @Setup(Level.Trial)
         public void prepareTrial() {
-            options = StorageFixtures.compactionOptions(SSTableOptions.Compression.valueOf(compressionName));
+            options = StorageFixtures.compactionOptions(StoreOptions.Compression.valueOf(compressionName));
             burstKeys = BenchmarkKeys.storageKeys(entryCountForPayloadTarget(valueSize, burstPayloadBytes));
             burstValues = buildBurstValues(valueSize, valuePattern, burstKeys.length);
         }
@@ -86,19 +85,16 @@ public class StorageCompactionBenchmark {
 
         void writeBurst() {
             for (int index = 0; index < burstKeys.length; index++) {
-                store().apply(
-                    new Revision(++revisionCounter),
-                    Mutation.put(burstKeys[index], burstValues[index])
-                );
+                store().apply(++revisionCounter, List.of(Mutation.put(burstKeys[index], burstValues[index])));
             }
         }
 
-        StorageStats awaitCompactionCatchup(long completedBefore) {
+        StoreStats awaitCompactionCatchup(long completedBefore) {
             long deadline = System.nanoTime() + QUIESCE_TIMEOUT_NANOS;
             boolean sawCompaction = false;
 
             while (System.nanoTime() < deadline) {
-                StorageStats stats = store().stats();
+                StoreStats stats = store().stats();
                 if (stats.activeCompactions() > 0 || stats.completedCompactions() > completedBefore) {
                     sawCompaction = true;
                 }

@@ -87,7 +87,7 @@ tasks.register<JavaExec>("jmhBaseline") {
         "-o", layout.buildDirectory.file("reports/jmh/baseline-results.txt").get().asFile.absolutePath
     ) + when (project.name) {
         "partdb-storage" -> listOf(
-            ".*(BlockCodecBenchmark\\.(compress|decompress)|BlockCacheBenchmark\\.hotHit|BloomFilterBenchmark\\.miss|DataBlockReadBenchmark\\.(findMiddle|scanFull)).*",
+            ".*(BlockCodecBenchmark\\.(compress|decompress)|BlockCacheBenchmark\\.hotHit|BloomFilterBenchmark\\.miss|BlockReadBenchmark\\.(findMiddle|scanFull)).*",
             "-p", "codecName=DEFLATE",
             "-p", "payloadSize=4096",
             "-p", "payloadKind=SEMI_COMPRESSIBLE",

@@ -7,7 +7,6 @@ import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.benchmark.support.StorageWorkloadScript;
 import io.partdb.bytes.Bytes;
 import io.partdb.storage.Mutation;
-import io.partdb.storage.Revision;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Level;
@@ -22,6 +21,7 @@ import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -46,10 +46,7 @@ public class StorageWorkloadBenchmark {
         StorageWorkloadScript.Operation operation = state.nextOperation();
         switch (operation.kind()) {
             case READ_EXISTING, READ_MISSING -> bh.consume(state.store().get(operation.key()));
-            case UPDATE_EXISTING, INSERT_NEW -> state.store().apply(
-                new Revision(state.nextRevision()),
-                Mutation.put(operation.key(), state.valueTemplate)
-            );
+            case UPDATE_EXISTING, INSERT_NEW -> state.store().apply(state.nextRevision(), List.of(Mutation.put(operation.key(), state.valueTemplate)));
         }
     }
 
@@ -81,7 +78,7 @@ public class StorageWorkloadBenchmark {
             Bytes[] missingKeys = BenchmarkKeys.missingKeys(initialKeyCount);
 
             long nextRevision = StorageFixtures.populate(store(), existingKeys, valueTemplate, 1);
-            store().flush();
+            reopenStore(StorageFixtures.defaultOptions());
 
             operations = StorageWorkloadScript.mixed(
                 existingKeys,

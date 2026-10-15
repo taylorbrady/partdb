@@ -5,8 +5,9 @@ import io.partdb.benchmark.support.BenchmarkKeys;
 import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
+import io.partdb.storage.Cursor;
 import io.partdb.storage.KeyRange;
-import io.partdb.storage.Scan;
+import io.partdb.storage.Snapshot;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Level;
@@ -52,8 +53,9 @@ public class StorageScanBenchmark {
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
     public long persistedFullScan(PersistedScanState state) {
         long count = 0;
-        try (Scan cursor = state.store().scan(KeyRange.all())) {
-            for (var ignored : cursor) {
+        try (Snapshot snapshot = state.store().snapshot(); Cursor cursor = snapshot.scan(KeyRange.all())) {
+            while (cursor.hasNext()) {
+                cursor.next();
                 count++;
             }
         }
@@ -61,10 +63,9 @@ public class StorageScanBenchmark {
     }
 
     private static void consumeRange(BaseScanState state, ScanRange range, Blackhole bh) {
-        try (Scan cursor = state.store().scan(KeyRange.between(range.start(), range.endExclusive()))) {
-            for (var entry : cursor) {
-                bh.consume(entry);
-            }
+        try (Snapshot snapshot = state.store().snapshot();
+             Cursor cursor = snapshot.scan(KeyRange.between(range.start(), range.endExclusive()))) {
+            cursor.forEachRemaining(bh::consume);
         }
     }
 
@@ -111,7 +112,6 @@ public class StorageScanBenchmark {
                 BenchmarkValues.fixedValue(valueSize, 0x7eedL),
                 1
             );
-            store().flush();
             if (reopenAfterLoad) {
                 reopenStore(StorageFixtures.defaultOptions());
             }

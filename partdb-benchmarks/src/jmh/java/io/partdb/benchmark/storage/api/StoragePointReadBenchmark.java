@@ -5,7 +5,7 @@ import io.partdb.benchmark.support.BenchmarkKeys;
 import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
-import io.partdb.storage.StorageOptions;
+import io.partdb.storage.StoreOptions;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Level;
@@ -66,7 +66,7 @@ public class StoragePointReadBenchmark {
     public abstract static class BaseReadState extends AbstractStorageState {
         Bytes[] existingKeys;
         Bytes[] missingKeys;
-        private StorageOptions options;
+        private StoreOptions options;
 
         void prepare(int keyCount, int valueSize, boolean reopenAfterLoad) throws IOException {
             options = StorageFixtures.defaultOptions();
@@ -80,7 +80,6 @@ public class StoragePointReadBenchmark {
                 BenchmarkValues.fixedValue(valueSize, 0x5eedL),
                 1
             );
-            store().flush();
             if (reopenAfterLoad) {
                 reopenStore(options);
             }

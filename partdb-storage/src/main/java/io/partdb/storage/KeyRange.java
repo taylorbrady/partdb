@@ -4,7 +4,7 @@ import io.partdb.bytes.Bytes;
 
 import java.util.Objects;
 
-public sealed interface KeyRange permits KeyRange.All, KeyRange.From, KeyRange.Until, KeyRange.Between {
+public sealed interface KeyRange {
 
     static KeyRange all() {
         return All.INSTANCE;
@@ -22,29 +22,26 @@ public sealed interface KeyRange permits KeyRange.All, KeyRange.From, KeyRange.U
         return new Between(startInclusive, endExclusive);
     }
 
-    final class All implements KeyRange {
-        private static final All INSTANCE = new All();
-
-        private All() {
-        }
+    enum All implements KeyRange {
+        INSTANCE
     }
 
     record From(Bytes startInclusive) implements KeyRange {
         public From {
-            startInclusive = Objects.requireNonNull(startInclusive, "startInclusive must not be null");
+            Objects.requireNonNull(startInclusive, "startInclusive must not be null");
         }
     }
 
     record Until(Bytes endExclusive) implements KeyRange {
         public Until {
-            endExclusive = Objects.requireNonNull(endExclusive, "endExclusive must not be null");
+            Objects.requireNonNull(endExclusive, "endExclusive must not be null");
         }
     }
 
     record Between(Bytes startInclusive, Bytes endExclusive) implements KeyRange {
         public Between {
-            startInclusive = Objects.requireNonNull(startInclusive, "startInclusive must not be null");
-            endExclusive = Objects.requireNonNull(endExclusive, "endExclusive must not be null");
+            Objects.requireNonNull(startInclusive, "startInclusive must not be null");
+            Objects.requireNonNull(endExclusive, "endExclusive must not be null");
             if (startInclusive.compareTo(endExclusive) > 0) {
                 throw new IllegalArgumentException("startInclusive must be <= endExclusive");
             }

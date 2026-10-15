@@ -11,82 +11,80 @@ import io.partdb.node.kv.Scan;
 import io.partdb.node.kv.Txn;
 import io.partdb.node.kv.TxnResult;
 import io.partdb.raft.runtime.StateMachine;
-import io.partdb.storage.EntryRecord;
-import io.partdb.storage.MutationBatch;
-import io.partdb.storage.Revision;
-import io.partdb.storage.StorageEngine;
-import io.partdb.storage.StorageOptions;
-import io.partdb.storage.StorageReadView;
-import io.partdb.storage.ValueRecord;
+import io.partdb.storage.Cursor;
+import io.partdb.storage.Entry;
+import io.partdb.storage.Snapshot;
+import io.partdb.storage.Store;
+import io.partdb.storage.StoreOptions;
 
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Path;
-import java.time.Duration;
-import java.util.Iterator;
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
 public final class KvStateMachine implements StateMachine<TxnResult>, AutoCloseable {
 
-    private final StorageEngine store;
+    private final Store store;
 
-    private KvStateMachine(StorageEngine store) {
+    private KvStateMachine(Store store) {
         this.store = store;
     }
 
     public static KvStateMachine open(Path directory) {
-        return new KvStateMachine(StorageEngine.open(directory, StorageOptions.defaults()));
+        return new KvStateMachine(Store.open(directory, StoreOptions.defaults()));
     }
 
     @Override
     public long appliedIndex() {
-        return store.appliedThrough().value();
+        return store.appliedIndex();
     }
 
     @Override
     public TxnResult apply(long index, Bytes command) {
         Txn txn = TxnCodec.decode(command);
         if (!matches(txn)) {
+            store.apply(index, List.of());
             return new TxnResult.ConditionFailed();
         }
-        var batch = MutationBatch.builder();
-        for (Mutation mutation : txn.mutations()) {
-            switch (mutation) {
-                case Mutation.Put(var key, var value) -> batch.put(key, value);
-                case Mutation.Delete(var key) -> batch.delete(key);
-            }
-        }
-        store.apply(new Revision(index), batch.build());
+        store.apply(index, txn.mutations().stream()
+            .<io.partdb.storage.Mutation>map(mutation -> switch (mutation) {
+                case Mutation.Put(var key, var value) -> io.partdb.storage.Mutation.put(key, value);
+                case Mutation.Delete(var key) -> io.partdb.storage.Mutation.delete(key);
+            })
+            .toList());
         return new TxnResult.Committed(index);
     }
 
     @Override
     public void skip(long index) {
+        store.apply(index, List.of());
     }
 
     @Override
     public long snapshot(OutputStream target) {
-        return store.checkpoint(target).value();
+        return store.checkpoint(target);
     }
 
     @Override
     public void restore(long index, InputStream snapshot) {
-        store.restore(snapshot);
-        long restored = store.appliedThrough().value();
+        long restored = store.restore(snapshot);
         if (restored != index) {
             throw new IllegalStateException("snapshot " + index + " restored storage at " + restored);
         }
     }
 
     public Read<Optional<KeyValue>> get(Bytes key) {
-        long revision = appliedIndex();
-        return new Read<>(store.get(key).map(record -> new KeyValue(key, record.value(), record.modRevision().value())), revision);
+        try (Snapshot snapshot = store.snapshot()) {
+            return new Read<>(snapshot.get(key).map(entry -> new KeyValue(key, entry.value(), entry.revision())), snapshot.index());
+        }
     }
 
     public Scan scan(KeyRange range, int limit) {
-        long revision = appliedIndex();
-        return new StorageScan(store.scan(storageRange(range)), limit, revision);
+        try (Snapshot snapshot = store.snapshot()) {
+            return new StorageScan(snapshot.scan(storageRange(range)), limit, snapshot.index());
+        }
     }
 
     public StorageMetrics metrics() {
@@ -94,16 +92,16 @@ public final class KvStateMachine implements StateMachine<TxnResult>, AutoClosea
         return new StorageMetrics(
             stats.activeMemtableBytes(),
             stats.immutableMemtableCount(),
-            stats.sstableCount(),
-            stats.totalSstableBytes(),
+            stats.tableCount(),
+            stats.tableBytes(),
             stats.activeCompactions(),
             stats.completedCompactions(),
             stats.failedCompactions(),
-            Duration.ofMillis(stats.lastCompactionDurationMillis()),
+            stats.lastCompactionDuration(),
             stats.checkpointCount(),
             stats.restoreCount(),
-            Duration.ofMillis(stats.lastCheckpointDurationMillis()),
-            Duration.ofMillis(stats.lastRestoreDurationMillis())
+            stats.lastCheckpointDuration(),
+            stats.lastRestoreDuration()
         );
     }
 
@@ -116,17 +114,17 @@ public final class KvStateMachine implements StateMachine<TxnResult>, AutoClosea
         if (txn.conditions().isEmpty()) {
             return true;
         }
-        try (StorageReadView view = store.readView()) {
+        try (Snapshot view = store.snapshot()) {
             return txn.conditions().stream().allMatch(condition -> matches(view.get(condition.key()), condition));
         }
     }
 
-    private static boolean matches(Optional<ValueRecord> current, Condition condition) {
+    private static boolean matches(Optional<Entry> current, Condition condition) {
         return switch (condition) {
             case Condition.Exists _ -> current.isPresent();
             case Condition.Missing _ -> current.isEmpty();
-            case Condition.ValueEquals(_, var expected) -> current.map(ValueRecord::value).filter(expected::equals).isPresent();
-            case Condition.RevisionEquals(_, long expected) -> current.filter(value -> value.modRevision().value() == expected).isPresent();
+            case Condition.ValueEquals(_, var expected) -> current.map(Entry::value).filter(expected::equals).isPresent();
+            case Condition.RevisionEquals(_, long expected) -> current.filter(entry -> entry.revision() == expected).isPresent();
         };
     }
 
@@ -139,15 +137,13 @@ public final class KvStateMachine implements StateMachine<TxnResult>, AutoClosea
     }
 
     private static final class StorageScan implements Scan {
-        private final io.partdb.storage.Scan scan;
-        private final Iterator<EntryRecord> entries;
+        private final Cursor entries;
         private final long revision;
         private int remaining;
         private boolean closed;
 
-        private StorageScan(io.partdb.storage.Scan scan, int limit, long revision) {
-            this.scan = scan;
-            this.entries = scan.iterator();
+        private StorageScan(Cursor entries, int limit, long revision) {
+            this.entries = entries;
             this.revision = revision;
             this.remaining = limit == 0 ? Integer.MAX_VALUE : limit;
         }
@@ -175,15 +171,15 @@ public final class KvStateMachine implements StateMachine<TxnResult>, AutoClosea
                 throw new NoSuchElementException();
             }
             remaining--;
-            EntryRecord entry = entries.next();
-            return new KeyValue(entry.key(), entry.value(), entry.modRevision().value());
+            Entry entry = entries.next();
+            return new KeyValue(entry.key(), entry.value(), entry.revision());
         }
 
         @Override
         public void close() {
             if (!closed) {
                 closed = true;
-                scan.close();
+                entries.close();
             }
         }
     }
