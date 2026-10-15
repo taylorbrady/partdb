@@ -5,6 +5,7 @@ import io.partdb.bytes.Bytes;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -14,7 +15,9 @@ import java.util.function.IntUnaryOperator;
 
 public final class RaftNode {
 
-    private record PendingRead(long index, long context, String requester, Set<String> acks) {}
+    private record PendingRead(long index, long round, long context, String requester, Set<String> acks) {}
+
+    private record DeferredRead(long context, String requester) {}
 
     private final String id;
     private RaftMembership membership;
@@ -41,6 +44,9 @@ public final class RaftNode {
     private Map<String, Long> nextIndex;
     private Map<String, Long> matchIndex;
     private List<PendingRead> pendingReads = List.of();
+    private List<DeferredRead> deferredReads = List.of();
+    private long readRound;
+    private final Map<Long, Long> forwardedReads = new LinkedHashMap<>();
 
     private Set<String> votesReceived;
     private Set<String> preVotesReceived;
@@ -205,6 +211,7 @@ public final class RaftNode {
     private void tick(RaftEffectAccumulator accumulator) {
         tickCount++;
         leaderContactTicks++;
+        expireForwardedReads(accumulator);
         switch (role) {
             case LEADER -> tickHeartbeat(accumulator);
             case FOLLOWER, PRE_CANDIDATE, CANDIDATE -> tickElection(accumulator);
@@ -321,10 +328,10 @@ public final class RaftNode {
         }
     }
 
-    private void stepDownAfterMembershipChange() {
+    private void stepDownAfterMembershipChange(RaftEffectAccumulator accumulator) {
+        abandonLeaderReads(accumulator);
         role = RaftRole.FOLLOWER;
         leaderId = null;
-        pendingReads = List.of();
         lastHeardFrom = null;
         resetElectionTimeout();
     }
@@ -371,6 +378,7 @@ public final class RaftNode {
 
         role = RaftRole.PRE_CANDIDATE;
         leaderId = null;
+        failForwardedReads(accumulator);
         preVotesReceived = new HashSet<>();
         preVotesReceived.add(id);
         resetElectionTimeout();
@@ -389,6 +397,7 @@ public final class RaftNode {
         votedFor = id;
         role = RaftRole.CANDIDATE;
         leaderId = null;
+        failForwardedReads(accumulator);
         votesReceived = new HashSet<>();
         votesReceived.add(id);
         resetElectionTimeout();
@@ -418,6 +427,7 @@ public final class RaftNode {
         matchIndex = new HashMap<>();
         lastHeardFrom = new HashMap<>();
         pendingReads = new ArrayList<>();
+        deferredReads = new ArrayList<>();
         for (String peer : peers) {
             nextIndex.put(peer, lastIndex() + 1);
             matchIndex.put(peer, 0L);
@@ -437,19 +447,25 @@ public final class RaftNode {
     }
 
     private void becomeFollower(long newTerm, String leader, RaftEffectAccumulator accumulator) {
+        if (role == RaftRole.LEADER) {
+            abandonLeaderReads(accumulator);
+        }
         boolean termChanged = newTerm > term;
         if (termChanged) {
             term = newTerm;
             votedFor = null;
             persistHardState(accumulator);
         }
+        String previousLeader = leaderId;
         if (role != RaftRole.FOLLOWER || termChanged) {
             role = RaftRole.FOLLOWER;
             leaderId = leader;
-            pendingReads = List.of();
             lastHeardFrom = null;
         } else if (leader != null) {
             leaderId = leader;
+        }
+        if (!Objects.equals(previousLeader, leaderId)) {
+            failForwardedReads(accumulator);
         }
         resetElectionTimeout();
     }
@@ -511,7 +527,7 @@ public final class RaftNode {
 
     private void handleAppendEntries(String from, RaftMessage.AppendEntries ae, RaftEffectAccumulator accumulator) {
         if (ae.term() < term) {
-            accumulator.send(from, new RaftMessage.AppendEntriesResponse(term, false, 0));
+            accumulator.send(from, new RaftMessage.AppendEntriesResponse(term, false, 0, ae.round()));
             return;
         }
 
@@ -519,7 +535,7 @@ public final class RaftNode {
         becomeFollower(ae.term(), ae.leaderId(), accumulator);
 
         if (!hasEntryMatching(ae.prevLogIndex(), ae.prevLogTerm())) {
-            accumulator.send(from, new RaftMessage.AppendEntriesResponse(term, false, 0));
+            accumulator.send(from, new RaftMessage.AppendEntriesResponse(term, false, 0, ae.round()));
             return;
         }
 
@@ -533,12 +549,13 @@ public final class RaftNode {
             matchIdx = entry.index();
         }
 
-        if (ae.leaderCommit() > commitIndex) {
-            commitIndex = Math.min(ae.leaderCommit(), matchIdx);
+        long leaderCommit = Math.min(ae.leaderCommit(), matchIdx);
+        if (leaderCommit > commitIndex) {
+            commitIndex = leaderCommit;
             persistHardState(accumulator);
         }
 
-        accumulator.send(from, new RaftMessage.AppendEntriesResponse(term, true, matchIdx));
+        accumulator.send(from, new RaftMessage.AppendEntriesResponse(term, true, matchIdx, ae.round()));
     }
 
     private void handleAppendEntriesResponse(String from, RaftMessage.AppendEntriesResponse aer, RaftEffectAccumulator accumulator) {
@@ -547,6 +564,7 @@ public final class RaftNode {
         }
 
         lastHeardFrom.put(from, tickCount);
+        checkPendingReads(from, aer.round(), accumulator);
 
         if (aer.success()) {
             if (aer.matchIndex() > matchIndex.getOrDefault(from, 0L)) {
@@ -554,7 +572,6 @@ public final class RaftNode {
                 matchIndex.put(from, aer.matchIndex());
                 advanceCommitIndex(accumulator);
             }
-            checkPendingReads(from, accumulator);
         } else {
             long next = nextIndex.getOrDefault(from, 1L);
             nextIndex.put(from, Math.max(1, next - 1));
@@ -599,9 +616,12 @@ public final class RaftNode {
 
     private void handleReadIndexEvent(long context, RaftEffectAccumulator accumulator) {
         if (role == RaftRole.LEADER) {
-            startReadIndexConfirmation(null, context, accumulator);
+            confirmRead(null, context, accumulator);
         } else if (leaderId != null) {
+            forwardedReads.put(context, tickCount);
             accumulator.send(leaderId, new RaftMessage.ReadIndexRequested(term, context));
+        } else {
+            accumulator.addReadState(0, context);
         }
     }
 
@@ -610,7 +630,7 @@ public final class RaftNode {
             accumulator.send(from, new RaftMessage.ReadIndexResponse(term, 0, ri.context()));
             return;
         }
-        startReadIndexConfirmation(from, ri.context(), accumulator);
+        confirmRead(from, ri.context(), accumulator);
     }
 
     private void handleReadIndexResponse(String from, RaftMessage.ReadIndexResponse rir, RaftEffectAccumulator accumulator) {
@@ -620,54 +640,95 @@ public final class RaftNode {
         if (rir.term() > term) {
             becomeFollower(rir.term(), from, accumulator);
         }
-        if (rir.term() != term) {
+        if (rir.term() != term || forwardedReads.remove(rir.context()) == null) {
             return;
         }
-        if (rir.readIndex() > 0) {
-            accumulator.addReadState(rir.readIndex(), rir.context());
-        }
+        accumulator.addReadState(rir.readIndex(), rir.context());
     }
 
-    private void startReadIndexConfirmation(String requester, long context, RaftEffectAccumulator accumulator) {
-        if (role != RaftRole.LEADER) {
+    private void confirmRead(String requester, long context, RaftEffectAccumulator accumulator) {
+        if (!committedInCurrentTerm()) {
+            deferredReads.add(new DeferredRead(context, requester));
             return;
         }
-
         if (quorum == 1) {
-            if (requester == null) {
-                accumulator.addReadState(commitIndex, context);
-            } else {
-                accumulator.send(requester, new RaftMessage.ReadIndexResponse(term, commitIndex, context));
-            }
+            completeRead(requester, commitIndex, context, accumulator);
             return;
         }
 
+        readRound++;
         var acks = new HashSet<String>();
         acks.add(id);
-        pendingReads.add(new PendingRead(commitIndex, context, requester, acks));
+        pendingReads.add(new PendingRead(commitIndex, readRound, context, requester, acks));
         broadcastAppend(accumulator);
     }
 
-    private void checkPendingReads(String from, RaftEffectAccumulator accumulator) {
-        if (pendingReads.isEmpty()) {
+    private boolean committedInCurrentTerm() {
+        return commitIndex > 0 && term(commitIndex) == term;
+    }
+
+    private void releaseDeferredReads(RaftEffectAccumulator accumulator) {
+        if (deferredReads.isEmpty() || !committedInCurrentTerm()) {
             return;
         }
+        var reads = deferredReads;
+        deferredReads = new ArrayList<>();
+        for (var read : reads) {
+            confirmRead(read.requester(), read.context(), accumulator);
+        }
+    }
 
-        if (!membership.isVoter(from)) {
+    private void completeRead(String requester, long index, long context, RaftEffectAccumulator accumulator) {
+        if (requester == null) {
+            accumulator.addReadState(index, context);
+        } else {
+            accumulator.send(requester, new RaftMessage.ReadIndexResponse(term, index, context));
+        }
+    }
+
+    private void checkPendingReads(String from, long round, RaftEffectAccumulator accumulator) {
+        if (pendingReads.isEmpty() || !membership.isVoter(from)) {
             return;
         }
 
         var it = pendingReads.iterator();
         while (it.hasNext()) {
             var pending = it.next();
+            if (pending.round() > round) {
+                continue;
+            }
             pending.acks().add(from);
             if (pending.acks().size() >= quorum) {
-                if (pending.requester() == null) {
-                    accumulator.addReadState(pending.index(), pending.context());
-                } else {
-                    accumulator.send(pending.requester(),
-                        new RaftMessage.ReadIndexResponse(term, pending.index(), pending.context()));
-                }
+                completeRead(pending.requester(), pending.index(), pending.context(), accumulator);
+                it.remove();
+            }
+        }
+    }
+
+    private void abandonLeaderReads(RaftEffectAccumulator accumulator) {
+        for (var pending : pendingReads) {
+            completeRead(pending.requester(), 0, pending.context(), accumulator);
+        }
+        for (var deferred : deferredReads) {
+            completeRead(deferred.requester(), 0, deferred.context(), accumulator);
+        }
+        pendingReads = List.of();
+        deferredReads = List.of();
+    }
+
+    private void failForwardedReads(RaftEffectAccumulator accumulator) {
+        for (long context : forwardedReads.keySet()) {
+            accumulator.addReadState(0, context);
+        }
+        forwardedReads.clear();
+    }
+
+    private void expireForwardedReads(RaftEffectAccumulator accumulator) {
+        var it = forwardedReads.entrySet().iterator();
+        while (it.hasNext()) {
+            var read = it.next();
+            if (tickCount - read.getValue() >= electionTimeoutMax) {
+                accumulator.addReadState(0, read.getKey());
                 it.remove();
             }
         }
@@ -692,7 +753,7 @@ public final class RaftNode {
         List<RaftLogEntry> entries = slice(next, next + maxEntriesPerAppend);
 
         accumulator.send(peer, new RaftMessage.AppendEntries(
-            term, id, prevIndex, prevTerm, entries, commitIndex
+            term, id, prevIndex, prevTerm, entries, commitIndex, readRound
         ));
     }
 
@@ -721,6 +782,7 @@ public final class RaftNode {
         }
         if (commitIndex > oldCommit) {
             persistHardState(accumulator);
+            releaseDeferredReads(accumulator);
         }
     }
 
@@ -739,7 +801,7 @@ public final class RaftNode {
                     }
 
                     if (role == RaftRole.LEADER && !entry.membership().isVoter(id)) {
-                        stepDownAfterMembershipChange();
+                        stepDownAfterMembershipChange(accumulator);
                     }
                 }
                 case RaftLogEntry.NoOp _ -> {}

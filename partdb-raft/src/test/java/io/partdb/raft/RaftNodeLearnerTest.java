@@ -39,7 +39,7 @@ class RaftNodeLearnerTest extends RaftNodeTestSupport {
             var request = new RaftMessage.AppendEntries(
                 1, "n1", 0, 0,
                 List.of(new RaftLogEntry.Data(1, 1, bytes("data"))),
-                0
+                0, 0
             );
             var ready = learner.step(new RaftInput.MessageReceived("n1", request));
 
@@ -55,7 +55,7 @@ class RaftNodeLearnerTest extends RaftNodeTestSupport {
             var request = new RaftMessage.AppendEntries(
                 1, "n1", 0, 0,
                 List.of(new RaftLogEntry.Data(1, 1, bytes("data"))),
-                1
+                1, 0
             );
             learner.step(new RaftInput.MessageReceived("n1", request));
 
@@ -71,11 +71,11 @@ class RaftNodeLearnerTest extends RaftNodeTestSupport {
             leader.step(new RaftInput.EntryProposed(bytes("hello")));
             assertEquals(0, leader.commitIndex());
 
-            var learnerResponse = new RaftMessage.AppendEntriesResponse(1, true, 2);
+            var learnerResponse = new RaftMessage.AppendEntriesResponse(1, true, 2, 0);
             leader.step(new RaftInput.MessageReceived("n4", learnerResponse));
             assertEquals(0, leader.commitIndex());
 
-            var voterResponse = new RaftMessage.AppendEntriesResponse(1, true, 2);
+            var voterResponse = new RaftMessage.AppendEntriesResponse(1, true, 2, 0);
             leader.step(new RaftInput.MessageReceived("n2", voterResponse));
             assertEquals(2, leader.commitIndex());
         }
@@ -84,7 +84,7 @@ class RaftNodeLearnerTest extends RaftNodeTestSupport {
         void learnerCanForwardReadIndex() {
             var learner = createLearner("n3", Set.of("n1", "n2"), Set.of("n3"));
 
-            var heartbeat = new RaftMessage.AppendEntries(1, "n1", 0, 0, List.of(), 0);
+            var heartbeat = new RaftMessage.AppendEntries(1, "n1", 0, 0, List.of(), 0, 0);
             learner.step(new RaftInput.MessageReceived("n1", heartbeat));
             assertEquals("n1", learner.leaderId().orElseThrow());
 
@@ -104,8 +104,9 @@ class RaftNodeLearnerTest extends RaftNodeTestSupport {
         void learnerReceivesReadIndexResponse() {
             var learner = createLearner("n3", Set.of("n1", "n2"), Set.of("n3"));
 
-            var heartbeat = new RaftMessage.AppendEntries(1, "n1", 0, 0, List.of(), 0);
+            var heartbeat = new RaftMessage.AppendEntries(1, "n1", 0, 0, List.of(), 0, 0);
             learner.step(new RaftInput.MessageReceived("n1", heartbeat));
+            learner.step(new RaftInput.ReadIndexRequested(1L));
 
             var response = new RaftMessage.ReadIndexResponse(1, 5, 1L);
             var ready = learner.step(new RaftInput.MessageReceived("n1", response));

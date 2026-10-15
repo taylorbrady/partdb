@@ -18,7 +18,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             var request = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
                 List.of(new RaftLogEntry.Data(1, 1, bytes("data"))),
-                0
+                0, 0
             );
             var ready = raft.step(new RaftInput.MessageReceived("n2", request));
 
@@ -32,7 +32,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
             var request = new RaftMessage.AppendEntries(
-                1, "n2", 1, 1, List.of(), 0
+                1, "n2", 1, 1, List.of(), 0, 0
             );
             var ready = raft.step(new RaftInput.MessageReceived("n2", request));
 
@@ -44,7 +44,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
         void followerRejectsPrevLogIndexBeyondItsLog() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var append = new RaftMessage.AppendEntries(1, "n2", 5, 0, List.of(new RaftLogEntry.NoOp(6, 1)), 6);
+            var append = new RaftMessage.AppendEntries(1, "n2", 5, 0, List.of(new RaftLogEntry.NoOp(6, 1)), 6, 0);
             var ready = raft.step(new RaftInput.MessageReceived("n2", append));
 
             var response = findResponse(ready, RaftMessage.AppendEntriesResponse.class).orElseThrow();
@@ -59,11 +59,32 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             var request = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
                 List.of(new RaftLogEntry.Data(1, 1, bytes("data"))),
-                1
+                1, 0
             );
             raft.step(new RaftInput.MessageReceived("n2", request));
 
             assertEquals(1, raft.commitIndex());
+        }
+
+        @Test
+        void followerCommitIndexNeverDecreases() {
+            var raft = createRaft("n1", "n1", "n2", "n3");
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntries(
+                1, "n2", 0, 0,
+                List.of(
+                    new RaftLogEntry.Data(1, 1, bytes("a")),
+                    new RaftLogEntry.Data(2, 1, bytes("b")),
+                    new RaftLogEntry.Data(3, 1, bytes("c"))
+                ),
+                3, 0
+            )));
+            assertEquals(3, raft.commitIndex());
+
+            var ready = raft.step(new RaftInput.MessageReceived("n2",
+                new RaftMessage.AppendEntries(1, "n2", 1, 1, List.of(), 4, 0)));
+
+            assertEquals(3, raft.commitIndex());
+            assertTrue(ready.persistence().hardState().isEmpty());
         }
 
         @Test
@@ -74,7 +95,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
                 raft.step(new RaftInput.Tick());
             }
 
-            var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0);
+            var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0, 0);
             raft.step(new RaftInput.MessageReceived("n2", heartbeat));
 
             for (int i = 0; i < 9; i++) {
@@ -91,7 +112,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             var request = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
                 List.of(new RaftLogEntry.Data(1, 1, bytes("data"))),
-                0
+                0, 0
             );
             var ready = raft.step(new RaftInput.MessageReceived("n2", request));
 
@@ -121,7 +142,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
 
             raft.step(new RaftInput.EntryProposed(bytes("hello")));
 
-            var response = new RaftMessage.AppendEntriesResponse(1, true, 2);
+            var response = new RaftMessage.AppendEntriesResponse(1, true, 2, 0);
             raft.step(new RaftInput.MessageReceived("n2", response));
 
             assertEquals(2, raft.commitIndex());
@@ -132,7 +153,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2"));
 
-            var reject = new RaftMessage.AppendEntriesResponse(1, false, 0);
+            var reject = new RaftMessage.AppendEntriesResponse(1, false, 0, 0);
             var ready = raft.step(new RaftInput.MessageReceived("n2", reject));
 
             var retryAppend = ready.messages().stream()
@@ -200,7 +221,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.RequestVoteResponse(2, true)));
             assertTrue(raft.isLeader());
 
-            var response = new RaftMessage.AppendEntriesResponse(2, true, 1);
+            var response = new RaftMessage.AppendEntriesResponse(2, true, 1, 0);
             raft.step(new RaftInput.MessageReceived("n2", response));
 
             assertEquals(0, raft.commitIndex());
@@ -215,7 +236,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.RequestVoteResponse(2, true)));
             assertTrue(raft.isLeader());
 
-            var response = new RaftMessage.AppendEntriesResponse(2, true, 2);
+            var response = new RaftMessage.AppendEntriesResponse(2, true, 2, 0);
             raft.step(new RaftInput.MessageReceived("n2", response));
 
             assertEquals(2, raft.commitIndex());
@@ -231,10 +252,10 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             raft.step(new RaftInput.MessageReceived("n3", new RaftMessage.RequestVoteResponse(2, true)));
             assertTrue(raft.isLeader());
 
-            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(2, true, 2)));
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(2, true, 2, 0)));
             assertEquals(0, raft.commitIndex());
 
-            raft.step(new RaftInput.MessageReceived("n3", new RaftMessage.AppendEntriesResponse(2, true, 2)));
+            raft.step(new RaftInput.MessageReceived("n3", new RaftMessage.AppendEntriesResponse(2, true, 2, 0)));
             assertEquals(2, raft.commitIndex());
         }
     }
@@ -256,7 +277,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
                     new RaftLogEntry.Data(2, 2, bytes("new-b")),
                     new RaftLogEntry.Data(3, 2, bytes("new-c"))
                 ),
-                0
+                0, 0
             );
             var ready = raft.step(new RaftInput.MessageReceived("n2", appendEntries));
 
@@ -284,7 +305,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
                     new RaftLogEntry.Data(3, 2, bytes("new-c")),
                     new RaftLogEntry.Data(4, 2, bytes("new-d"))
                 ),
-                0
+                0, 0
             );
             var ready = raft.step(new RaftInput.MessageReceived("n2", appendEntries));
 
@@ -306,7 +327,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             var appendEntries = new RaftMessage.AppendEntries(
                 2, "n2", 2, 2,
                 List.of(new RaftLogEntry.Data(3, 2, bytes("c"))),
-                0
+                0, 0
             );
             var ready = raft.step(new RaftInput.MessageReceived("n2", appendEntries));
 
@@ -321,7 +342,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             var raft = createRaft("n1", "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2"));
 
-            var reject = new RaftMessage.AppendEntriesResponse(1, false, 0);
+            var reject = new RaftMessage.AppendEntriesResponse(1, false, 0, 0);
             var ready = raft.step(new RaftInput.MessageReceived("n2", reject));
 
             var retry = ready.messages().stream()
@@ -333,7 +354,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             assertNotNull(retry);
             assertEquals(0, retry.prevLogIndex());
 
-            var accept = new RaftMessage.AppendEntriesResponse(1, true, 1);
+            var accept = new RaftMessage.AppendEntriesResponse(1, true, 1, 0);
             raft.step(new RaftInput.MessageReceived("n2", accept));
 
             assertEquals(1, raft.commitIndex());
@@ -349,7 +370,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             var appendEntries = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
                 List.of(new RaftLogEntry.Data(1, 1, bytes("data"))),
-                0
+                0, 0
             );
 
             var ready1 = raft.step(new RaftInput.MessageReceived("n2", appendEntries));
@@ -385,7 +406,7 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
             var raft = createRaft("n1", "n1", "n2", "n3", "n4", "n5");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var response = new RaftMessage.AppendEntriesResponse(1, true, 1);
+            var response = new RaftMessage.AppendEntriesResponse(1, true, 1, 0);
 
             raft.step(new RaftInput.MessageReceived("n2", response));
             assertEquals(0, raft.commitIndex());

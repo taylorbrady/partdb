@@ -109,7 +109,7 @@ class RaftNodeMembershipTest extends RaftNodeTestSupport {
 
             raft.step(new RaftInput.MembershipChangeProposed(new MembershipChange.DemoteToLearner("n3")));
 
-            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2, 0)));
 
             assertEquals(2, raft.commitIndex());
         }
@@ -121,7 +121,7 @@ class RaftNodeMembershipTest extends RaftNodeTestSupport {
 
             raft.step(new RaftInput.MembershipChangeProposed(new MembershipChange.RemoveNode("n1")));
 
-            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2, 0)));
 
             assertEquals(RaftRole.FOLLOWER, raft.role());
         }
@@ -132,7 +132,7 @@ class RaftNodeMembershipTest extends RaftNodeTestSupport {
             becomeLeader(raft, List.of("n2", "n3"));
 
             raft.step(new RaftInput.MembershipChangeProposed(new MembershipChange.RemoveNode("n1")));
-            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2, 0)));
 
             for (int i = 0; i < CONFIG.electionTimeoutMax() * 2; i++) {
                 raft.step(new RaftInput.Tick());
@@ -148,7 +148,7 @@ class RaftNodeMembershipTest extends RaftNodeTestSupport {
 
             raft.step(new RaftInput.MembershipChangeProposed(new MembershipChange.DemoteToLearner("n1")));
 
-            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2, 0)));
 
             assertEquals(RaftRole.FOLLOWER, raft.role());
         }
@@ -161,7 +161,7 @@ class RaftNodeMembershipTest extends RaftNodeTestSupport {
             raft.step(new RaftInput.MembershipChangeProposed(new MembershipChange.AddLearner("n4")));
             assertFalse(raft.membership().isLearner("n4"));
 
-            var ready = raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
+            var ready = raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2, 0)));
 
             assertTrue(raft.membership().isLearner("n4"));
             assertEquals(1, ready.application().membershipTransitions().size());
@@ -215,7 +215,7 @@ class RaftNodeMembershipTest extends RaftNodeTestSupport {
             becomeLeader(raft, List.of("n2", "n3"));
 
             raft.step(new RaftInput.MembershipChangeProposed(new MembershipChange.AddLearner("n4")));
-            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2, 0)));
 
             var ready = raft.step(new RaftInput.MembershipChangeProposed(new MembershipChange.AddLearner("n5")));
 
@@ -230,7 +230,7 @@ class RaftNodeMembershipTest extends RaftNodeTestSupport {
             becomeLeader(raft, List.of("n2", "n3"));
 
             raft.step(new RaftInput.MembershipChangeProposed(new MembershipChange.AddLearner("n4")));
-            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2, 0)));
 
             var ready = tickHeartbeat(raft);
 
@@ -247,7 +247,7 @@ class RaftNodeMembershipTest extends RaftNodeTestSupport {
             becomeLeader(raft, List.of("n2", "n3"));
 
             raft.step(new RaftInput.MembershipChangeProposed(new MembershipChange.RemoveNode("n3")));
-            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2)));
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntriesResponse(1, true, 2, 0)));
 
             var ready = tickHeartbeat(raft);
 

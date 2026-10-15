@@ -43,12 +43,14 @@ message AppendEntriesRequest {
   int64 prev_log_term = 4;
   repeated LogEntry entries = 5;
   int64 leader_commit = 6;
+  int64 round = 7;
 }
 
 message AppendEntriesResponse {
   int64 term = 1;
   bool success = 2;
   int64 match_index = 3;
+  int64 round = 4;
 }
 
 message LogEntry {

@@ -15,7 +15,8 @@ public sealed interface RaftMessage {
         long prevLogIndex,
         long prevLogTerm,
         List<RaftLogEntry> entries,
-        long leaderCommit
+        long leaderCommit,
+        long round
     ) implements Request {
         public AppendEntries {
             if (term < 0) {
@@ -29,7 +30,8 @@ public sealed interface RaftMessage {
     record AppendEntriesResponse(
         long term,
         boolean success,
-        long matchIndex
+        long matchIndex,
+        long round
     ) implements Response {
         public AppendEntriesResponse {
             if (term < 0) {

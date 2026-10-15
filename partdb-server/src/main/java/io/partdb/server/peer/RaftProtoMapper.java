@@ -71,6 +71,7 @@ final class RaftProtoMapper {
             .setPrevLogTerm(message.prevLogTerm())
             .addAllEntries(message.entries().stream().map(RaftProtoMapper::toProto).toList())
             .setLeaderCommit(message.leaderCommit())
+            .setRound(message.round())
             .build();
     }
 
@@ -81,7 +82,8 @@ final class RaftProtoMapper {
             proto.getPrevLogIndex(),
             proto.getPrevLogTerm(),
             proto.getEntriesList().stream().map(RaftProtoMapper::fromProto).toList(),
-            proto.getLeaderCommit()
+            proto.getLeaderCommit(),
+            proto.getRound()
         );
     }
 
@@ -90,11 +92,12 @@ final class RaftProtoMapper {
             .setTerm(message.term())
             .setSuccess(message.success())
             .setMatchIndex(message.matchIndex())
+            .setRound(message.round())
             .build();
     }
 
     static RaftMessage.AppendEntriesResponse fromProto(RaftProto.AppendEntriesResponse proto) {
-        return new RaftMessage.AppendEntriesResponse(proto.getTerm(), proto.getSuccess(), proto.getMatchIndex());
+        return new RaftMessage.AppendEntriesResponse(proto.getTerm(), proto.getSuccess(), proto.getMatchIndex(), proto.getRound());
     }
 
     static RaftProto.SnapshotHeader toProto(RaftMessage.InstallSnapshot message) {

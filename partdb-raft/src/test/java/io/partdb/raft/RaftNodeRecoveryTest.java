@@ -82,7 +82,7 @@ class RaftNodeRecoveryTest extends RaftNodeTestSupport {
         void restoredNodeRejectsOldTermMessages() {
             var raft = createRaftWithSnapshot("n1", new RaftHardState(10, null, 0), 0, "n1", "n2", "n3");
 
-            var oldAppend = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0);
+            var oldAppend = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0, 0);
             var ready = raft.step(new RaftInput.MessageReceived("n2", oldAppend));
 
             var response = findResponse(ready, RaftMessage.AppendEntriesResponse.class).orElseThrow();

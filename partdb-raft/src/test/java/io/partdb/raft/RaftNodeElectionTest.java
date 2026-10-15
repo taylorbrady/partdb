@@ -133,7 +133,7 @@ class RaftNodeElectionTest extends RaftNodeTestSupport {
             var appendEntries = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
                 List.of(new RaftLogEntry.Data(1, 1, bytes("data"))),
-                0
+                0, 0
             );
             raft.step(new RaftInput.MessageReceived("n2", appendEntries));
 
@@ -148,7 +148,7 @@ class RaftNodeElectionTest extends RaftNodeTestSupport {
         void rejectsVoteFromLowerTerm() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0);
+            var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0, 0);
             raft.step(new RaftInput.MessageReceived("n2", higherTermMsg));
 
             var request = new RaftMessage.RequestVote(3, "n3", 0, 0);
@@ -244,7 +244,7 @@ class RaftNodeElectionTest extends RaftNodeTestSupport {
             becomeLeader(raft, List.of("n2", "n3"));
             assertTrue(raft.isLeader());
 
-            var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0);
+            var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0, 0);
             raft.step(new RaftInput.MessageReceived("n2", higherTermMsg));
 
             assertEquals(RaftRole.FOLLOWER, raft.role());
@@ -255,10 +255,10 @@ class RaftNodeElectionTest extends RaftNodeTestSupport {
         void rejectMessagesFromLowerTerm() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0);
+            var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0, 0);
             raft.step(new RaftInput.MessageReceived("n2", higherTermMsg));
 
-            var lowerTermAppend = new RaftMessage.AppendEntries(3, "n3", 0, 0, List.of(), 0);
+            var lowerTermAppend = new RaftMessage.AppendEntries(3, "n3", 0, 0, List.of(), 0, 0);
             var ready = raft.step(new RaftInput.MessageReceived("n3", lowerTermAppend));
 
             var response = findResponse(ready, RaftMessage.AppendEntriesResponse.class).orElseThrow();
@@ -272,7 +272,7 @@ class RaftNodeElectionTest extends RaftNodeTestSupport {
             becomeLeader(raft, List.of("n2", "n3"));
             assertEquals(1, raft.term());
 
-            var higherTermResponse = new RaftMessage.AppendEntriesResponse(5, false, 0);
+            var higherTermResponse = new RaftMessage.AppendEntriesResponse(5, false, 0, 0);
             raft.step(new RaftInput.MessageReceived("n2", higherTermResponse));
 
             assertEquals(5, raft.term());
@@ -400,7 +400,7 @@ class RaftNodeElectionTest extends RaftNodeTestSupport {
             tickUntilTimeout(raft);
             assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
 
-            var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0);
+            var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0, 0);
             raft.step(new RaftInput.MessageReceived("n2", heartbeat));
 
             assertEquals(RaftRole.FOLLOWER, raft.role());
@@ -415,7 +415,7 @@ class RaftNodeElectionTest extends RaftNodeTestSupport {
             assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
             assertEquals(0, raft.term());
 
-            var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0);
+            var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0, 0);
             raft.step(new RaftInput.MessageReceived("n2", higherTermMsg));
 
             assertEquals(RaftRole.FOLLOWER, raft.role());
@@ -453,7 +453,7 @@ class RaftNodeElectionTest extends RaftNodeTestSupport {
         void preVoteDeniedWhenLeaderActive() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0);
+            var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0, 0);
             raft.step(new RaftInput.MessageReceived("n2", heartbeat));
 
             var preVote = new RaftMessage.PreVote(2, "n3", 0, 0);
@@ -470,7 +470,7 @@ class RaftNodeElectionTest extends RaftNodeTestSupport {
             var appendEntries = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
                 List.of(new RaftLogEntry.Data(1, 1, bytes("data"))),
-                0
+                0, 0
             );
             raft.step(new RaftInput.MessageReceived("n2", appendEntries));
 

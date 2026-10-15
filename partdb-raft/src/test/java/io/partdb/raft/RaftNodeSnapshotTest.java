@@ -29,7 +29,7 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
             var entries = new RaftMessage.AppendEntries(
                 1, "n2", 0, 0,
                 List.of(new RaftLogEntry.Data(1, 1, bytes("data"))),
-                1
+                1, 0
             );
             raft.step(new RaftInput.MessageReceived("n2", entries));
             assertEquals(1, raft.commitIndex());
@@ -45,7 +45,7 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
             var raft = createRaftWithCompactedSnapshot("n1", 1, 1, "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var reject = new RaftMessage.AppendEntriesResponse(1, false, 0);
+            var reject = new RaftMessage.AppendEntriesResponse(1, false, 0, 0);
             var ready = raft.step(new RaftInput.MessageReceived("n2", reject));
 
             assertNotNull(ready.snapshotNeeded().orElse(null));
@@ -77,7 +77,7 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
             var raft = createRaftWithCompactedSnapshot("n1", 5, 1, "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var reject = new RaftMessage.AppendEntriesResponse(1, false, 0);
+            var reject = new RaftMessage.AppendEntriesResponse(1, false, 0, 0);
             var snapshotReady = raft.step(new RaftInput.MessageReceived("n2", reject));
             assertNotNull(snapshotReady.snapshotNeeded().orElse(null));
             assertEquals("n2", snapshotReady.snapshotNeeded().orElse(null).peer());
@@ -97,7 +97,7 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
             var raft = createRaftWithCompactedSnapshot("n1", 5, 1, "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var higherTermMsg = new RaftMessage.AppendEntries(10, "n3", 0, 0, List.of(), 0);
+            var higherTermMsg = new RaftMessage.AppendEntries(10, "n3", 0, 0, List.of(), 0, 0);
             raft.step(new RaftInput.MessageReceived("n3", higherTermMsg));
             assertEquals(RaftRole.FOLLOWER, raft.role());
 
@@ -111,7 +111,7 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
         void installSnapshotFromLowerTermIsRejected() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0);
+            var higherTermMsg = new RaftMessage.AppendEntries(5, "n2", 0, 0, List.of(), 0, 0);
             raft.step(new RaftInput.MessageReceived("n2", higherTermMsg));
             assertEquals(5, raft.term());
 

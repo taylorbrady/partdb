@@ -9,201 +9,285 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class RaftNodeReadIndexTest extends RaftNodeTestSupport {
 
+    private static RaftEffects acknowledge(RaftNode raft, String peer, long matchIndex, long round) {
+        return raft.step(new RaftInput.MessageReceived(peer,
+            new RaftMessage.AppendEntriesResponse(raft.term(), true, matchIndex, round)));
+    }
+
+    private RaftNode committedLeader() {
+        var raft = createRaft("n1", "n1", "n2", "n3");
+        becomeLeader(raft, List.of("n2", "n3"));
+        acknowledge(raft, "n2", 1, 0);
+        assertEquals(1, raft.commitIndex());
+        return raft;
+    }
+
+    private RaftNode followerOf(String leader) {
+        var raft = createRaft("n1", "n1", "n2", "n3");
+        raft.step(new RaftInput.MessageReceived(leader, new RaftMessage.AppendEntries(1, leader, 0, 0, List.of(), 0, 0)));
+        assertEquals(leader, raft.leaderId().orElseThrow());
+        return raft;
+    }
+
     @Nested
-    class ReadIndexRequested {
+    class Leader {
         @Test
-        void leaderConfirmsReadIndexImmediatelyForSingleNode() {
+        void confirmsImmediatelyForSingleNode() {
             var raft = createRaft("n1", "n1");
             tickUntilTimeout(raft);
             assertTrue(raft.isLeader());
 
             var ready = raft.step(new RaftInput.ReadIndexRequested(1L));
 
-            assertEquals(1, ready.application().readStates().size());
-            var readState = ready.application().readStates().get(0);
-            assertEquals(raft.commitIndex(), readState.index());
-            assertEquals(1L, readState.context());
+            assertEquals(List.of(new RaftEffects.ReadState(raft.commitIndex(), 1L)), ready.application().readStates());
         }
 
         @Test
-        void leaderBroadcastsHeartbeatForReadIndexConfirmation() {
-            var raft = createRaft("n1", "n1", "n2", "n3");
-            becomeLeader(raft, List.of("n2", "n3"));
+        void broadcastsHeartbeatWithNewRound() {
+            var raft = committedLeader();
 
             var ready = raft.step(new RaftInput.ReadIndexRequested(1L));
 
             assertTrue(ready.application().readStates().isEmpty());
-            var appendEntries = getAppendEntries(ready);
-            assertEquals(2, appendEntries.size());
+            var appends = getAppendEntries(ready);
+            assertEquals(2, appends.size());
+            assertTrue(appends.stream().allMatch(append -> append.round() == 1));
         }
 
         @Test
-        void leaderConfirmsReadIndexOnQuorumAck() {
+        void confirmsOnQuorumAckForCurrentRound() {
+            var raft = committedLeader();
+            raft.step(new RaftInput.ReadIndexRequested(1L));
+
+            var ready = acknowledge(raft, "n2", 1, 1);
+
+            assertEquals(List.of(new RaftEffects.ReadState(1, 1L)), ready.application().readStates());
+        }
+
+        @Test
+        void ignoresAcksFromEarlierRounds() {
+            var raft = committedLeader();
+            raft.step(new RaftInput.ReadIndexRequested(1L));
+
+            var stale = acknowledge(raft, "n2", 1, 0);
+            assertTrue(stale.application().readStates().isEmpty());
+
+            var current = acknowledge(raft, "n2", 1, 1);
+            assertEquals(1, current.application().readStates().size());
+        }
+
+        @Test
+        void countsRejectedAppendsAsLeadershipAcks() {
+            var raft = committedLeader();
+            raft.step(new RaftInput.ReadIndexRequested(1L));
+
+            var ready = raft.step(new RaftInput.MessageReceived("n2",
+                new RaftMessage.AppendEntriesResponse(raft.term(), false, 0, 1)));
+
+            assertEquals(1, ready.application().readStates().size());
+        }
+
+        @Test
+        void defersReadsUntilCommittedInCurrentTerm() {
             var raft = createRaft("n1", "n1", "n2", "n3");
+            becomeLeader(raft, List.of("n2", "n3"));
+            assertEquals(0, raft.commitIndex());
+
+            var deferred = raft.step(new RaftInput.ReadIndexRequested(1L));
+            assertTrue(deferred.application().readStates().isEmpty());
+            assertTrue(getAppendEntries(deferred).isEmpty());
+
+            var committed = acknowledge(raft, "n2", 1, 0);
+            assertEquals(1, raft.commitIndex());
+            assertTrue(committed.application().readStates().isEmpty());
+            assertTrue(getAppendEntries(committed).stream().allMatch(append -> append.round() == 1));
+
+            var confirmed = acknowledge(raft, "n3", 1, 1);
+            assertEquals(List.of(new RaftEffects.ReadState(1, 1L)), confirmed.application().readStates());
+        }
+
+        @Test
+        void readIndexIncludesEntriesFromPreviousTerms() {
+            var entries = List.<RaftLogEntry>of(
+                new RaftLogEntry.Data(1, 1, bytes("a")),
+                new RaftLogEntry.Data(2, 1, bytes("b")),
+                new RaftLogEntry.Data(3, 1, bytes("c"))
+            );
+            var raft = createRaftWithLog("n1", entries, new RaftHardState(1, null, 1), "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
             raft.step(new RaftInput.ReadIndexRequested(1L));
+            acknowledge(raft, "n2", 4, 0);
+            assertEquals(4, raft.commitIndex());
 
-            var ackReady = raft.step(new RaftInput.MessageReceived("n2",
-                new RaftMessage.AppendEntriesResponse(raft.term(), true, 1)));
-
-            assertEquals(1, ackReady.application().readStates().size());
-            assertEquals(1L, ackReady.application().readStates().get(0).context());
+            var confirmed = acknowledge(raft, "n2", 4, 1);
+            assertEquals(List.of(new RaftEffects.ReadState(4, 1L)), confirmed.application().readStates());
         }
 
         @Test
-        void leaderRespondsToForwardedReadIndex() {
-            var raft = createRaft("n1", "n1", "n2", "n3");
-            becomeLeader(raft, List.of("n2", "n3"));
+        void respondsToForwardedReadIndex() {
+            var raft = committedLeader();
 
-            long commitIndexAtRequest = raft.commitIndex();
-            var readIndexMsg = new RaftMessage.ReadIndexRequested(raft.term(), 1L);
-            raft.step(new RaftInput.MessageReceived("n2", readIndexMsg));
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.ReadIndexRequested(raft.term(), 1L)));
+            var ready = acknowledge(raft, "n3", 1, 1);
 
-            var ackReady = raft.step(new RaftInput.MessageReceived("n3",
-                new RaftMessage.AppendEntriesResponse(raft.term(), true, 1)));
-
-            var response = findResponse(ackReady, RaftMessage.ReadIndexResponse.class);
-            assertTrue(response.isPresent());
-            assertEquals(commitIndexAtRequest, response.get().readIndex());
-            assertEquals(1L, response.get().context());
+            var response = findResponse(ready, RaftMessage.ReadIndexResponse.class).orElseThrow();
+            assertEquals(1, response.readIndex());
+            assertEquals(1L, response.context());
         }
 
         @Test
-        void leaderClearsPendingReadsOnBecomeFollower() {
-            var raft = createRaft("n1", "n1", "n2", "n3");
-            becomeLeader(raft, List.of("n2", "n3"));
-
+        void failsPendingReadsWhenSteppingDown() {
+            var raft = committedLeader();
             raft.step(new RaftInput.ReadIndexRequested(1L));
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.ReadIndexRequested(raft.term(), 2L)));
 
-            var higherTermMsg = new RaftMessage.AppendEntries(10, "n2", 0, 0, List.of(), 0);
-            raft.step(new RaftInput.MessageReceived("n2", higherTermMsg));
+            var ready = raft.step(new RaftInput.MessageReceived("n2",
+                new RaftMessage.AppendEntries(10, "n2", 0, 0, List.of(), 0, 0)));
+
             assertEquals(RaftRole.FOLLOWER, raft.role());
-
-            var ackReady = raft.step(new RaftInput.MessageReceived("n3",
-                new RaftMessage.AppendEntriesResponse(1, true, 1)));
-
-            assertTrue(ackReady.application().readStates().isEmpty());
+            assertEquals(List.of(new RaftEffects.ReadState(0, 1L)), ready.application().readStates());
+            var response = findResponse(ready, RaftMessage.ReadIndexResponse.class).orElseThrow();
+            assertEquals(0, response.readIndex());
+            assertEquals(2L, response.context());
         }
 
         @Test
-        void followerForwardsReadIndexToLeader() {
+        void failsDeferredReadsWhenSteppingDown() {
             var raft = createRaft("n1", "n1", "n2", "n3");
+            becomeLeader(raft, List.of("n2", "n3"));
+            raft.step(new RaftInput.ReadIndexRequested(1L));
 
-            var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0);
-            raft.step(new RaftInput.MessageReceived("n2", heartbeat));
-            assertEquals("n2", raft.leaderId().orElseThrow());
+            var ready = raft.step(new RaftInput.MessageReceived("n2",
+                new RaftMessage.AppendEntries(10, "n2", 0, 0, List.of(), 0, 0)));
+
+            assertEquals(List.of(new RaftEffects.ReadState(0, 1L)), ready.application().readStates());
+        }
+
+        @Test
+        void tracksMultipleReadsIndependently() {
+            var raft = committedLeader();
+            raft.step(new RaftInput.ReadIndexRequested(1L));
+            raft.step(new RaftInput.ReadIndexRequested(2L));
+
+            var first = acknowledge(raft, "n2", 1, 1);
+            assertEquals(List.of(new RaftEffects.ReadState(1, 1L)), first.application().readStates());
+
+            var second = acknowledge(raft, "n2", 1, 2);
+            assertEquals(List.of(new RaftEffects.ReadState(1, 2L)), second.application().readStates());
+        }
+    }
+
+    @Nested
+    class Follower {
+        @Test
+        void forwardsReadIndexToLeader() {
+            var raft = followerOf("n2");
 
             var ready = raft.step(new RaftInput.ReadIndexRequested(1L));
 
-            var readIndexMsg = ready.messages().stream()
+            var forwarded = ready.messages().stream()
                 .filter(m -> m.to().equals("n2"))
-                .filter(m -> m.message() instanceof RaftMessage.ReadIndexRequested)
-                .map(m -> (RaftMessage.ReadIndexRequested) m.message())
-                .findFirst();
-
-            assertTrue(readIndexMsg.isPresent());
-            assertEquals(1L, readIndexMsg.get().context());
+                .map(RaftEffects.Outbound::message)
+                .filter(RaftMessage.ReadIndexRequested.class::isInstance)
+                .map(RaftMessage.ReadIndexRequested.class::cast)
+                .findFirst()
+                .orElseThrow();
+            assertEquals(1L, forwarded.context());
         }
 
         @Test
-        void followerEmitsReadStateOnResponse() {
-            var raft = createRaft("n1", "n1", "n2", "n3");
+        void emitsReadStateOnResponse() {
+            var raft = followerOf("n2");
+            raft.step(new RaftInput.ReadIndexRequested(1L));
 
-            var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0);
-            raft.step(new RaftInput.MessageReceived("n2", heartbeat));
+            var ready = raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.ReadIndexResponse(1, 5, 1L)));
 
-            var response = new RaftMessage.ReadIndexResponse(1, 5, 1L);
-            var ready = raft.step(new RaftInput.MessageReceived("n2", response));
-
-            assertEquals(1, ready.application().readStates().size());
-            assertEquals(5, ready.application().readStates().get(0).index());
-            assertEquals(1L, ready.application().readStates().get(0).context());
+            assertEquals(List.of(new RaftEffects.ReadState(5, 1L)), ready.application().readStates());
         }
 
         @Test
-        void followerDropsReadIndexWhenNoLeaderKnown() {
+        void reportsRejectedReadAsFailure() {
+            var raft = followerOf("n2");
+            raft.step(new RaftInput.ReadIndexRequested(1L));
+
+            var ready = raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.ReadIndexResponse(1, 0, 1L)));
+
+            assertEquals(List.of(new RaftEffects.ReadState(0, 1L)), ready.application().readStates());
+        }
+
+        @Test
+        void ignoresResponsesForUnknownReads() {
+            var raft = followerOf("n2");
+
+            var ready = raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.ReadIndexResponse(1, 5, 1L)));
+
+            assertTrue(ready.application().readStates().isEmpty());
+        }
+
+        @Test
+        void ignoresResponsesFromNonLeaders() {
+            var raft = followerOf("n2");
+            raft.step(new RaftInput.ReadIndexRequested(1L));
+
+            var ready = raft.step(new RaftInput.MessageReceived("n3", new RaftMessage.ReadIndexResponse(1, 5, 1L)));
+
+            assertTrue(ready.application().readStates().isEmpty());
+        }
+
+        @Test
+        void failsReadImmediatelyWhenNoLeaderKnown() {
             var raft = createRaft("n1", "n1", "n2", "n3");
-            assertTrue(raft.leaderId().isEmpty());
 
             var ready = raft.step(new RaftInput.ReadIndexRequested(1L));
 
             assertTrue(ready.messages().isEmpty());
-            assertTrue(ready.application().readStates().isEmpty());
+            assertEquals(List.of(new RaftEffects.ReadState(0, 1L)), ready.application().readStates());
         }
 
         @Test
-        void readIndexResponseWithZeroIndexIndicatesFailure() {
-            var raft = createRaft("n1", "n1", "n2", "n3");
-
-            var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0);
-            raft.step(new RaftInput.MessageReceived("n2", heartbeat));
-
-            var response = new RaftMessage.ReadIndexResponse(1, 0, 1L);
-            var ready = raft.step(new RaftInput.MessageReceived("n2", response));
-
-            assertTrue(ready.application().readStates().isEmpty());
-        }
-
-        @Test
-        void nonLeaderRespondsWithZeroReadIndex() {
-            var raft = createRaft("n1", "n1", "n2", "n3");
-
-            var readIndexMsg = new RaftMessage.ReadIndexRequested(1, 1L);
-            var ready = raft.step(new RaftInput.MessageReceived("n2", readIndexMsg));
-
-            var response = findResponse(ready, RaftMessage.ReadIndexResponse.class).orElseThrow();
-            assertEquals(0, response.readIndex());
-        }
-
-        @Test
-        void multipleReadIndexRequestsTrackedIndependently() {
-            var raft = createRaft("n1", "n1", "n2", "n3");
-            becomeLeader(raft, List.of("n2", "n3"));
-
+        void failsForwardedReadWhenLeaderChanges() {
+            var raft = followerOf("n2");
             raft.step(new RaftInput.ReadIndexRequested(1L));
-            raft.step(new RaftInput.ReadIndexRequested(2L));
 
-            var ackReady = raft.step(new RaftInput.MessageReceived("n2",
-                new RaftMessage.AppendEntriesResponse(raft.term(), true, 1)));
+            var ready = raft.step(new RaftInput.MessageReceived("n3",
+                new RaftMessage.AppendEntries(2, "n3", 0, 0, List.of(), 0, 0)));
 
-            assertEquals(2, ackReady.application().readStates().size());
+            assertEquals(List.of(new RaftEffects.ReadState(0, 1L)), ready.application().readStates());
         }
 
         @Test
-        void readIndexDoesNotTriggerTermChange() {
-            var raft = createRaft("n1", "n1", "n2", "n3");
-            assertEquals(0, raft.term());
+        void expiresForwardedReadWithoutResponse() {
+            var raft = followerOf("n2");
+            raft.step(new RaftInput.ReadIndexRequested(1L));
 
-            var readIndexMsg = new RaftMessage.ReadIndexRequested(10, 1L);
-            raft.step(new RaftInput.MessageReceived("n2", readIndexMsg));
+            var failed = new java.util.ArrayList<RaftEffects.ReadState>();
+            for (int tick = 0; tick < CONFIG.electionTimeoutMax() && failed.isEmpty(); tick++) {
+                raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0, 0)));
+                failed.addAll(raft.step(new RaftInput.Tick()).application().readStates());
+            }
 
-            assertEquals(0, raft.term());
-        }
-
-        @Test
-        void readIndexResponseDoesNotTriggerTermChange() {
-            var raft = createRaft("n1", "n1", "n2", "n3");
-            assertEquals(0, raft.term());
-
-            var response = new RaftMessage.ReadIndexResponse(10, 5, 1L);
-            raft.step(new RaftInput.MessageReceived("n2", response));
-
-            assertEquals(0, raft.term());
-        }
-
-        @Test
-        void followerIgnoresReadIndexResponseFromUnexpectedSender() {
-            var raft = createRaft("n1", "n1", "n2", "n3");
-
-            var heartbeat = new RaftMessage.AppendEntries(1, "n2", 0, 0, List.of(), 0);
-            raft.step(new RaftInput.MessageReceived("n2", heartbeat));
+            assertEquals(List.of(new RaftEffects.ReadState(0, 1L)), failed);
             assertEquals("n2", raft.leaderId().orElseThrow());
+        }
 
-            var response = new RaftMessage.ReadIndexResponse(1, 5, 1L);
-            var ready = raft.step(new RaftInput.MessageReceived("n3", response));
+        @Test
+        void nonLeaderRejectsForwardedRead() {
+            var raft = createRaft("n1", "n1", "n2", "n3");
 
-            assertTrue(ready.application().readStates().isEmpty());
+            var ready = raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.ReadIndexRequested(1, 1L)));
+
+            assertEquals(0, findResponse(ready, RaftMessage.ReadIndexResponse.class).orElseThrow().readIndex());
+        }
+
+        @Test
+        void readIndexMessagesDoNotChangeTerm() {
+            var raft = createRaft("n1", "n1", "n2", "n3");
+
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.ReadIndexRequested(10, 1L)));
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.ReadIndexResponse(10, 5, 1L)));
+
+            assertEquals(0, raft.term());
         }
     }
 }
