@@ -39,6 +39,8 @@ final class SnapshotStore {
                     Files.delete(staged);
                 }
             }
+            Fsync.directory(directory.getParent());
+            Fsync.directory(directory);
         } catch (IOException e) {
             throw new RaftStorageException.IO("Failed to open snapshot directory: " + directory, e);
         }
@@ -86,6 +88,7 @@ final class SnapshotStore {
                 channel.force(true);
             }
             Files.move(metadataStaging, metadataFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            Fsync.directory(directory);
         } catch (IOException e) {
             throw new RaftStorageException.IO("Failed to install snapshot: " + payload, e);
         }
@@ -96,11 +99,16 @@ final class SnapshotStore {
 
     private void deleteOlderThan(long index) {
         try {
+            boolean deleted = false;
             for (Path metadataFile : metadataFiles()) {
                 if (indexOf(metadataFile) < index) {
                     Files.deleteIfExists(metadataFile);
                     Files.deleteIfExists(payloadFor(metadataFile));
+                    deleted = true;
                 }
+            }
+            if (deleted) {
+                Fsync.directory(directory);
             }
         } catch (IOException e) {
             throw new RaftStorageException.IO("Failed to delete old snapshots in: " + directory, e);

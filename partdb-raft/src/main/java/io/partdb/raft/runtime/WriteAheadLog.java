@@ -44,6 +44,7 @@ final class WriteAheadLog implements AutoCloseable {
         } catch (IOException e) {
             throw new RaftStorageException.IO("failed to create WAL directory " + directory, e);
         }
+        Fsync.directory(directory.getParent());
         return new WriteAheadLog(directory, segmentBytes);
     }
 
@@ -79,17 +80,23 @@ final class WriteAheadLog implements AutoCloseable {
         active.sync();
         sealed.clear();
         previous.forEach(segment -> delete(segment.path()));
+        Fsync.directory(directory);
     }
 
     void compact(long snapshotIndex) {
+        boolean deleted = false;
         var iterator = sealed.iterator();
         while (iterator.hasNext()) {
             var segment = iterator.next();
             if (segment.maxIndex() > snapshotIndex) {
-                return;
+                break;
             }
             delete(segment.path());
             iterator.remove();
+            deleted = true;
+        }
+        if (deleted) {
+            Fsync.directory(directory);
         }
     }
 
@@ -150,6 +157,8 @@ final class WriteAheadLog implements AutoCloseable {
         }
         if (active == null) {
             openSegment(0);
+        } else if (firstLive > 0) {
+            Fsync.directory(directory);
         }
         return new Replay(hardState, resetIndex, List.copyOf(entries));
     }
@@ -169,6 +178,7 @@ final class WriteAheadLog implements AutoCloseable {
 
     private void openSegment(long sequence) {
         active = WalSegment.create(directory.resolve("%016x%s".formatted(sequence, SUFFIX)));
+        Fsync.directory(directory);
         activeSequence = sequence;
         activeMaxIndex = 0;
     }
