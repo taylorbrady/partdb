@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 

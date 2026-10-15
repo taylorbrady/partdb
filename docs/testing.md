@@ -38,8 +38,9 @@ Keep focused suites by protocol concern:
 - `RaftNodeSnapshotTest` and `RaftNodeRecoveryTest`: protocol-level snapshots
   and recovery.
 - `Cluster*Test`: deterministic multi-node simulation scenarios.
-- `UnstableTest`, `PublicValueTypesTest`, and `RaftModuleBoundaryTest`: helper,
-  value-type, and module-boundary coverage.
+- `UnstableTest` and `RaftModuleBoundaryTest`: helper and module-boundary
+  coverage. The boundary test only checks what Gradle cannot: no JDK IO, time,
+  or threading in the pure core.
 
 ## Project Checks
 
@@ -52,6 +53,12 @@ Run:
 `check` is the normal local quality gate. It runs unit tests and is the right
 place to attach future formatting, static analysis, dependency, and license
 checks. It intentionally does not run the heavier integration suites.
+
+Test wiring shared by every module lives in
+`build-logic/src/main/kotlin/partdb.java-conventions.gradle.kts`: the JUnit
+version from `gradle/libs.versions.toml`, JVM arguments, a ten-minute task
+timeout, and console output for failed tests. Module build files only declare
+dependencies and extra test suites.
 
 ## In-Process Integration Tests
 
@@ -66,6 +73,13 @@ modules together inside the Gradle test JVM. These tests may start real
 `PartDbServer` instances with public gRPC and Raft peer gRPC transports, but they do
 not use the installed application distribution.
 
+Both integration suites share `TestCluster` from the `partdb-client` test
+fixtures (`partdb-client/src/testFixtures`). It allocates ports, starts nodes
+through a `TestClusterNode` implementation, and polls cluster state through the
+public client. `integrationTest` plugs in `InProcessNode`;
+`packagedIntegrationTest` plugs in `PackagedNode`. Cluster tests keep their
+temp directories on failure (`@TempDir(cleanup = ON_SUCCESS)`).
+
 Use this suite for:
 
 - 3-node startup
@@ -77,8 +91,10 @@ Use this suite for:
 - follower restart and catch-up
 - full cluster restart
 - range scan through the public client
-- health endpoint lifecycle
-- startup configuration failures
+
+Health endpoint and JMX behavior for a single server are covered by
+`partdb-server` unit tests; startup configuration validation is covered by
+`PartDbServerConfigTest`.
 
 ## Packaged Integration Tests
 
@@ -100,13 +116,14 @@ Use this suite for:
 - default JVM arguments
 - 3-node leader election
 - CLI `put`, `get`, `status`, and `members`
-- leader stop and failover
-- post-failover writes
-- old leader process restart and catch-up
-- range scan through the public client
+- clean shutdown on SIGTERM
 
-Keep this suite focused on shipped-artifact smoke coverage. Most behavioral
-cluster scenarios belong in `integrationTest`.
+Each node process writes its stdout and stderr to per-start log files under the
+test's temp directory, which is kept when the test fails. Stopping a node fails
+the test unless the process exits within ten seconds and logs `Server stopped`.
+
+Keep this suite focused on shipped-artifact smoke coverage. Behavioral cluster
+scenarios such as failover, restart, and catch-up belong in `integrationTest`.
 
 ## CI Gate
 
@@ -139,8 +156,6 @@ checks, and must not be attached to `check` or `ci`. See
   currently relies on retained log replay.
 - Linearizable multi-key read views are not implemented yet, so there is no
   consistency proof for multi-key reads beyond scan behavior.
-- The packaged process harness does not yet preserve per-node logs as build
-  artifacts on failure.
 
 ## Next Testing Goals
 

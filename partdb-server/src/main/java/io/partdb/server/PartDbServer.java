@@ -1,6 +1,5 @@
 package io.partdb.server;
 
-import io.partdb.consensus.ConsensusRuntimeFactory;
 import io.partdb.consensus.RaftConsensusRuntimeFactory;
 import io.partdb.node.PartDbNode;
 import io.partdb.transport.grpc.GrpcRaftTransport;
@@ -9,53 +8,42 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Objects;
 
 public final class PartDbServer implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(PartDbServer.class);
 
     private final PartDbServerConfig config;
-    private final ConsensusRuntimeFactory runtimeFactory;
-    private PartDbNode node;
-    private GrpcServer grpcServer;
-    private JmxRegistrations jmxRegistrations;
-    private AdminHttpServer adminHttpServer;
+    private final Deque<AutoCloseable> started = new ArrayDeque<>();
+    private boolean startCalled;
 
     public PartDbServer(PartDbServerConfig config) {
-        this(config, null);
-    }
-
-    PartDbServer(PartDbServerConfig config, ConsensusRuntimeFactory runtimeFactory) {
         this.config = Objects.requireNonNull(config, "config must not be null");
-        this.runtimeFactory = runtimeFactory;
-    }
-
-    private ConsensusRuntimeFactory createDefaultRuntimeFactory() {
-        return new RaftConsensusRuntimeFactory(
-            () -> new GrpcRaftTransport(
-                config.nodeId(),
-                config.raftPort(),
-                config.raftPeerAddresses()
-            )
-        );
     }
 
     public void start() throws IOException {
-        if (node != null) {
+        if (startCalled) {
             throw new IllegalStateException("PartDB server already started");
         }
+        startCalled = true;
         log.atInfo()
             .addKeyValue("nodeId", config.nodeId())
             .log("Starting PartDB server");
         try {
-            ConsensusRuntimeFactory consensusRuntimeFactory = runtimeFactory != null
-                ? runtimeFactory
-                : createDefaultRuntimeFactory();
-            node = PartDbNode.open(config.nodeConfig(), consensusRuntimeFactory);
-            grpcServer = new GrpcServer(node, config.grpcPort());
-            jmxRegistrations = new JmxRegistrations(node);
+            var runtimeFactory = new RaftConsensusRuntimeFactory(
+                () -> new GrpcRaftTransport(config.nodeId(), config.raftPort(), config.raftPeerEndpoints())
+            );
+            PartDbNode node = PartDbNode.open(config.nodeConfig(), runtimeFactory);
+            started.push(node);
+            var jmxRegistrations = new JmxRegistrations(node);
+            started.push(jmxRegistrations);
+            var grpcServer = new GrpcServer(node, config.grpcPort());
+            started.push(grpcServer);
             grpcServer.start();
-            adminHttpServer = new AdminHttpServer(node, config.adminPort());
+            var adminHttpServer = new AdminHttpServer(node, config.adminPort());
+            started.push(adminHttpServer);
             adminHttpServer.start();
             jmxRegistrations.register();
             log.atInfo()
@@ -81,45 +69,23 @@ public final class PartDbServer implements AutoCloseable {
         log.atInfo()
             .addKeyValue("nodeId", config.nodeId())
             .log("Shutting down PartDB server");
-        try {
-            if (adminHttpServer != null) {
-                try {
-                    adminHttpServer.close();
-                } finally {
-                    adminHttpServer = null;
-                }
-            }
-        } finally {
+        RuntimeException failure = null;
+        while (!started.isEmpty()) {
             try {
-                if (grpcServer != null) {
-                    try {
-                        grpcServer.close();
-                    } finally {
-                        grpcServer = null;
-                    }
-                }
-            } finally {
-                try {
-                    if (jmxRegistrations != null) {
-                        try {
-                            jmxRegistrations.close();
-                        } finally {
-                            jmxRegistrations = null;
-                        }
-                    }
-                } finally {
-                    if (node != null) {
-                        try {
-                            node.close();
-                        } finally {
-                            node = null;
-                        }
-                    }
-                    log.atInfo()
-                        .addKeyValue("nodeId", config.nodeId())
-                        .log("PartDB server shut down");
+                started.pop().close();
+            } catch (Exception e) {
+                if (failure == null) {
+                    failure = e instanceof RuntimeException re ? re : new IllegalStateException(e);
+                } else {
+                    failure.addSuppressed(e);
                 }
             }
+        }
+        log.atInfo()
+            .addKeyValue("nodeId", config.nodeId())
+            .log("PartDB server shut down");
+        if (failure != null) {
+            throw failure;
         }
     }
 }

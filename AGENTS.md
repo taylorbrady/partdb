@@ -14,6 +14,11 @@ Runtime assembly lives in `partdb-server` and `partdb-app`. Benchmarks live in
 Keep module dependencies aligned with `docs/modules.md`. Core modules should not
 depend on gRPC, CLI code, packaging, or process lifecycle concerns.
 
+Dependency versions live in `gradle/libs.versions.toml`. Shared build
+configuration lives in `build-logic` as convention plugins
+(`partdb.java-conventions`, `partdb.jmh-conventions`); module build files apply
+them and declare only their own dependencies and test suites.
+
 ## Build, Test, and Development Commands
 
 - `./gradlew build`: compile and run normal project checks.
@@ -39,7 +44,9 @@ Test classes should end in `Test`, `IntegrationTest`, or `SmokeTest`.
 
 JUnit Jupiter is the test framework. Keep fast unit tests in `src/test`.
 Behavioral cluster tests belong in `src/integrationTest`. Packaged executable
-and process tests belong in `src/packagedIntegrationTest`.
+and process tests belong in `src/packagedIntegrationTest`. Both cluster suites
+drive nodes through `TestCluster` from `partdb-client/src/testFixtures`; add
+shared cluster-test support there rather than in a suite.
 
 Do not put broad cluster scenarios in packaged tests unless they specifically
 verify distribution behavior. JMH benchmarks are performance tools and should

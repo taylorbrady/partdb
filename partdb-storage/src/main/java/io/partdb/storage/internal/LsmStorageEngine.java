@@ -3,6 +3,8 @@ package io.partdb.storage.internal;
 import io.partdb.storage.*;
 
 import io.partdb.bytes.Bytes;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,6 +21,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 public final class LsmStorageEngine implements AutoCloseable {
+
+    private static final Logger log = LoggerFactory.getLogger(LsmStorageEngine.class);
 
     private final LsmConfig lsmConfig;
     private final MemtableSet memtables;
@@ -62,10 +66,6 @@ public final class LsmStorageEngine implements AutoCloseable {
         refreshMemtableStats();
     }
 
-    public static LsmStorageEngine open(Path dataDirectory) {
-        return open(dataDirectory, StorageOptions.defaults());
-    }
-
     public static LsmStorageEngine open(Path dataDirectory, StorageOptions options) {
         Objects.requireNonNull(options, "options must not be null");
         return open(dataDirectory, toLsmConfig(options));
@@ -105,17 +105,6 @@ public final class LsmStorageEngine implements AutoCloseable {
             return engine;
         } catch (IOException e) {
             throw new StorageException.IO("Failed to open store", e);
-        }
-    }
-
-    public static LsmStorageEngine openFromCheckpoint(Path dataDirectory, StorageCheckpoint checkpoint, StorageOptions options) {
-        LsmStorageEngine engine = open(dataDirectory, options);
-        try {
-            engine.restore(checkpoint);
-            return engine;
-        } catch (RuntimeException e) {
-            engine.close();
-            throw e;
         }
     }
 
@@ -404,8 +393,7 @@ public final class LsmStorageEngine implements AutoCloseable {
                     try {
                         checkpointInstaller.cleanupBackups(previousManifest);
                     } catch (IOException e) {
-                        org.slf4j.LoggerFactory.getLogger(LsmStorageEngine.class)
-                            .atWarn()
+                        log.atWarn()
                             .setCause(e)
                             .log("Failed to clean restore backup files");
                     }
@@ -544,17 +532,6 @@ public final class LsmStorageEngine implements AutoCloseable {
         public Optional<ValueRecord> get(Bytes key) {
             Objects.requireNonNull(key, "key must not be null");
             return view.get(copy(key)).map(LsmStorageEngine::toValueRecord);
-        }
-
-        @Override
-        public Scan scan(KeyRange range) {
-            Objects.requireNonNull(range, "range must not be null");
-            return new StorageScan(view.scan(toScanBounds(range), false));
-        }
-
-        @Override
-        public Revision revision() {
-            return new Revision(view.snapshotRevision());
         }
 
         @Override

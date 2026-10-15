@@ -8,10 +8,6 @@ public interface StorageReadView extends AutoCloseable {
 
     Optional<ValueRecord> get(Bytes key);
 
-    Scan scan(KeyRange range);
-
-    Revision revision();
-
     @Override
     void close();
 }

@@ -54,13 +54,10 @@ final class RaftEffectAccumulator {
     }
 
     RaftEffects finish() {
-        boolean requiresSync = hardState != null || !entries.isEmpty() || incomingSnapshot != null;
-
         var persistence = new RaftEffects.Persistence(
             Optional.ofNullable(hardState),
             List.copyOf(entries),
-            Optional.ofNullable(incomingSnapshot),
-            requiresSync
+            Optional.ofNullable(incomingSnapshot)
         );
 
         var application = new RaftEffects.Application(

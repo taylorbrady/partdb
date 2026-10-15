@@ -88,10 +88,6 @@ final class SegmentedRaftLog implements AutoCloseable {
             active.append(new LogRecord.Entry(entry));
             index.put(entry.index(), new EntryLocation(sealed.size(), offset));
             lastIndex = entry.index();
-
-            if (firstIndex == 1 && lastIndex == 1) {
-                firstIndex = 1;
-            }
         }
     }
 

@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 sealed interface StoredEntry permits StoredEntry.Value, StoredEntry.Tombstone {
 
     Slice key();

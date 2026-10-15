@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 sealed interface InternalEntry permits InternalEntry.Value, InternalEntry.Tombstone {
 
     InternalKey key();

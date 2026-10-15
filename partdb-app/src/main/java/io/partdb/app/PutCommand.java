@@ -32,23 +32,27 @@ record PutCommand(ServerEndpoint endpoint, String key, String value) implements 
 
         while (args.hasNext()) {
             String arg = args.next();
-            switch (arg) {
-                case "--endpoint", "-e" -> endpoint = CliParsing.parseServerEndpoint(args.requireValue("--endpoint"));
-                case "--help", "-h" -> {
-                    return new HelpCommand(USAGE);
-                }
-                default -> {
-                    if (arg.startsWith("-")) {
-                        return new ErrorCommand("unknown option: " + arg, USAGE);
+            try {
+                switch (arg) {
+                    case "--endpoint", "-e" -> endpoint = ServerEndpoint.parse(args.requireValue("--endpoint"));
+                    case "--help", "-h" -> {
+                        return new HelpCommand(USAGE);
                     }
-                    if (key == null) {
-                        key = arg;
-                    } else if (value == null) {
-                        value = arg;
-                    } else {
-                        return new ErrorCommand("unexpected argument: " + arg, USAGE);
+                    default -> {
+                        if (arg.startsWith("-")) {
+                            return new ErrorCommand("unknown option: " + arg, USAGE);
+                        }
+                        if (key == null) {
+                            key = arg;
+                        } else if (value == null) {
+                            value = arg;
+                        } else {
+                            return new ErrorCommand("unexpected argument: " + arg, USAGE);
+                        }
                     }
                 }
+            } catch (IllegalArgumentException e) {
+                return new ErrorCommand(e.getMessage(), USAGE);
             }
         }
 

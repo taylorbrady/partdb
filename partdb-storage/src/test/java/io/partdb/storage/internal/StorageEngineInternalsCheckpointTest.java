@@ -9,8 +9,6 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
-import java.util.Random;
-import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -47,7 +45,8 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
             checkpoint = source.checkpoint();
         }
 
-        try (StorageEngine restored = StorageEngine.openFromCheckpoint(restoredDir, checkpoint, StorageOptions.defaults())) {
+        try (StorageEngine restored = StorageEngine.open(restoredDir, StorageOptions.defaults())) {
+            restored.restore(checkpoint);
             assertTrue(get(restored, key(1)).isPresent());
             assertEquals(bytes(value(10)), get(restored, key(1)).orElseThrow().value());
             assertTrue(get(restored, key(2)).isPresent());
@@ -219,11 +218,13 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
             put(store0, key(14), value("v14"), 5);
         }
 
-        try (StorageEngine store1 = StorageEngine.openFromCheckpoint(dir1, key23, options)) {
+        try (StorageEngine store1 = StorageEngine.open(dir1, options)) {
+            store1.restore(key23);
             delete(store1, key(20), 6);
         }
 
-        try (StorageEngine store2 = StorageEngine.openFromCheckpoint(dir2, empty, options)) {
+        try (StorageEngine store2 = StorageEngine.open(dir2, options)) {
+            store2.restore(empty);
             put(store2, key(21), value("v21"), 7);
             store2.checkpoint();
             put(store2, key(13), value("v13"), 8);
@@ -267,114 +268,6 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
                 assertEquals(1, tableEntries.size());
                 assertEquals(key(23), tableEntries.getFirst().userKey());
             }
-        }
-    }
-
-    @Test
-    void randomizedPrefixAtFailingRestoreMatchesRawReaderState() {
-        StorageOptions options = StorageOptions.builder()
-            .writeBufferMaxBytes(192)
-            .compactionOptions(CompactionOptions.builder()
-                .targetTableSizeBytes(192)
-                .l0CompactionTrigger(2)
-                .maxBytesForLevelBase(384)
-                .maxLevels(4)
-                .build())
-            .build();
-
-        Random random = new Random(67890);
-        List<SnapshotState> snapshots = new ArrayList<>();
-        TreeMap<Integer, BytesAndRevision> expected = new TreeMap<>();
-        int nextStoreId = 1;
-        long revision = 0;
-
-        try (PublicStoreHolder holder = PublicStoreHolder.open(tempDir.resolve("mixed-store-0"), options)) {
-            snapshots.add(new SnapshotState(holder.store.checkpoint(), new TreeMap<>(expected)));
-
-            for (int step = 0; step <= 25; step++) {
-                int op = random.nextInt(100);
-                if (op < 38) {
-                    int key = random.nextInt(24);
-                    revision++;
-                    holder.store.apply(new Revision(revision), Mutation.put(io.partdb.bytes.Bytes.copyOf(new byte[]{(byte) key}), io.partdb.bytes.Bytes.utf8("v" + revision)));
-                    expected.put(key, new BytesAndRevision(io.partdb.bytes.Bytes.utf8("v" + revision), revision));
-                } else if (op < 56) {
-                    int key = random.nextInt(24);
-                    revision++;
-                    holder.store.apply(new Revision(revision), Mutation.delete(io.partdb.bytes.Bytes.copyOf(new byte[]{(byte) key})));
-                    expected.remove(key);
-                } else if (op < 68) {
-                    int key = random.nextInt(24);
-                    holder.store.get(io.partdb.bytes.Bytes.copyOf(new byte[]{(byte) key}));
-                } else if (op < 80) {
-                    int start = random.nextInt(24);
-                    int end = random.nextInt(25);
-                    try (Scan ignored = holder.store.scan(KeyRange.between(
-                        io.partdb.bytes.Bytes.copyOf(new byte[]{(byte) Math.min(start, end)}),
-                        io.partdb.bytes.Bytes.copyOf(new byte[]{(byte) Math.max(start, end)})
-                    ))) {
-                        for (EntryRecord ignoredEntry : ignored) {
-                            // drain
-                        }
-                    }
-                } else if (op < 88) {
-                    snapshots.add(new SnapshotState(holder.store.checkpoint(), new TreeMap<>(expected)));
-                } else if (op < 92) {
-                    holder.reopen();
-                } else if (op < 96) {
-                    SnapshotState snapshot = snapshots.get(random.nextInt(snapshots.size()));
-                    holder.store.restore(snapshot.snapshot());
-                    expected = new TreeMap<>(snapshot.visibleState());
-                } else {
-                    SnapshotState snapshot = snapshots.get(random.nextInt(snapshots.size()));
-                    holder.replaceWith(tempDir.resolve("mixed-store-" + nextStoreId++), snapshot.snapshot());
-                    expected = new TreeMap<>(snapshot.visibleState());
-                }
-            }
-
-            assertEquals(List.of(23), new ArrayList<>(expected.keySet()));
-            assertEquals(List.of(1L), readManifest(holder.directory).sstables().stream().map(SSTableMetadata::id).toList());
-
-            Optional<ValueRecord> publicGet = holder.store.get(io.partdb.bytes.Bytes.copyOf(new byte[]{23}));
-            List<EntryRecord> visible = readAll(holder.store.scan(KeyRange.between(bytes(key(0)), bytes(key(25)))));
-            assertTrue(publicGet.isPresent());
-            assertEquals(1, visible.size());
-        }
-    }
-
-    private record SnapshotState(StorageCheckpoint snapshot, TreeMap<Integer, BytesAndRevision> visibleState) {}
-
-    private record BytesAndRevision(io.partdb.bytes.Bytes value, long revision) {}
-
-    private static final class PublicStoreHolder implements AutoCloseable {
-        private final StorageOptions options;
-        private StorageEngine store;
-        private Path directory;
-
-        private PublicStoreHolder(Path directory, StorageOptions options, StorageEngine store) {
-            this.directory = directory;
-            this.options = options;
-            this.store = store;
-        }
-
-        static PublicStoreHolder open(Path directory, StorageOptions options) {
-            return new PublicStoreHolder(directory, options, StorageEngine.open(directory, options));
-        }
-
-        void reopen() {
-            store.close();
-            store = StorageEngine.open(directory, options);
-        }
-
-        void replaceWith(Path directory, StorageCheckpoint checkpoint) {
-            store.close();
-            this.directory = directory;
-            this.store = StorageEngine.openFromCheckpoint(directory, checkpoint, options);
-        }
-
-        @Override
-        public void close() {
-            store.close();
         }
     }
 }

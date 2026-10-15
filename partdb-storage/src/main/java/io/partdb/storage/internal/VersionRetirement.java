@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 import java.util.List;
 import java.util.Objects;
 
@@ -21,10 +19,6 @@ record VersionRetirement(
 
     static VersionRetirement none() {
         return new VersionRetirement(null, List.of(), List.of());
-    }
-
-    boolean isEmpty() {
-        return readersToClose.isEmpty() && tablesToDelete.isEmpty();
     }
 
     void execute() {

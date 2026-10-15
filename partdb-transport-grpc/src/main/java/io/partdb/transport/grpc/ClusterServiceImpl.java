@@ -1,7 +1,6 @@
 package io.partdb.transport.grpc;
 
 import io.grpc.stub.StreamObserver;
-import io.partdb.consensus.ConsensusMembership;
 import io.partdb.grpc.cluster.proto.ClusterProto.Error;
 import io.partdb.grpc.cluster.proto.ClusterProto.ErrorCode;
 import io.partdb.grpc.cluster.proto.ClusterProto.Member;
@@ -14,6 +13,7 @@ import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
 import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
 import io.partdb.node.PartDbNode;
 import io.partdb.node.cluster.NodeStatus;
+import io.partdb.raft.RaftMembership;
 
 final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase {
 
@@ -42,7 +42,7 @@ final class ClusterServiceImpl extends ClusterServiceGrpc.ClusterServiceImplBase
 
     @Override
     public void memberList(MemberListRequest request, StreamObserver<MemberListResponse> responseObserver) {
-        ConsensusMembership membership = node.cluster().membership();
+        RaftMembership membership = node.cluster().membership();
         NodeStatus status = node.cluster().status();
         String leaderId = status.leaderId().orElse("");
         String selfId = status.nodeId();

@@ -1,193 +1,73 @@
 package io.partdb.node;
 
-import io.partdb.consensus.ConsensusMembership;
 import io.partdb.consensus.ConsensusConfig;
-import io.partdb.node.config.ReplicationConfig;
-import io.partdb.node.config.StorageConfig;
+import io.partdb.raft.RaftMembership;
+import io.partdb.raft.RaftOptions;
 
 import java.nio.file.Path;
-import java.util.LinkedHashSet;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Set;
 
-public final class PartDbNodeConfig {
-    private final String nodeId;
-    private final Path dataDirectory;
-    private final ConsensusMembership membership;
-    private final StorageConfig storage;
-    private final ReplicationConfig replication;
-
-    private PartDbNodeConfig(Builder builder) {
-        this.nodeId = requireNonBlank(builder.nodeId, "nodeId");
-        this.dataDirectory = Objects.requireNonNull(builder.dataDirectory, "dataDirectory must not be null");
-        this.membership = Objects.requireNonNull(builder.membership, "membership must not be null");
-        if (!membership.isMember(nodeId)) {
-            throw new IllegalArgumentException("membership must include nodeId");
-        }
-        this.storage = Objects.requireNonNull(builder.storage, "storage must not be null");
-        this.replication = Objects.requireNonNull(builder.replication, "replication must not be null");
+public record PartDbNodeConfig(
+    String nodeId,
+    Path dataDirectory,
+    RaftMembership membership,
+    Duration tickInterval,
+    RaftOptions raftOptions
+) {
+    public PartDbNodeConfig {
+        Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
+        // ConsensusConfig validates nodeId, membership, tickInterval, and raftOptions.
+        new ConsensusConfig(nodeId, membership, tickInterval, raftOptions);
     }
 
     public static Builder builder(String nodeId, Path dataDirectory) {
         return new Builder(nodeId, dataDirectory);
     }
 
-    public Builder toBuilder() {
-        return new Builder(this);
-    }
-
-    public String nodeId() {
-        return nodeId;
-    }
-
-    public Path dataDirectory() {
-        return dataDirectory;
-    }
-
-    public ConsensusMembership membership() {
-        return membership;
-    }
-
     public Set<String> memberIds() {
         return membership.memberIds();
     }
 
-    public StorageConfig storage() {
-        return storage;
-    }
-
-    public ReplicationConfig replication() {
-        return replication;
-    }
-
     public ConsensusConfig toConsensusConfig() {
-        return replication.toConsensusConfig(nodeId, membership);
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (!(obj instanceof PartDbNodeConfig other)) {
-            return false;
-        }
-        return nodeId.equals(other.nodeId)
-            && dataDirectory.equals(other.dataDirectory)
-            && membership.equals(other.membership)
-            && storage.equals(other.storage)
-            && replication.equals(other.replication);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(nodeId, dataDirectory, membership, storage, replication);
-    }
-
-    @Override
-    public String toString() {
-        return "PartDbNodeConfig{"
-            + "nodeId='" + nodeId + '\''
-            + ", dataDirectory=" + dataDirectory
-            + ", membership=" + membership
-            + ", storage=" + storage
-            + ", replication=" + replication
-            + '}';
+        return new ConsensusConfig(nodeId, membership, tickInterval, raftOptions);
     }
 
     public static final class Builder {
         private final String nodeId;
         private final Path dataDirectory;
-        private ConsensusMembership membership;
-        private StorageConfig storage = StorageConfig.defaults();
-        private ReplicationConfig replication = ReplicationConfig.defaults();
-        private ReplicationConfig.Builder replicationBuilder = ReplicationConfig.defaults().toBuilder();
+        private RaftMembership membership;
+        private Duration tickInterval = ConsensusConfig.DEFAULT_TICK_INTERVAL;
+        private RaftOptions raftOptions = RaftOptions.defaults();
 
         private Builder(String nodeId, Path dataDirectory) {
-            this.nodeId = requireNonBlank(nodeId, "nodeId");
-            this.dataDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
-            this.membership = ConsensusMembership.ofVoters(nodeId);
-        }
-
-        private Builder(PartDbNodeConfig config) {
-            this.nodeId = config.nodeId;
-            this.dataDirectory = config.dataDirectory;
-            this.membership = config.membership;
-            this.storage = config.storage;
-            this.replication = config.replication;
-            this.replicationBuilder = config.replication.toBuilder();
+            this.nodeId = nodeId;
+            this.dataDirectory = dataDirectory;
+            this.membership = RaftMembership.voters(nodeId);
         }
 
         public Builder voters(String... voterIds) {
-            membership = new ConsensusMembership(toIdSet(voterIds, "voterIds"), membership.learners());
-            return this;
+            return membership(RaftMembership.voters(voterIds));
         }
 
-        public Builder learners(String... learnerIds) {
-            membership = new ConsensusMembership(membership.voters(), toIdSet(learnerIds, "learnerIds"));
-            return this;
-        }
-
-        public Builder membership(ConsensusMembership membership) {
+        public Builder membership(RaftMembership membership) {
             this.membership = Objects.requireNonNull(membership, "membership must not be null");
             return this;
         }
 
-        public Builder storage(StorageConfig storage) {
-            this.storage = Objects.requireNonNull(storage, "storage must not be null");
+        public Builder tickInterval(Duration tickInterval) {
+            this.tickInterval = Objects.requireNonNull(tickInterval, "tickInterval must not be null");
             return this;
         }
 
-        public Builder replication(ReplicationConfig replication) {
-            this.replicationBuilder = Objects.requireNonNull(replication, "replication must not be null").toBuilder();
-            return this;
-        }
-
-        public Builder tickInterval(java.time.Duration tickInterval) {
-            this.replicationBuilder.tickInterval(tickInterval);
-            return this;
-        }
-
-        public Builder electionTimeoutMinTicks(int ticks) {
-            this.replicationBuilder.electionTimeoutMinTicks(ticks);
-            return this;
-        }
-
-        public Builder electionTimeoutMaxTicks(int ticks) {
-            this.replicationBuilder.electionTimeoutMaxTicks(ticks);
-            return this;
-        }
-
-        public Builder heartbeatIntervalTicks(int ticks) {
-            this.replicationBuilder.heartbeatIntervalTicks(ticks);
-            return this;
-        }
-
-        public Builder maxEntriesPerAppend(int count) {
-            this.replicationBuilder.maxEntriesPerAppend(count);
+        public Builder raftOptions(RaftOptions raftOptions) {
+            this.raftOptions = Objects.requireNonNull(raftOptions, "raftOptions must not be null");
             return this;
         }
 
         public PartDbNodeConfig build() {
-            this.replication = replicationBuilder.build();
-            return new PartDbNodeConfig(this);
+            return new PartDbNodeConfig(nodeId, dataDirectory, membership, tickInterval, raftOptions);
         }
-    }
-
-    private static String requireNonBlank(String value, String name) {
-        Objects.requireNonNull(value, name + " must not be null");
-        if (value.isBlank()) {
-            throw new IllegalArgumentException(name + " must not be blank");
-        }
-        return value;
-    }
-
-    private static Set<String> toIdSet(String[] ids, String name) {
-        Objects.requireNonNull(ids, name + " must not be null");
-        var normalized = new LinkedHashSet<String>();
-        for (String id : ids) {
-            normalized.add(requireNonBlank(id, "memberId"));
-        }
-        return Set.copyOf(normalized);
     }
 }

@@ -107,10 +107,6 @@ final class VersionSet {
         return currentVersion.manifest();
     }
 
-    StoreVersion currentVersion() {
-        return currentVersion;
-    }
-
     long allocateSstableId() {
         return nextSstableId.incrementAndGet();
     }

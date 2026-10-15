@@ -4,14 +4,16 @@ import io.partdb.storage.*;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSupport {
@@ -26,27 +28,22 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
 
             int threadCount = 10;
             int readsPerThread = 100;
-            AtomicBoolean failed = new AtomicBoolean(false);
 
             try (var executor = Executors.newFixedThreadPool(threadCount)) {
+                List<Future<?>> futures = new ArrayList<>();
                 for (int t = 0; t < threadCount; t++) {
-                    executor.submit(() -> {
+                    futures.add(executor.submit(() -> {
                         for (int i = 0; i < readsPerThread; i++) {
                             int keyIndex = i % 100;
                             Optional<ValueRecord> result = get(tree, key(keyIndex));
-                            if (result.isEmpty() || !result.get().value().equals(bytes(value(keyIndex)))) {
-                                failed.set(true);
-                            }
+                            assertTrue(result.isPresent(), "missing key " + keyIndex);
+                            assertEquals(bytes(value(keyIndex)), result.get().value());
                         }
-                    });
+                    }));
                 }
 
-                executor.shutdown();
-                assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS),
-                    "Concurrent read tasks did not complete in time");
+                awaitAll(executor, futures, 10);
             }
-
-            assertFalse(failed.get());
         }
     }
 
@@ -57,25 +54,30 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
             int writesPerThread = 100;
 
             try (var executor = Executors.newFixedThreadPool(threadCount)) {
+                List<Future<?>> futures = new ArrayList<>();
                 for (int t = 0; t < threadCount; t++) {
                     int threadId = t;
-                    executor.submit(() -> {
+                    futures.add(executor.submit(() -> {
                         for (int i = 0; i < writesPerThread; i++) {
-                            int keyIndex = threadId * writesPerThread + i;
-                            put(tree, key(keyIndex & 0xFF), value(keyIndex), nextRevision());
+                            put(tree, writerKey(threadId, i), value(i), nextRevision());
                         }
-                    });
+                    }));
                 }
 
-                executor.shutdown();
-                assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS),
-                    "Concurrent write tasks did not complete in time");
+                awaitAll(executor, futures, 10);
             }
 
             drainToDurableState(tree);
 
             List<EntryRecord> entries = readAll(tree.scan(KeyRange.all()));
-            assertFalse(entries.isEmpty());
+            assertEquals(threadCount * writesPerThread, entries.size());
+            for (int t = 0; t < threadCount; t++) {
+                for (int i = 0; i < writesPerThread; i++) {
+                    Optional<ValueRecord> result = get(tree, writerKey(t, i));
+                    assertTrue(result.isPresent(), "missing key for writer " + t + " index " + i);
+                    assertEquals(bytes(value(i)), result.get().value());
+                }
+            }
         }
     }
 
@@ -88,36 +90,29 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
 
             int writerCount = 5;
             int readerCount = 5;
-            AtomicBoolean failed = new AtomicBoolean(false);
 
             try (var executor = Executors.newFixedThreadPool(writerCount + readerCount)) {
+                List<Future<?>> futures = new ArrayList<>();
                 for (int t = 0; t < writerCount; t++) {
                     int threadId = t;
-                    executor.submit(() -> {
+                    futures.add(executor.submit(() -> {
                         for (int i = 0; i < 100; i++) {
-                            put(tree, key((50 + threadId * 100 + i) & 0xFF), value(i), nextRevision());
+                            put(tree, writerKey(threadId, i), value(i), nextRevision());
                         }
-                    });
+                    }));
                 }
 
                 for (int t = 0; t < readerCount; t++) {
-                    executor.submit(() -> {
-                        try {
-                            for (int i = 0; i < 100; i++) {
-                                get(tree, key(i % 50));
-                            }
-                        } catch (Exception e) {
-                            failed.set(true);
+                    futures.add(executor.submit(() -> {
+                        for (int i = 0; i < 100; i++) {
+                            Optional<ValueRecord> result = get(tree, key(i % 50));
+                            assertTrue(result.isPresent(), "missing key " + (i % 50));
                         }
-                    });
+                    }));
                 }
 
-                executor.shutdown();
-                assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS),
-                    "Concurrent read/write tasks did not complete in time");
+                awaitAll(executor, futures, 10);
             }
-
-            assertFalse(failed.get());
         }
     }
 
@@ -132,43 +127,34 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
 
             int readerCount = 5;
             CountDownLatch startLatch = new CountDownLatch(1);
-            AtomicBoolean failed = new AtomicBoolean(false);
 
             try (var executor = Executors.newFixedThreadPool(readerCount + 1)) {
+                List<Future<?>> futures = new ArrayList<>();
                 for (int t = 0; t < readerCount; t++) {
-                    executor.submit(() -> {
-                        try {
-                            startLatch.await();
-                            for (int i = 0; i < 200; i++) {
-                                get(tree, key(i % 50));
-                            }
-                        } catch (Exception e) {
-                            failed.set(true);
+                    futures.add(executor.submit(() -> {
+                        startLatch.await();
+                        for (int i = 0; i < 200; i++) {
+                            Optional<ValueRecord> result = get(tree, key(i % 50));
+                            assertTrue(result.isPresent(), "missing key " + (i % 50));
                         }
-                    });
+                        return null;
+                    }));
                 }
 
-                executor.submit(() -> {
-                    try {
-                        startLatch.await();
-                        for (int round = 0; round < 5; round++) {
-                            for (int i = 0; i < 20; i++) {
-                                put(tree, key((100 + round * 20 + i) & 0xFF), largeValue(100), nextRevision());
-                            }
-                            drainToDurableState(tree);
+                futures.add(executor.submit(() -> {
+                    startLatch.await();
+                    for (int round = 0; round < 5; round++) {
+                        for (int i = 0; i < 20; i++) {
+                            put(tree, key(100 + round * 20 + i), largeValue(100), nextRevision());
                         }
-                    } catch (Exception e) {
-                        failed.set(true);
+                        drainToDurableState(tree);
                     }
-                });
+                    return null;
+                }));
 
                 startLatch.countDown();
-                executor.shutdown();
-                assertTrue(executor.awaitTermination(30, TimeUnit.SECONDS),
-                    "Read/flush tasks did not complete in time");
+                awaitAll(executor, futures, 30);
             }
-
-            assertFalse(failed.get());
         }
     }
 
@@ -185,33 +171,24 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
             }
 
             int readerCount = 5;
-            AtomicBoolean failed = new AtomicBoolean(false);
 
             try (var executor = Executors.newFixedThreadPool(readerCount)) {
+                List<Future<?>> futures = new ArrayList<>();
                 for (int t = 0; t < readerCount; t++) {
-                    executor.submit(() -> {
-                        try {
-                            for (int round = 0; round < 50; round++) {
-                                for (int i = 0; i < 50; i++) {
-                                    Optional<ValueRecord> result = get(tree, key(String.format("key-%03d", i)));
-                                    if (result.isEmpty()) {
-                                        failed.set(true);
-                                    }
-                                }
-                                Thread.sleep(10);
+                    futures.add(executor.submit(() -> {
+                        for (int round = 0; round < 50; round++) {
+                            for (int i = 0; i < 50; i++) {
+                                Optional<ValueRecord> result = get(tree, key(String.format("key-%03d", i)));
+                                assertTrue(result.isPresent(), "missing key " + i);
                             }
-                        } catch (Exception e) {
-                            failed.set(true);
+                            Thread.sleep(10);
                         }
-                    });
+                        return null;
+                    }));
                 }
 
-                executor.shutdown();
-                assertTrue(executor.awaitTermination(30, TimeUnit.SECONDS),
-                    "Read tasks during compaction did not complete in time");
+                awaitAll(executor, futures, 30);
             }
-
-            assertFalse(failed.get());
         }
     }
 
@@ -225,45 +202,49 @@ class StorageEngineInternalsConcurrencyTest extends StorageEngineInternalTestSup
             }
 
             CountDownLatch startLatch = new CountDownLatch(1);
-            AtomicBoolean failed = new AtomicBoolean(false);
 
             try (var executor = Executors.newFixedThreadPool(2)) {
-                executor.submit(() -> {
-                    try {
-                        startLatch.await();
-                        for (int round = 0; round < 10; round++) {
-                            try (Scan cursor = tree.scan(KeyRange.all())) {
-                                for (EntryRecord ignored : cursor) {
-                                    // drain
-                                }
+                List<Future<?>> futures = new ArrayList<>();
+                futures.add(executor.submit(() -> {
+                    startLatch.await();
+                    for (int round = 0; round < 10; round++) {
+                        try (Scan cursor = tree.scan(KeyRange.all())) {
+                            for (EntryRecord ignored : cursor) {
+                                // drain
                             }
                         }
-                    } catch (Exception e) {
-                        failed.set(true);
                     }
-                });
+                    return null;
+                }));
 
-                executor.submit(() -> {
-                    try {
-                        startLatch.await();
-                        for (int round = 0; round < 5; round++) {
-                            for (int i = 0; i < 20; i++) {
-                                put(tree, key((100 + round * 20 + i) & 0xFF), largeValue(100), nextRevision());
-                            }
-                            drainToDurableState(tree);
+                futures.add(executor.submit(() -> {
+                    startLatch.await();
+                    for (int round = 0; round < 5; round++) {
+                        for (int i = 0; i < 20; i++) {
+                            put(tree, key(100 + round * 20 + i), largeValue(100), nextRevision());
                         }
-                    } catch (Exception e) {
-                        failed.set(true);
+                        drainToDurableState(tree);
                     }
-                });
+                    return null;
+                }));
 
                 startLatch.countDown();
-                executor.shutdown();
-                assertTrue(executor.awaitTermination(30, TimeUnit.SECONDS),
-                    "Scan/flush tasks did not complete in time");
+                awaitAll(executor, futures, 30);
             }
+        }
+    }
 
-            assertFalse(failed.get());
+    private static Slice writerKey(int writerId, int index) {
+        return key(String.format("writer-%d-%03d", writerId, index));
+    }
+
+    private static void awaitAll(ExecutorService executor, List<Future<?>> futures, long timeoutSeconds)
+        throws Exception {
+        executor.shutdown();
+        assertTrue(executor.awaitTermination(timeoutSeconds, TimeUnit.SECONDS),
+            "Concurrent tasks did not complete in time");
+        for (Future<?> future : futures) {
+            future.get();
         }
     }
 }

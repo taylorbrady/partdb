@@ -1,9 +1,9 @@
 package io.partdb.node.cluster;
 
-import io.partdb.consensus.ConsensusMembership;
+import io.partdb.raft.RaftMembership;
 
 public interface ClusterView {
     NodeStatus status();
 
-    ConsensusMembership membership();
+    RaftMembership membership();
 }

@@ -30,8 +30,6 @@ interface RaftStorage extends RaftLogReader, AutoCloseable {
 
     void saveSnapshot(RaftSnapshot snapshot);
 
-    void compact(long index);
-
     @Override
     void close();
 

@@ -11,8 +11,6 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.function.Consumer;
-import java.util.zip.CRC32C;
 
 import static io.partdb.consensus.LogRecordCodec.BYTE_ORDER;
 
@@ -92,23 +90,6 @@ final class SealedSegment implements LogSegment {
         return LogRecordCodec.readEntry(buf);
     }
 
-    public void forEachRecord(Consumer<RecordWithOffset> consumer) {
-        long offset = 0;
-        while (offset < mapped.byteSize()) {
-            RecordHeader header = readHeader(offset);
-            byte[] payload = readPayload(offset + RECORD_HEADER_SIZE, header.length());
-
-            if (!verifyCrc(header, payload)) {
-                throw new ConsensusStorageException.Corruption("CRC mismatch at WAL offset " + offset);
-            }
-
-            LogRecord record = decodeRecord(header.type(), payload);
-            consumer.accept(new RecordWithOffset(offset, record));
-
-            offset += RECORD_HEADER_SIZE + header.length();
-        }
-    }
-
     private RecordHeader readHeader(long offset) {
         int length = mapped.get(INT_LE, offset);
         int crc = mapped.get(INT_LE, offset + 4);
@@ -120,28 +101,5 @@ final class SealedSegment implements LogSegment {
         return mapped.asSlice(offset, length).toArray(ValueLayout.JAVA_BYTE);
     }
 
-    private boolean verifyCrc(RecordHeader header, byte[] payload) {
-        CRC32C crc = new CRC32C();
-        crc.update(header.type());
-        crc.update(payload);
-        return (int) crc.getValue() == header.crc();
-    }
-
-    private LogRecord decodeRecord(byte type, byte[] payload) {
-        ByteBuffer buf = ByteBuffer.wrap(payload).order(BYTE_ORDER);
-        return switch (type) {
-            case LogRecord.TYPE_ENTRY -> new LogRecord.Entry(LogRecordCodec.readEntry(buf));
-            case LogRecord.TYPE_STATE -> new LogRecord.State(LogRecordCodec.readHardState(buf));
-            case LogRecord.TYPE_SNAPSHOT_MARKER -> {
-                long index = buf.getLong();
-                long term = buf.getLong();
-                yield new LogRecord.SnapshotMarker(index, term);
-            }
-            default -> throw new IllegalArgumentException("Unknown record type: " + type);
-        };
-    }
-
     public record RecordHeader(int length, int crc, byte type) {}
-
-    public record RecordWithOffset(long offset, LogRecord record) {}
 }

@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 sealed interface BlockCache permits S3FifoBlockCache, NoOpBlockCache {
 
     DataBlockReader get(long cacheId, long offset);
@@ -12,11 +10,5 @@ sealed interface BlockCache permits S3FifoBlockCache, NoOpBlockCache {
 
     Stats stats();
 
-    record Stats(long hits, long misses, long evictions, long sizeInBytes, long maxSizeInBytes) {
-
-        public double hitRate() {
-            long total = hits + misses;
-            return total == 0 ? 0.0 : (double) hits / total;
-        }
-    }
+    record Stats(long hits, long misses, long evictions, long sizeInBytes, long maxSizeInBytes) {}
 }

@@ -5,8 +5,7 @@ import io.partdb.client.ServerEndpoint;
 import java.util.Objects;
 
 final class CliParsing {
-    static final String DEFAULT_ENDPOINT_TEXT = "localhost:8101";
-    static final ServerEndpoint DEFAULT_ENDPOINT = ServerEndpoint.parse(DEFAULT_ENDPOINT_TEXT);
+    static final ServerEndpoint DEFAULT_ENDPOINT = ServerEndpoint.parse("localhost:8101");
 
     private CliParsing() {}
 
@@ -16,14 +15,6 @@ final class CliParsing {
             case "json" -> OutputFormat.JSON;
             default -> throw new IllegalArgumentException("unknown output format: " + value);
         };
-    }
-
-    static ServerEndpoint parseServerEndpoint(String value) {
-        try {
-            return ServerEndpoint.parse(value);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid endpoint: " + value, e);
-        }
     }
 
     static NodeEndpoint parseNodeEndpointSpec(String value, String optionName) {

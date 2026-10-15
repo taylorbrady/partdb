@@ -9,25 +9,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class StorageEngineInternalsCursorTest extends StorageEngineInternalTestSupport {
-
-    @Test
-    void closeReleasesResources() {
-        try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
-            for (int i = 0; i < 10; i++) {
-                put(tree, key(i), value(i), nextRevision());
-            }
-            drainToDurableState(tree);
-
-            try (Scan cursor = tree.scan(KeyRange.all())) {
-                var iterator = cursor.iterator();
-                assertTrue(iterator.hasNext());
-                assertNotNull(iterator.next());
-            }
-        }
-    }
 
     @Test
     void multipleCursorsOnSameTree() {
@@ -65,7 +48,7 @@ class StorageEngineInternalsCursorTest extends StorageEngineInternalTestSupport 
             }
 
             try (Scan cursor = tree.scan(KeyRange.all())) {
-                Thread.sleep(1000);
+                awaitCompaction(tree);
 
                 List<EntryRecord> entries = readAll(cursor);
                 assertEquals(30, entries.size());

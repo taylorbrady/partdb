@@ -41,13 +41,9 @@ public final class GrpcRaftTransport implements RaftTransport {
     public GrpcRaftTransport(
         String localNodeId,
         int port,
-        Map<String, String> raftPeerAddresses
+        Map<String, PeerEndpoint> raftPeerEndpoints
     ) {
-        this(GrpcRaftTransportConfig.create(localNodeId, port, raftPeerAddresses));
-    }
-
-    GrpcRaftTransport(GrpcRaftTransportConfig config) {
-        this.config = config;
+        this.config = new GrpcRaftTransportConfig(localNodeId, port, raftPeerEndpoints);
     }
 
     @Override
@@ -249,7 +245,7 @@ public final class GrpcRaftTransport implements RaftTransport {
 
         byte[] data = msg.data().toByteArray();
         int offset = 0;
-        int chunkSize = config.snapshotChunkSize();
+        int chunkSize = GrpcRaftTransportConfig.SNAPSHOT_CHUNK_SIZE;
 
         while (offset < data.length) {
             int end = Math.min(offset + chunkSize, data.length);

@@ -49,7 +49,7 @@ final class SSTableStore {
     LoadedStoreVersion loadState(SSTableManifest manifest) {
         return new LoadedStoreVersion(
             manifest,
-            manifest.sstables().isEmpty() ? List.of() : loadReaders(manifest)
+            manifest.sstables().isEmpty() ? List.of() : openReaders(manifest.sstables())
         );
     }
 
@@ -110,10 +110,6 @@ final class SSTableStore {
 
     Path sstablePath(long id) {
         return directory.resolve("%06d.sst".formatted(id));
-    }
-
-    private List<SSTableReader> loadReaders(SSTableManifest manifest) {
-        return openReaders(manifest.sstables());
     }
 
     private List<Long> discoverSSTableIds() throws IOException {

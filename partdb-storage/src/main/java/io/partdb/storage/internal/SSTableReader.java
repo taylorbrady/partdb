@@ -176,10 +176,6 @@ final class SSTableReader implements AutoCloseable {
         );
     }
 
-    boolean mightContain(Slice key) {
-        return key.compareTo(smallestKey()) >= 0 && key.compareTo(largestKey()) <= 0;
-    }
-
     SSTableReader retain() {
         while (true) {
             int current = references.get();

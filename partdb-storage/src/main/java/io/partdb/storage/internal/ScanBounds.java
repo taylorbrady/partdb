@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 final class ScanBounds {
 
     private final Slice startInclusive;

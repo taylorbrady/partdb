@@ -23,6 +23,7 @@ partdb-server
 
 partdb-transport-grpc
   -> partdb-node
+  -> partdb-consensus
   -> partdb-grpc
   -> partdb-raft
 
@@ -96,9 +97,9 @@ Role: durable, effectful Raft runtime and consensus membership model.
 Decision: keep.
 
 This module adapts the pure Raft core to persistence, transport, snapshots,
-read barriers, proposal tracking, state-machine application, and the
-runtime-facing `ConsensusMembership` model. It is generic over a
-`ReplicatedStateMachine`.
+read barriers, proposal tracking, and state-machine application. Membership is
+expressed with `RaftMembership` from `partdb-raft`; consensus does not re-model
+it. It is generic over a `ReplicatedStateMachine`.
 
 Allowed dependencies: `partdb-raft`, `partdb-bytes`.
 
@@ -129,16 +130,13 @@ Role: replicated PartDB node domain.
 Decision: keep.
 
 This module composes the consensus runtime with the PartDB KV state machine. It
-owns node-facing domain APIs such as KV operations, cluster status, maintenance,
-backup, and recovery.
+owns node-facing domain APIs: KV operations, cluster status, backup, and
+recovery.
 
 Allowed dependencies: `partdb-consensus`, `partdb-storage`, `partdb-bytes`.
 
 Must not own: gRPC service implementations, CLI parsing, process ports, JMX
 registration, or transport endpoint parsing.
-
-Watch point: if the public Java API grows, consider a separate API package
-inside this module before creating another module.
 
 ### `partdb-grpc`
 
@@ -242,8 +240,8 @@ Must not own: product code.
 
 - Keep `partdb-bytes` despite being small because it owns a foundational value
   boundary.
-- Remove `partdb-cluster`; its only type was consensus runtime membership, which
-  now lives in `partdb-consensus` as `ConsensusMembership`.
+- Do not add a separate membership type per module; `RaftMembership` is the one
+  membership model from `partdb-raft` up to the node API.
 - Keep `partdb-server` only as the process runtime assembly module.
 - Keep `partdb-transport-grpc` as one module for now. Revisit a split when
   public API transport or Raft peer transport grows.

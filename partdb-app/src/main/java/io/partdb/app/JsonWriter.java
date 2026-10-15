@@ -10,13 +10,6 @@ final class JsonWriter {
 
     private JsonWriter() {}
 
-    static String quote(String value) {
-        Objects.requireNonNull(value, "value must not be null");
-        StringBuilder builder = new StringBuilder(value.length() + 2);
-        appendQuoted(builder, value);
-        return builder.toString();
-    }
-
     static String object(Consumer<ObjectWriter> consumer) {
         Objects.requireNonNull(consumer, "consumer must not be null");
         StringBuilder builder = new StringBuilder();
@@ -115,15 +108,6 @@ final class JsonWriter {
                 writeElement.accept(arrayWriter, value);
             }
             arrayWriter.end();
-        }
-
-        void object(String name, Consumer<ObjectWriter> consumer) {
-            Objects.requireNonNull(consumer, "consumer must not be null");
-            writeName(name);
-            ObjectWriter objectWriter = new ObjectWriter(builder);
-            objectWriter.begin();
-            consumer.accept(objectWriter);
-            objectWriter.end();
         }
 
         private void writeName(String name) {

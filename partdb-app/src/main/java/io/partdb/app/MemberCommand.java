@@ -35,7 +35,7 @@ record MemberCommand(ServerEndpoint endpoint, OutputFormat format) implements Ap
             String arg = args.next();
             try {
                 switch (arg) {
-                    case "--endpoint", "-e" -> endpoint = CliParsing.parseServerEndpoint(args.requireValue("--endpoint"));
+                    case "--endpoint", "-e" -> endpoint = ServerEndpoint.parse(args.requireValue("--endpoint"));
                     case "--output", "-o" -> format = CliParsing.parseOutputFormat(args.requireValue("--output"));
                     case "--help", "-h" -> {
                         return new HelpCommand(USAGE);

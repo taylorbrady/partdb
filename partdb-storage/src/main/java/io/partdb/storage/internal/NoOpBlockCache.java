@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 final class NoOpBlockCache implements BlockCache {
 
     public static final NoOpBlockCache INSTANCE = new NoOpBlockCache();

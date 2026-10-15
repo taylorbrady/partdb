@@ -38,10 +38,6 @@ public record CompactionOptions(
         return builder().build();
     }
 
-    public Builder toBuilder() {
-        return new Builder(this);
-    }
-
     public static final class Builder {
         private long targetTableSizeBytes = 64 * 1024 * 1024;
         private int maxConcurrentCompactions = 4;
@@ -51,15 +47,6 @@ public record CompactionOptions(
         private int maxLevels = 7;
 
         private Builder() {
-        }
-
-        private Builder(CompactionOptions options) {
-            this.targetTableSizeBytes = options.targetTableSizeBytes;
-            this.maxConcurrentCompactions = options.maxConcurrentCompactions;
-            this.l0CompactionTrigger = options.l0CompactionTrigger;
-            this.maxBytesForLevelBase = options.maxBytesForLevelBase;
-            this.levelMultiplier = options.levelMultiplier;
-            this.maxLevels = options.maxLevels;
         }
 
         public Builder targetTableSizeBytes(long targetTableSizeBytes) {

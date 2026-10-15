@@ -6,8 +6,7 @@ import java.util.Optional;
 public sealed class PartDbException extends RuntimeException
     permits PartDbException.NotLeader,
             PartDbException.NodeClosed,
-            PartDbException.StorageFailure,
-            PartDbException.RecoveryFailure {
+            PartDbException.StorageFailure {
 
     protected PartDbException(String message) {
         super(message);
@@ -40,12 +39,6 @@ public sealed class PartDbException extends RuntimeException
 
     public static final class StorageFailure extends PartDbException {
         public StorageFailure(String message, Throwable cause) {
-            super(Objects.requireNonNull(message, "message must not be null"), cause);
-        }
-    }
-
-    public static final class RecoveryFailure extends PartDbException {
-        public RecoveryFailure(String message, Throwable cause) {
             super(Objects.requireNonNull(message, "message must not be null"), cause);
         }
     }

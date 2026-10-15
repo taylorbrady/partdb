@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteOrder;
 import java.util.ArrayList;

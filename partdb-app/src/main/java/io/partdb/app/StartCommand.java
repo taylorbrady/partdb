@@ -4,20 +4,12 @@ import io.partdb.server.PartDbServer;
 import io.partdb.server.PartDbServerConfig;
 
 import java.nio.file.Path;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 
-record StartCommand(
-    String nodeId,
-    Map<String, String> raftPeerAddresses,
-    Path dataDir,
-    int raftPort,
-    int grpcPort,
-    int adminPort
-) implements AppCommand {
+record StartCommand(PartDbServerConfig config, Path dataDir) implements AppCommand {
     private static final int DEFAULT_RAFT_PORT = 8100;
     private static final int DEFAULT_GRPC_PORT = 8101;
     private static final int DEFAULT_ADMIN_PORT = 8102;
@@ -47,14 +39,8 @@ record StartCommand(
         """;
 
     StartCommand {
-        nodeId = CliParsing.requireNonBlank(nodeId, "nodeId");
-        raftPeerAddresses = Collections.unmodifiableMap(new LinkedHashMap<>(
-            Objects.requireNonNull(raftPeerAddresses, "raftPeerAddresses must not be null")
-        ));
-        dataDir = Objects.requireNonNull(dataDir, "dataDir must not be null");
-        validatePort(raftPort, "raftPort");
-        validatePort(grpcPort, "grpcPort");
-        validatePort(adminPort, "adminPort");
+        Objects.requireNonNull(config, "config must not be null");
+        Objects.requireNonNull(dataDir, "dataDir must not be null");
     }
 
     static AppCommand parse(Args args) {
@@ -98,7 +84,8 @@ record StartCommand(
         }
 
         try {
-            return new StartCommand(nodeId, raftPeerAddresses, dataDir, raftPort, grpcPort, adminPort);
+            var config = PartDbServerConfig.create(nodeId, raftPeerAddresses, dataDir, raftPort, grpcPort, adminPort);
+            return new StartCommand(config, dataDir);
         } catch (IllegalArgumentException e) {
             return new ErrorCommand(e.getMessage(), USAGE);
         }
@@ -106,46 +93,45 @@ record StartCommand(
 
     @Override
     public int execute(CliRuntime runtime) {
-        PartDbServerConfig config;
-        try {
-            config = PartDbServerConfig.create(nodeId, raftPeerAddresses, dataDir, raftPort, grpcPort, adminPort);
-        } catch (IllegalArgumentException e) {
-            return runtime.error(e.getMessage());
-        }
-
-        CountDownLatch shutdownLatch = new CountDownLatch(1);
+        var shutdownRequested = new CountDownLatch(1);
+        var stopped = new CountDownLatch(1);
         Thread shutdownHook = Thread.ofPlatform()
             .name("shutdown-hook")
             .unstarted(() -> {
                 runtime.out().println("Received shutdown signal");
-                shutdownLatch.countDown();
+                shutdownRequested.countDown();
+                awaitUninterruptibly(stopped);
             });
 
-        try (var server = new PartDbServer(config)) {
-            Runtime.getRuntime().addShutdownHook(shutdownHook);
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
+        try {
+            return runUntilShutdown(runtime, shutdownRequested);
+        } finally {
+            stopped.countDown();
             try {
-                server.start();
-                runtime.out().println("PartDB node '" + nodeId + "' started");
-                runtime.out().println("  Raft port: " + raftPort);
-                runtime.out().println("  gRPC port: " + grpcPort);
-                runtime.out().println("  Admin port: " + adminPort);
-                runtime.out().println("  Data dir:  " + dataDir.toAbsolutePath());
-                if (raftPeerAddresses.isEmpty()) {
-                    runtime.out().println("  Mode:      single-node");
-                } else {
-                    runtime.out().println("  Raft peers: " + raftPeerAddresses.size());
-                }
-                runtime.out().println();
-                runtime.out().println("Press Ctrl+C to stop");
-
-                shutdownLatch.await();
-            } finally {
-                try {
-                    Runtime.getRuntime().removeShutdownHook(shutdownHook);
-                } catch (IllegalStateException ignored) {
-                    // JVM shutdown is already in progress.
-                }
+                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            } catch (IllegalStateException ignored) {
             }
+        }
+    }
+
+    private int runUntilShutdown(CliRuntime runtime, CountDownLatch shutdownRequested) {
+        try (var server = new PartDbServer(config)) {
+            server.start();
+            runtime.out().println("PartDB node '" + config.nodeId() + "' started");
+            runtime.out().println("  Raft port: " + config.raftPort());
+            runtime.out().println("  gRPC port: " + config.grpcPort());
+            runtime.out().println("  Admin port: " + config.adminPort());
+            runtime.out().println("  Data dir:  " + dataDir.toAbsolutePath());
+            if (config.raftPeerEndpoints().isEmpty()) {
+                runtime.out().println("  Mode:      single-node");
+            } else {
+                runtime.out().println("  Raft peers: " + config.raftPeerEndpoints().size());
+            }
+            runtime.out().println();
+            runtime.out().println("Press Ctrl+C to stop");
+
+            shutdownRequested.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
@@ -155,12 +141,22 @@ record StartCommand(
         }
 
         runtime.out().println("Server stopped");
+        runtime.out().flush();
         return 0;
     }
 
-    private static void validatePort(int value, String name) {
-        if (value <= 0 || value > 65535) {
-            throw new IllegalArgumentException(name + " must be between 1 and 65535");
+    private static void awaitUninterruptibly(CountDownLatch latch) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                latch.await();
+                break;
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 }

@@ -101,30 +101,6 @@ final class CompactionScheduler implements AutoCloseable {
         }
     }
 
-    void awaitIdle(Duration timeout) {
-        if (timeout.isNegative()) {
-            throw new IllegalArgumentException("timeout must be non-negative");
-        }
-
-        lock.lock();
-        try {
-            long remainingNanos = timeout.toNanos();
-            while (!isIdleLocked()) {
-                if (remainingNanos <= 0) {
-                    throw new StorageException.Timeout("Timed out waiting for compaction idle", null);
-                }
-                try {
-                    remainingNanos = idle.awaitNanos(remainingNanos);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new StorageException.IO("Interrupted waiting for compaction idle", e);
-                }
-            }
-        } finally {
-            lock.unlock();
-        }
-    }
-
     @Override
     public void close() {
         lock.lock();

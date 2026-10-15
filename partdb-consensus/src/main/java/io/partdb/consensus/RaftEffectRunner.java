@@ -5,7 +5,6 @@ import io.partdb.raft.RaftEffects;
 import io.partdb.raft.RaftInput;
 import io.partdb.raft.RaftMessage;
 import io.partdb.raft.RaftNode;
-import io.partdb.raft.RaftSnapshot;
 
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
@@ -77,9 +76,7 @@ final class RaftEffectRunner {
             applyTracker.advance(snapshot.index());
         });
 
-        if (persistence.requiresSync()) {
-            storage.sync();
-        }
+        storage.sync();
 
         if (!persistence.entries().isEmpty()) {
             var lastPersisted = persistence.entries().getLast();

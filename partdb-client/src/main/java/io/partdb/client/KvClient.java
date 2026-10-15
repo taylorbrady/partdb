@@ -15,19 +15,16 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 public final class KvClient implements AutoCloseable {
 
     private final KvClientConfig config;
     private final ConcurrentHashMap<ServerEndpoint, ManagedChannel> channels;
-    private final AtomicReference<ServerEndpoint> currentLeader;
     private final AtomicInteger roundRobinIndex;
 
     public KvClient(KvClientConfig config) {
         this.config = config;
         this.channels = new ConcurrentHashMap<>();
-        this.currentLeader = new AtomicReference<>(null);
         this.roundRobinIndex = new AtomicInteger(0);
     }
 
@@ -229,17 +226,11 @@ public final class KvClient implements AutoCloseable {
                         new KvClientException.ClusterUnavailable("All retries exhausted", ex));
                 }
 
-                if (ex instanceof NotLeaderException nle) {
-                    if (nle.leaderHint != null) {
-                        currentLeader.set(nle.leaderHint);
-                    } else {
-                        currentLeader.set(null);
-                    }
+                if (ex instanceof NotLeaderException) {
                     return executeWithRetry(operation, attempt + 1);
                 }
 
                 if (isRetryable(ex)) {
-                    currentLeader.set(null);
                     return CompletableFuture.supplyAsync(() -> null,
                             CompletableFuture.delayedExecutor(config.retryDelay().toMillis(), TimeUnit.MILLISECONDS))
                         .thenCompose(v -> executeWithRetry(operation, attempt + 1));
@@ -264,10 +255,7 @@ public final class KvClient implements AutoCloseable {
     }
 
     private <T> void handleError(KvProto.Error error, CompletableFuture<T> future) {
-        switch (error.getCode()) {
-            case NOT_FOUND -> future.complete(null);
-            default -> future.completeExceptionally(toException(error));
-        }
+        future.completeExceptionally(toException(error));
     }
 
     private KvProto.RequestHeader buildHeader() {
@@ -300,10 +288,6 @@ public final class KvClient implements AutoCloseable {
     }
 
     private ServerEndpoint selectEndpoint() {
-        ServerEndpoint leader = currentLeader.get();
-        if (leader != null) {
-            return leader;
-        }
         List<ServerEndpoint> endpoints = config.endpoints();
         int idx = roundRobinIndex.getAndIncrement() % endpoints.size();
         return endpoints.get(idx);
@@ -357,7 +341,6 @@ public final class KvClient implements AutoCloseable {
 
                 if (!published.get() && isRetryable(t) && attempt < config.maxRetries()) {
                     active.set(false);
-                    currentLeader.set(null);
                     cursor.close();
                     retryScan(request, attempt, t, future);
                     return;
@@ -412,16 +395,12 @@ public final class KvClient implements AutoCloseable {
         if (attempt >= config.maxRetries()) {
             return false;
         }
-        if (exception instanceof NotLeaderException notLeader) {
-            currentLeader.set(notLeader.leaderHint);
-            return true;
-        }
-        return false;
+        return exception instanceof NotLeaderException;
     }
 
     private RuntimeException toException(KvProto.Error error) {
         return switch (error.getCode()) {
-            case NOT_LEADER -> new NotLeaderException(ServerEndpoint.tryParse(error.getLeaderHint()).orElse(null));
+            case NOT_LEADER -> new NotLeaderException();
             default -> new KvClientException.ClusterUnavailable(error.getMessage());
         };
     }
@@ -441,10 +420,5 @@ public final class KvClient implements AutoCloseable {
     }
 
     private static final class NotLeaderException extends RuntimeException {
-        final ServerEndpoint leaderHint;
-
-        NotLeaderException(ServerEndpoint leaderHint) {
-            this.leaderHint = leaderHint;
-        }
     }
 }

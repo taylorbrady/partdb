@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 import java.util.Objects;
 
 record InternalKey(Slice userKey, long revision) implements Comparable<InternalKey> {

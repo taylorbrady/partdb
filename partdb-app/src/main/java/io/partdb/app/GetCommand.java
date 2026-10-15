@@ -4,7 +4,6 @@ import io.partdb.bytes.Bytes;
 import io.partdb.client.KvClient;
 import io.partdb.client.ServerEndpoint;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
@@ -32,21 +31,25 @@ record GetCommand(ServerEndpoint endpoint, String key) implements AppCommand {
 
         while (args.hasNext()) {
             String arg = args.next();
-            switch (arg) {
-                case "--endpoint", "-e" -> endpoint = CliParsing.parseServerEndpoint(args.requireValue("--endpoint"));
-                case "--help", "-h" -> {
-                    return new HelpCommand(USAGE);
-                }
-                default -> {
-                    if (arg.startsWith("-")) {
-                        return new ErrorCommand("unknown option: " + arg, USAGE);
+            try {
+                switch (arg) {
+                    case "--endpoint", "-e" -> endpoint = ServerEndpoint.parse(args.requireValue("--endpoint"));
+                    case "--help", "-h" -> {
+                        return new HelpCommand(USAGE);
                     }
-                    if (key == null) {
-                        key = arg;
-                    } else {
-                        return new ErrorCommand("unexpected argument: " + arg, USAGE);
+                    default -> {
+                        if (arg.startsWith("-")) {
+                            return new ErrorCommand("unknown option: " + arg, USAGE);
+                        }
+                        if (key == null) {
+                            key = arg;
+                        } else {
+                            return new ErrorCommand("unexpected argument: " + arg, USAGE);
+                        }
                     }
                 }
+            } catch (IllegalArgumentException e) {
+                return new ErrorCommand(e.getMessage(), USAGE);
             }
         }
 

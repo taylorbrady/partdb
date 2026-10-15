@@ -30,10 +30,6 @@ public record SSTableOptions(
         return builder().build();
     }
 
-    public Builder toBuilder() {
-        return new Builder(this);
-    }
-
     public enum Compression {
         NONE,
         DEFLATE
@@ -46,13 +42,6 @@ public record SSTableOptions(
         private Compression compression = Compression.DEFLATE;
 
         private Builder() {
-        }
-
-        private Builder(SSTableOptions options) {
-            this.blockSizeBytes = options.blockSizeBytes;
-            this.blockRestartInterval = options.blockRestartInterval;
-            this.bloomFilterFalsePositiveRate = options.bloomFilterFalsePositiveRate;
-            this.compression = options.compression;
         }
 
         public Builder blockSizeBytes(int blockSizeBytes) {

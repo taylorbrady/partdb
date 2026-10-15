@@ -33,10 +33,6 @@ public record Transaction(List<Condition> conditions, List<WriteOperation> opera
         return new Builder();
     }
 
-    public WriteBatch writeBatch() {
-        return new WriteBatch(operations);
-    }
-
     public static final class Builder {
         private final List<Condition> conditions = new ArrayList<>();
         private final List<WriteOperation> operations = new ArrayList<>();

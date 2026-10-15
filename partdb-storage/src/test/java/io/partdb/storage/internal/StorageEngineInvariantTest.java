@@ -318,7 +318,8 @@ class StorageEngineInvariantTest {
         void replaceWith(Path directory, StorageCheckpoint checkpoint) {
             store.close();
             this.directory = directory;
-            this.store = StorageEngine.openFromCheckpoint(directory, checkpoint, options);
+            this.store = StorageEngine.open(directory, options);
+            this.store.restore(checkpoint);
         }
 
         void restore(StorageCheckpoint checkpoint) {

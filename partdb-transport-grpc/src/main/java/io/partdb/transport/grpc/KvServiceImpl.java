@@ -236,7 +236,6 @@ final class KvServiceImpl extends KvServiceGrpc.KvServiceImplBase {
             case PartDbException.NotLeader e -> Error.newBuilder()
                 .setCode(ErrorCode.NOT_LEADER)
                 .setMessage("Not the leader")
-                .setLeaderHint(e.leaderId().orElse(""))
                 .build();
             case PartDbException.NodeClosed _ -> Error.newBuilder()
                 .setCode(ErrorCode.INTERNAL_ERROR)

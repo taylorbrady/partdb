@@ -34,7 +34,6 @@ enum ErrorCode {
 message Error {
   ErrorCode code = 1;
   string message = 2;
-  string leader_hint = 3;
 }
 
 message GetRequest {

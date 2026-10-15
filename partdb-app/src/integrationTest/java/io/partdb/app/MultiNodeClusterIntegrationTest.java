@@ -1,12 +1,16 @@
 package io.partdb.app;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.client.testing.TestCluster;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -16,22 +20,22 @@ class MultiNodeClusterIntegrationTest {
     private static final Duration CLUSTER_TIMEOUT = Duration.ofSeconds(10);
     private static final int REPLAY_WRITE_COUNT = 32;
 
-    @TempDir
+    @TempDir(cleanup = CleanupMode.ON_SUCCESS)
     Path tempDir;
 
     @Test
     void threeNodeClusterSupportsFailoverRestartCatchupAndScanThroughPublicClient() throws Exception {
-        try (var cluster = MultiNodeClusterHarness.create(tempDir, 3)) {
+        try (var cluster = newCluster()) {
             cluster.startAll();
 
             var initialLeader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
 
             try (var client = cluster.newKvClient()) {
-                client.put(bytes("proof/a"), bytes("one")).get();
-                client.put(bytes("proof/b"), bytes("two")).get();
+                client.put(Bytes.utf8("proof/a"), Bytes.utf8("one")).get();
+                client.put(Bytes.utf8("proof/b"), Bytes.utf8("two")).get();
 
-                assertEquals("one", decode(client.get(bytes("proof/a")).get().orElseThrow()));
-                assertEquals("two", decode(client.get(bytes("proof/b")).get().orElseThrow()));
+                assertEquals("one", client.get(Bytes.utf8("proof/a")).get().orElseThrow().utf8());
+                assertEquals("two", client.get(Bytes.utf8("proof/b")).get().orElseThrow().utf8());
             }
 
             cluster.stopNode(initialLeader.nodeId());
@@ -40,9 +44,9 @@ class MultiNodeClusterIntegrationTest {
             assertNotEquals(initialLeader.nodeId(), newLeader.nodeId());
 
             try (var client = cluster.newKvClient()) {
-                assertEquals("one", decode(client.get(bytes("proof/a")).get().orElseThrow()));
-                client.put(bytes("proof/c"), bytes("three")).get();
-                assertEquals("three", decode(client.get(bytes("proof/c")).get().orElseThrow()));
+                assertEquals("one", client.get(Bytes.utf8("proof/a")).get().orElseThrow().utf8());
+                client.put(Bytes.utf8("proof/c"), Bytes.utf8("three")).get();
+                assertEquals("three", client.get(Bytes.utf8("proof/c")).get().orElseThrow().utf8());
             }
 
             cluster.startNode(initialLeader.nodeId());
@@ -55,31 +59,28 @@ class MultiNodeClusterIntegrationTest {
 
             try (var client = cluster.newKvClient()) {
                 var scanned = new ArrayList<String>();
-                try (var cursor = client.scan(Optional.of(bytes("proof/")), Optional.of(bytes("proof0"))).get()) {
+                try (var cursor = client.scan(Optional.of(Bytes.utf8("proof/")), Optional.of(Bytes.utf8("proof0"))).get()) {
                     while (cursor.hasNext()) {
                         var entry = cursor.next();
                         scanned.add(entry.key().utf8() + "=" + entry.value().utf8());
                     }
                 }
 
-                assertEquals(
-                    java.util.List.of("proof/a=one", "proof/b=two", "proof/c=three"),
-                    scanned
-                );
+                assertEquals(List.of("proof/a=one", "proof/b=two", "proof/c=three"), scanned);
             }
         }
     }
 
     @Test
     void leaderFailoverPreservesWritesAndRecoveredLeaderCatchesUp() throws Exception {
-        try (var cluster = MultiNodeClusterHarness.create(tempDir, 3)) {
+        try (var cluster = newCluster()) {
             cluster.startAll();
 
             var initialLeader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
 
             try (var client = cluster.newKvClient()) {
-                client.put(bytes("alpha"), bytes("one")).get();
-                assertEquals("one", decode(client.get(bytes("alpha")).get().orElseThrow()));
+                client.put(Bytes.utf8("alpha"), Bytes.utf8("one")).get();
+                assertEquals("one", client.get(Bytes.utf8("alpha")).get().orElseThrow().utf8());
             }
 
             cluster.awaitNodeValue(initialLeader.nodeId(), "alpha", "one", CLUSTER_TIMEOUT);
@@ -90,8 +91,8 @@ class MultiNodeClusterIntegrationTest {
             assertNotEquals(initialLeader.nodeId(), newLeader.nodeId());
 
             try (var client = cluster.newKvClient()) {
-                client.put(bytes("beta"), bytes("two")).get();
-                assertEquals("two", decode(client.get(bytes("beta")).get().orElseThrow()));
+                client.put(Bytes.utf8("beta"), Bytes.utf8("two")).get();
+                assertEquals("two", client.get(Bytes.utf8("beta")).get().orElseThrow().utf8());
             }
 
             cluster.awaitNodeValue(newLeader.nodeId(), "beta", "two", CLUSTER_TIMEOUT);
@@ -99,8 +100,7 @@ class MultiNodeClusterIntegrationTest {
             cluster.startNode(initialLeader.nodeId());
 
             var stableLeader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            var membership = cluster.awaitMembershipSize(stableLeader.nodeId(), 3, CLUSTER_TIMEOUT);
-            assertEquals(3, membership.members().size());
+            cluster.awaitMembershipSize(stableLeader.nodeId(), 3, CLUSTER_TIMEOUT);
 
             cluster.awaitNodeValue(initialLeader.nodeId(), "alpha", "one", CLUSTER_TIMEOUT);
             cluster.awaitNodeValue(initialLeader.nodeId(), "beta", "two", CLUSTER_TIMEOUT);
@@ -109,20 +109,17 @@ class MultiNodeClusterIntegrationTest {
 
     @Test
     void restartedFollowerCatchesUpOnMissedWrites() throws Exception {
-        try (var cluster = MultiNodeClusterHarness.create(tempDir, 3)) {
+        try (var cluster = newCluster()) {
             cluster.startAll();
 
             var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            String followerId = cluster.runningNodeIds().stream()
-                .filter(nodeId -> !nodeId.equals(leader.nodeId()))
-                .findFirst()
-                .orElseThrow();
+            String followerId = anyFollower(cluster, leader.nodeId());
 
             cluster.stopNode(followerId);
 
             try (var client = cluster.newKvClient()) {
-                client.put(bytes("gamma"), bytes("three")).get();
-                client.put(bytes("delta"), bytes("four")).get();
+                client.put(Bytes.utf8("gamma"), Bytes.utf8("three")).get();
+                client.put(Bytes.utf8("delta"), Bytes.utf8("four")).get();
             }
 
             cluster.startNode(followerId);
@@ -135,15 +132,15 @@ class MultiNodeClusterIntegrationTest {
 
     @Test
     void clusterRecoversCommittedDataAfterFullRestart() throws Exception {
-        try (var cluster = MultiNodeClusterHarness.create(tempDir, 3)) {
+        try (var cluster = newCluster()) {
             cluster.startAll();
 
-            var initialLeader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+            cluster.awaitStableLeader(CLUSTER_TIMEOUT);
 
             try (var client = cluster.newKvClient()) {
-                client.put(bytes("persist-1"), bytes("value-1")).get();
-                client.put(bytes("persist-2"), bytes("value-2")).get();
-                client.put(bytes("persist-3"), bytes("value-3")).get();
+                client.put(Bytes.utf8("persist-1"), Bytes.utf8("value-1")).get();
+                client.put(Bytes.utf8("persist-2"), Bytes.utf8("value-2")).get();
+                client.put(Bytes.utf8("persist-3"), Bytes.utf8("value-3")).get();
             }
 
             for (String nodeId : cluster.runningNodeIds()) {
@@ -156,8 +153,7 @@ class MultiNodeClusterIntegrationTest {
             cluster.startAll();
 
             var recoveredLeader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            var membership = cluster.awaitMembershipSize(recoveredLeader.nodeId(), 3, CLUSTER_TIMEOUT);
-            assertEquals(3, membership.members().size());
+            cluster.awaitMembershipSize(recoveredLeader.nodeId(), 3, CLUSTER_TIMEOUT);
 
             for (String nodeId : cluster.runningNodeIds()) {
                 cluster.awaitNodeValue(nodeId, "persist-1", "value-1", CLUSTER_TIMEOUT);
@@ -169,20 +165,17 @@ class MultiNodeClusterIntegrationTest {
 
     @Test
     void restartedFollowerReplaysLargerBurstOfMissedWrites() throws Exception {
-        try (var cluster = MultiNodeClusterHarness.create(tempDir, 3)) {
+        try (var cluster = newCluster()) {
             cluster.startAll();
 
             var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            String followerId = cluster.runningNodeIds().stream()
-                .filter(nodeId -> !nodeId.equals(leader.nodeId()))
-                .findFirst()
-                .orElseThrow();
+            String followerId = anyFollower(cluster, leader.nodeId());
 
             cluster.stopNode(followerId);
 
             try (var client = cluster.newKvClient()) {
                 for (int i = 0; i < REPLAY_WRITE_COUNT; i++) {
-                    client.put(bytes("burst-" + i), bytes("value-" + i)).get();
+                    client.put(Bytes.utf8("burst-" + i), Bytes.utf8("value-" + i)).get();
                 }
             }
 
@@ -196,11 +189,14 @@ class MultiNodeClusterIntegrationTest {
         }
     }
 
-    private static Bytes bytes(String value) {
-        return Bytes.utf8(value);
+    private TestCluster<InProcessNode> newCluster() throws IOException {
+        return TestCluster.create(3, spec -> new InProcessNode(tempDir, spec));
     }
 
-    private static String decode(Bytes value) {
-        return value.utf8();
+    private static String anyFollower(TestCluster<InProcessNode> cluster, String leaderId) {
+        return cluster.runningNodeIds().stream()
+            .filter(nodeId -> !nodeId.equals(leaderId))
+            .findFirst()
+            .orElseThrow();
     }
 }

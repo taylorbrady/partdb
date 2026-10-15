@@ -81,7 +81,8 @@ class StorageEngineInternalsBehaviorTest extends StorageEngineInternalTestSuppor
         Optional<StoredEntry> result = ReadView.lookupStoredEntry(
             key("key"),
             active,
-            List.of(older.freeze(), newer.freeze())
+            List.of(older.freeze(), newer.freeze()),
+            Long.MAX_VALUE
         );
 
         assertTrue(result.isPresent());

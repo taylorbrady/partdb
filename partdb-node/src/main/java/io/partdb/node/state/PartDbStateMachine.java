@@ -44,7 +44,9 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
 
     private PartDbStateMachine(StorageEngine store) {
         this.store = store;
-        this.lastApplied = 0;
+        // Storage becomes durable independently of the Raft log (checkpoints, write-buffer
+        // flushes), so replay must resume from what storage already holds.
+        this.lastApplied = store.metadata().appliedThrough().value();
     }
 
     public static PartDbStateMachine open(Path dataDirectory, StorageOptions options) {
@@ -54,8 +56,12 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
 
     @Override
     public StateMachineResult apply(CommittedCommand committed) {
-        KvCommand command = KvCommandCodec.decode(committed.payload());
         long index = committed.index();
+        if (index <= lastApplied) {
+            // Already durable in storage; Raft log replay after a restart re-delivers it.
+            return applied(index);
+        }
+        KvCommand command = KvCommandCodec.decode(committed.payload());
 
         StateMachineResult result = switch (command) {
             case KvCommand.Put(var key, var value) -> {
@@ -82,10 +88,6 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
 
         lastApplied = index;
         return result;
-    }
-
-    public Optional<Bytes> get(Bytes key) {
-        return getValue(key).map(StoredValue::value);
     }
 
     public Optional<StoredValue> getValue(Bytes key) {

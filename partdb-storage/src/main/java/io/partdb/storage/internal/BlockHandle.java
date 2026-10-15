@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 record BlockHandle(long offset, int size) {
 
     public BlockHandle {

@@ -1,11 +1,8 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 

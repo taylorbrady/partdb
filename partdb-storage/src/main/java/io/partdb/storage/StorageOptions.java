@@ -26,10 +26,6 @@ public record StorageOptions(
         return builder().build();
     }
 
-    public Builder toBuilder() {
-        return new Builder(this);
-    }
-
     public static final class Builder {
         private long writeBufferMaxBytes = 64 * 1024 * 1024;
         private SSTableOptions sstableOptions = SSTableOptions.defaults();
@@ -37,13 +33,6 @@ public record StorageOptions(
         private CompactionOptions compactionOptions = CompactionOptions.defaults();
 
         private Builder() {
-        }
-
-        private Builder(StorageOptions options) {
-            this.writeBufferMaxBytes = options.writeBufferMaxBytes;
-            this.sstableOptions = options.sstableOptions;
-            this.cacheOptions = options.cacheOptions;
-            this.compactionOptions = options.compactionOptions;
         }
 
         public Builder writeBufferMaxBytes(long writeBufferMaxBytes) {

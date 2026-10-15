@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 import jdk.jfr.Category;
 import jdk.jfr.Event;
 import jdk.jfr.Label;

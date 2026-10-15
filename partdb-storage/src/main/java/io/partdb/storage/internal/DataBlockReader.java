@@ -138,10 +138,6 @@ final class DataBlockReader {
         return segment.byteSize();
     }
 
-    long dataLimit() {
-        return dataLimit;
-    }
-
     DecodedEntry decodeEntry(long offset, byte[] previousKeyBytes, long limit) {
         if (offset < 0 || offset >= limit) {
             throw new StorageException.Corruption("Invalid data block entry offset: " + offset);

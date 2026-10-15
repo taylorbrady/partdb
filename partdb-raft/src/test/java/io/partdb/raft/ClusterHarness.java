@@ -115,25 +115,6 @@ final class ClusterHarness {
         while (deliverOne()) {}
     }
 
-    boolean deliverBetween(String from, String to) {
-        var it = inFlight.iterator();
-        while (it.hasNext()) {
-            var envelope = it.next();
-            if (envelope.from().equals(from) && envelope.to().equals(to)) {
-                it.remove();
-                if (!isolated.contains(from) && !isolated.contains(to)) {
-                    var node = nodes.get(to);
-                    if (node != null) {
-                        var ready = node.raft().step(new RaftInput.MessageReceived(from, envelope.message()));
-                        processReady(to, ready);
-                    }
-                }
-                return true;
-            }
-        }
-        return false;
-    }
-
     void isolate(String nodeId) {
         isolated.add(nodeId);
         inFlight.removeIf(e -> e.from.equals(nodeId) || e.to.equals(nodeId));
@@ -208,10 +189,6 @@ final class ClusterHarness {
         return result;
     }
 
-    boolean hasReadStates() {
-        return !readStates.isEmpty();
-    }
-
     void proposeConfigChange(String nodeId, MembershipChange change) {
         var node = nodes.get(nodeId);
         if (node != null) {
@@ -252,9 +229,7 @@ final class ClusterHarness {
         if (persistence.hasWork()) {
             node.storage().append(persistence.hardState().orElse(null), persistence.entries());
             persistence.incomingSnapshot().ifPresent(node.storage()::saveSnapshot);
-            if (persistence.requiresSync()) {
-                node.storage().sync();
-            }
+            node.storage().sync();
             if (!persistence.entries().isEmpty()) {
                 var lastPersisted = persistence.entries().getLast();
                 node.raft().step(new RaftInput.EntriesPersisted(lastPersisted.index(), lastPersisted.term()));

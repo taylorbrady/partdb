@@ -26,13 +26,6 @@ public record RaftEffects(
         snapshotNeeded = Objects.requireNonNull(snapshotNeeded, "snapshotNeeded must not be null");
     }
 
-    public static final RaftEffects EMPTY = new RaftEffects(
-        Persistence.EMPTY,
-        List.of(),
-        Application.EMPTY,
-        Optional.empty()
-    );
-
     public boolean hasWork() {
         return persistence.hasWork() || !messages.isEmpty() || application.hasWork() || snapshotNeeded.isPresent();
     }
@@ -40,16 +33,13 @@ public record RaftEffects(
     public record Persistence(
         Optional<RaftHardState> hardState,
         List<RaftLogEntry> entries,
-        Optional<RaftSnapshot> incomingSnapshot,
-        boolean requiresSync
+        Optional<RaftSnapshot> incomingSnapshot
     ) {
         public Persistence {
             hardState = Objects.requireNonNull(hardState, "hardState must not be null");
             entries = List.copyOf(Objects.requireNonNull(entries, "entries must not be null"));
             incomingSnapshot = Objects.requireNonNull(incomingSnapshot, "incomingSnapshot must not be null");
         }
-
-        public static final Persistence EMPTY = new Persistence(Optional.empty(), List.of(), Optional.empty(), false);
 
         public boolean hasWork() {
             return hardState.isPresent() || !entries.isEmpty() || incomingSnapshot.isPresent();
@@ -70,8 +60,6 @@ public record RaftEffects(
                 throw new IllegalArgumentException("appliedThroughIndex must not be negative");
             }
         }
-
-        public static final Application EMPTY = new Application(List.of(), List.of(), List.of(), 0);
 
         public boolean hasWork() {
             return !entries.isEmpty() || !readStates.isEmpty() || !membershipTransitions.isEmpty() || appliedThroughIndex > 0;

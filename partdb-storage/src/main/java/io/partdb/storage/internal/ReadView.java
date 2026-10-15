@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -39,10 +37,6 @@ final class ReadView implements AutoCloseable {
     }
 
     CloseableIterator<StoredEntry.Value> scan(ScanBounds bounds) {
-        return scan(bounds, true);
-    }
-
-    CloseableIterator<StoredEntry.Value> scan(ScanBounds bounds, boolean closeViewOnClose) {
         List<Iterator<InternalEntry>> iterators = new ArrayList<>();
         iterators.add(activeMemtable.scan(bounds));
         addImmutableMemtableIterators(iterators, bounds, immutableMemtables);
@@ -51,11 +45,7 @@ final class ReadView implements AutoCloseable {
             iterators.add(sstable.scan(bounds));
         }
 
-        return new ScanCursor(this, new VisibleEntryIterator(iterators, snapshotRevision), closeViewOnClose);
-    }
-
-    long snapshotRevision() {
-        return snapshotRevision;
+        return new ScanCursor(this, new VisibleEntryIterator(iterators, snapshotRevision));
     }
 
     @Override
@@ -87,14 +77,6 @@ final class ReadView implements AutoCloseable {
         return Optional.empty();
     }
 
-    static Optional<StoredEntry> lookupStoredEntry(
-        Slice key,
-        Memtable activeMemtable,
-        List<ImmutableMemtable> immutableMemtables
-    ) {
-        return lookupStoredEntry(key, activeMemtable, immutableMemtables, Long.MAX_VALUE);
-    }
-
     private static Optional<StoredEntry.Value> resolveValue(StoredEntry entry) {
         return switch (entry) {
             case StoredEntry.Tombstone _ -> Optional.empty();
@@ -115,14 +97,12 @@ final class ReadView implements AutoCloseable {
     private static final class ScanCursor implements CloseableIterator<StoredEntry.Value> {
         private final ReadView readView;
         private final VisibleEntryIterator merged;
-        private final boolean closeViewOnClose;
         private StoredEntry.Value next;
         private boolean closed;
 
-        private ScanCursor(ReadView readView, VisibleEntryIterator merged, boolean closeViewOnClose) {
+        private ScanCursor(ReadView readView, VisibleEntryIterator merged) {
             this.readView = readView;
             this.merged = merged;
-            this.closeViewOnClose = closeViewOnClose;
             this.next = advance();
             this.closed = false;
         }
@@ -146,9 +126,7 @@ final class ReadView implements AutoCloseable {
         public void close() {
             if (!closed) {
                 closed = true;
-                if (closeViewOnClose) {
-                    readView.close();
-                }
+                readView.close();
             }
         }
 

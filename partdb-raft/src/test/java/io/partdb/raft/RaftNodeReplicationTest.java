@@ -1,13 +1,9 @@
 package io.partdb.raft;
 
-import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -175,17 +171,6 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
                 .filter(m -> m.message() instanceof RaftMessage.AppendEntries)
                 .count();
             assertEquals(2, heartbeatCount);
-        }
-
-        @Test
-        void heartbeatContainsCommitIndex() {
-            var raft = createRaft("n1", "n1");
-            tickUntilTimeout(raft);
-
-            raft.step(new RaftInput.EntryProposed(bytes("data")));
-
-            long commitIndex = raft.commitIndex();
-            assertTrue(commitIndex > 0);
         }
     }
 

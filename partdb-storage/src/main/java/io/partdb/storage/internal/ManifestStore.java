@@ -30,8 +30,4 @@ final class ManifestStore {
         Objects.requireNonNull(manifest, "manifest");
         manifest.writeTo(directory);
     }
-
-    Path directory() {
-        return directory;
-    }
 }

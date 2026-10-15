@@ -10,10 +10,6 @@ final class InMemoryRaftLog implements RaftLogReader {
     private volatile RaftSnapshot snapshot;
     private volatile RaftMembership configuration;
 
-    InMemoryRaftLog() {
-        this(null);
-    }
-
     InMemoryRaftLog(RaftMembership initialConfiguration) {
         this.configuration = initialConfiguration;
     }
@@ -98,12 +94,5 @@ final class InMemoryRaftLog implements RaftLogReader {
         this.snapshot = snapshot;
         this.configuration = snapshot.membership();
         entries.removeIf(e -> e.index() <= snapshot.index());
-    }
-
-    public void compact(long index) {
-        entries.removeIf(e -> e.index() <= index);
-    }
-
-    public void close() {
     }
 }

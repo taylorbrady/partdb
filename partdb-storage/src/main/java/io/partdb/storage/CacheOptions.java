@@ -16,18 +16,10 @@ public record CacheOptions(long blockCacheMaxBytes) {
         return builder().build();
     }
 
-    public Builder toBuilder() {
-        return new Builder(this);
-    }
-
     public static final class Builder {
         private long blockCacheMaxBytes = 64 * 1024 * 1024;
 
         private Builder() {
-        }
-
-        private Builder(CacheOptions options) {
-            this.blockCacheMaxBytes = options.blockCacheMaxBytes;
         }
 
         public Builder blockCacheMaxBytes(long blockCacheMaxBytes) {

@@ -1,7 +1,6 @@
 package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.consensus.ConsensusMembership;
 import io.partdb.consensus.ConsensusRole;
 import io.partdb.consensus.ConsensusRuntimeFactory;
 import io.partdb.node.admin.NodeAdmin;
@@ -25,6 +24,7 @@ import io.partdb.node.kv.WriteResult;
 import io.partdb.node.runtime.NodeFailureMapper;
 import io.partdb.node.runtime.NodeRuntime;
 import io.partdb.node.state.StoredValue;
+import io.partdb.raft.RaftMembership;
 import io.partdb.storage.StorageStats;
 
 import java.time.Duration;
@@ -177,7 +177,7 @@ public final class PartDbNode implements AutoCloseable {
         }
 
         @Override
-        public ConsensusMembership membership() {
+        public RaftMembership membership() {
             return runtime.consensus().membership();
         }
     }

@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -66,10 +64,6 @@ final class StorageBenchmarkSupport {
             blockSeed + 1
         ));
         return DataBlockReader.from(MemorySegment.ofArray(writer.finish()));
-    }
-
-    static BloomFilter bloomFilter(String keyShape, int keyCount, double falsePositiveRate) {
-        return BloomFilter.build(List.of(keys(keyShape, keyCount, 0)), falsePositiveRate);
     }
 
     static Slice strictlyAfter(Slice key) {

@@ -18,48 +18,13 @@ See [docs/design.md](docs/design.md) for the current design direction,
 
 ## Architecture
 
-- **Consensus**: a reusable `partdb-raft` module with a pure Raft core, explicit `Ready` effects, snapshots, and pluggable storage/transport SPIs
-- **Node runtime**: a `partdb-node` module that composes Raft, the KV state machine, and durable Raft persistence for a single PartDB node
+- **Consensus**: a pure Raft core in `partdb-raft` (one `RaftInput` in, one `RaftEffects` out) and a durable, effectful runtime in `partdb-consensus` that owns Raft persistence, snapshots, and the transport SPI
+- **Node runtime**: a `partdb-node` module that composes the consensus runtime with the KV state machine for a single PartDB node
 - **Storage**: a `partdb-storage` module that exposes a versioned state-store API backed by an internal leveled LSM engine with memtables, SSTables, compaction, block cache, and self-contained snapshots
 - **Transport**: public KV and cluster APIs defined in `partdb-grpc`, with handwritten gRPC adapters in `partdb-transport-grpc`
 - **Client**: a Java client library with typed endpoint/config APIs and explicit cursor-based scans
 
-### Module dependency direction
-
-```text
-partdb-app
-  -> partdb-server
-  -> partdb-client
-
-partdb-server
-  -> partdb-node
-  -> partdb-consensus
-  -> partdb-transport-grpc
-
-partdb-transport-grpc
-  -> partdb-node
-  -> partdb-grpc
-  -> partdb-raft
-
-partdb-node
-  -> partdb-consensus
-  -> partdb-storage
-  -> partdb-bytes
-
-partdb-consensus
-  -> partdb-raft
-  -> partdb-bytes
-
-partdb-storage
-  -> partdb-bytes
-
-partdb-raft
-  -> partdb-bytes
-
-partdb-client
-  -> partdb-grpc
-  -> partdb-bytes
-```
+Module dependency direction and charters are in [docs/modules.md](docs/modules.md).
 
 ## Modules
 

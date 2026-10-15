@@ -21,10 +21,6 @@ public final class StorageFixtures {
         return StorageOptions.defaults();
     }
 
-    public static StorageOptions compactionOptions() {
-        return compactionOptions(SSTableOptions.Compression.NONE);
-    }
-
     public static StorageOptions compactionOptions(SSTableOptions.Compression compression) {
         return StorageOptions.builder()
             .writeBufferMaxBytes(256L * KIB)

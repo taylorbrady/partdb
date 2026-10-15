@@ -1,6 +1,5 @@
 package io.partdb.app;
 
-import io.partdb.client.ServerEndpoint;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,10 +24,5 @@ class CliSupportTest {
 
         assertEquals("node1", peer.nodeId());
         assertEquals("[::1]:8100", peer.endpoint());
-    }
-
-    @Test
-    void parseServerEndpointUsesTypedEndpointParsing() {
-        assertEquals(new ServerEndpoint("::1", 8101), CliParsing.parseServerEndpoint("[::1]:8101"));
     }
 }

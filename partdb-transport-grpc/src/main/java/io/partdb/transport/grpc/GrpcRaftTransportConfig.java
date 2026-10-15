@@ -5,12 +5,11 @@ import java.util.Map;
 record GrpcRaftTransportConfig(
     String localNodeId,
     int port,
-    Map<String, PeerEndpoint> raftPeerEndpoints,
-    int snapshotChunkSize
+    Map<String, PeerEndpoint> raftPeerEndpoints
 ) {
-    private static final int DEFAULT_CHUNK_SIZE = 1024 * 1024;
+    static final int SNAPSHOT_CHUNK_SIZE = 1024 * 1024;
 
-    public GrpcRaftTransportConfig {
+    GrpcRaftTransportConfig {
         if (localNodeId == null || localNodeId.isEmpty()) {
             throw new IllegalArgumentException("localNodeId is required");
         }
@@ -18,24 +17,5 @@ record GrpcRaftTransportConfig(
             throw new IllegalArgumentException("port must be positive");
         }
         raftPeerEndpoints = Map.copyOf(raftPeerEndpoints);
-        if (snapshotChunkSize <= 0) {
-            snapshotChunkSize = DEFAULT_CHUNK_SIZE;
-        }
-    }
-
-    public static GrpcRaftTransportConfig create(
-            String localNodeId,
-            int port,
-            Map<String, String> raftPeerAddresses) {
-        return new GrpcRaftTransportConfig(
-            localNodeId,
-            port,
-            raftPeerAddresses.entrySet().stream()
-                .collect(java.util.stream.Collectors.toUnmodifiableMap(
-                    Map.Entry::getKey,
-                    entry -> PeerEndpoint.parse(entry.getValue())
-                )),
-            DEFAULT_CHUNK_SIZE
-        );
     }
 }

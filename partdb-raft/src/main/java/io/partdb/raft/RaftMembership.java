@@ -117,7 +117,7 @@ public record RaftMembership(Set<String> voters, Set<String> learners) {
         updatedVoters.remove(nodeId);
         var updatedLearners = new LinkedHashSet<>(learners);
         updatedLearners.remove(nodeId);
-        return new RaftMembership(updatedVoters.isEmpty() ? voters : updatedVoters, updatedLearners);
+        return new RaftMembership(updatedVoters, updatedLearners);
     }
 
     private static Set<String> normalizeIds(Set<String> ids, String name) {

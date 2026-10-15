@@ -17,7 +17,9 @@ PartDB v0 supports:
 PartDB v0 does not support:
 
 - leases or TTLs
-- compare-and-swap or conditional writes
+- compare-and-swap or conditional writes over the public API (the node layer
+  implements conditional transactions, see [kv-semantics.md](kv-semantics.md),
+  but they are not exposed over gRPC yet)
 - dynamic cluster membership changes
 - transactions across independent revisions
 - watch APIs

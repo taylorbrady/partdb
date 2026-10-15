@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -28,14 +26,6 @@ final class VersionLease implements AutoCloseable {
         this.manifest = lease.manifest();
         this.maxLevel = manifest.maxLevel();
         this.closed = new AtomicBoolean(false);
-    }
-
-    List<SSTableReader> level0() {
-        return level(0);
-    }
-
-    List<SSTableReader> level(int level) {
-        return readersFor(manifest.level(level));
     }
 
     Optional<StoredEntry> get(Slice key, long snapshotRevision) {
@@ -78,10 +68,6 @@ final class VersionLease implements AutoCloseable {
         }
 
         return List.copyOf(tables);
-    }
-
-    int maxLevel() {
-        return maxLevel;
     }
 
     SSTableManifest manifest() {

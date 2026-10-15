@@ -72,14 +72,6 @@ final class SSTableWriter implements AutoCloseable {
         }
     }
 
-    long id() {
-        return id;
-    }
-
-    int level() {
-        return level;
-    }
-
     void add(InternalEntry entry) {
         if (finished) {
             throw new IllegalStateException("Cannot add to finished writer");

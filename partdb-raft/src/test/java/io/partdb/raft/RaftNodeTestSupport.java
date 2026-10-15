@@ -4,8 +4,6 @@ import io.partdb.bytes.Bytes;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 
 abstract class RaftNodeTestSupport {
 
@@ -109,14 +107,6 @@ abstract class RaftNodeTestSupport {
             .findFirst();
     }
 
-    <T extends RaftMessage.Request> Optional<T> findRequest(RaftEffects ready, Class<T> type) {
-        return ready.messages().stream()
-            .map(RaftEffects.Outbound::message)
-            .filter(type::isInstance)
-            .map(type::cast)
-            .findFirst();
-    }
-
     <T extends RaftLogEntry> Optional<T> findEntry(RaftEffects ready, Class<T> type) {
         return ready.persistence().entries().stream()
             .filter(type::isInstance)
@@ -129,22 +119,6 @@ abstract class RaftNodeTestSupport {
             .map(RaftEffects.Outbound::message)
             .filter(RaftMessage.AppendEntries.class::isInstance)
             .map(RaftMessage.AppendEntries.class::cast)
-            .toList();
-    }
-
-    List<RaftMessage.PreVote> getPreVotes(RaftEffects ready) {
-        return ready.messages().stream()
-            .map(RaftEffects.Outbound::message)
-            .filter(RaftMessage.PreVote.class::isInstance)
-            .map(RaftMessage.PreVote.class::cast)
-            .toList();
-    }
-
-    List<RaftMessage.RequestVote> getRequestVotes(RaftEffects ready) {
-        return ready.messages().stream()
-            .map(RaftEffects.Outbound::message)
-            .filter(RaftMessage.RequestVote.class::isInstance)
-            .map(RaftMessage.RequestVote.class::cast)
             .toList();
     }
 

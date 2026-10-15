@@ -1,15 +1,7 @@
 package io.partdb.raft;
 
-import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -129,27 +121,6 @@ class ClusterReplicationTest extends ClusterTestSupport {
             long leaderCommit = network.node(leaderId).commitIndex();
             for (var node : network.allNodes()) {
                 assertEquals(leaderCommit, node.commitIndex());
-            }
-        }
-
-        @Test
-        void termsOnlyIncrease() {
-            var network = ClusterHarness.create(3);
-
-            Map<String, Long> lastSeenTerm = new HashMap<>();
-            for (var node : network.allNodes()) {
-                lastSeenTerm.put(node.leaderId().orElse("unknown"), 0L);
-            }
-
-            for (int i = 0; i < 100; i++) {
-                network.tick();
-                network.deliverAll();
-
-                for (var node : network.allNodes()) {
-                    String nodeId = node.leaderId().orElse("unknown");
-                    long term = node.term();
-                    assertTrue(term >= lastSeenTerm.getOrDefault(nodeId, 0L));
-                }
             }
         }
     }

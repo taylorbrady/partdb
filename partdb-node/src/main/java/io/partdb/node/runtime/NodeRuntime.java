@@ -4,6 +4,7 @@ import io.partdb.consensus.ConsensusRuntime;
 import io.partdb.consensus.ConsensusRuntimeFactory;
 import io.partdb.node.PartDbNodeConfig;
 import io.partdb.node.state.PartDbStateMachine;
+import io.partdb.storage.StorageOptions;
 
 import java.util.Objects;
 
@@ -18,7 +19,7 @@ public final class NodeRuntime implements AutoCloseable {
 
         this.stateMachine = PartDbStateMachine.open(
             config.dataDirectory().resolve("db"),
-            config.storage().toStorageOptions()
+            StorageOptions.defaults()
         );
 
         try {

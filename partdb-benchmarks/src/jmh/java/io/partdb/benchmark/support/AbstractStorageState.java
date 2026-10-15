@@ -40,8 +40,4 @@ public abstract class AbstractStorageState {
     public final StorageEngine store() {
         return Objects.requireNonNull(store, "store has not been opened");
     }
-
-    public final Path tempDirectory() {
-        return Objects.requireNonNull(tempDirectory, "tempDirectory has not been created");
-    }
 }

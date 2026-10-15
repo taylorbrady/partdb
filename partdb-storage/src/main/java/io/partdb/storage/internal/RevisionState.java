@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 import java.util.concurrent.atomic.AtomicLong;
 
 final class RevisionState {

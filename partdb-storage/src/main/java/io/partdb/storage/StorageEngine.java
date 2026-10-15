@@ -15,20 +15,8 @@ public final class StorageEngine implements AutoCloseable {
         this.core = Objects.requireNonNull(core, "core must not be null");
     }
 
-    public static StorageEngine open(Path dataDirectory) {
-        return new StorageEngine(LsmStorageEngine.open(dataDirectory));
-    }
-
     public static StorageEngine open(Path dataDirectory, StorageOptions options) {
         return new StorageEngine(LsmStorageEngine.open(dataDirectory, options));
-    }
-
-    public static StorageEngine openFromCheckpoint(
-        Path dataDirectory,
-        StorageCheckpoint checkpoint,
-        StorageOptions options
-    ) {
-        return new StorageEngine(LsmStorageEngine.openFromCheckpoint(dataDirectory, checkpoint, options));
     }
 
     public void apply(Revision revision, Mutation mutation) {

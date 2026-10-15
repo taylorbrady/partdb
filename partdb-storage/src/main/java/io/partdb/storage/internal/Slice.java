@@ -1,7 +1,5 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
@@ -52,10 +50,6 @@ final class Slice implements Comparable<Slice> {
 
     int length() {
         return (int) segment.byteSize();
-    }
-
-    boolean isEmpty() {
-        return segment.byteSize() == 0;
     }
 
     MemorySegment segment() {

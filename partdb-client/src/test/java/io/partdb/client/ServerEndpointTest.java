@@ -3,9 +3,7 @@ package io.partdb.client;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ServerEndpointTest {
 
@@ -30,12 +28,6 @@ class ServerEndpointTest {
     @Test
     void parseRejectsMissingPort() {
         assertThrows(IllegalArgumentException.class, () -> ServerEndpoint.parse("localhost"));
-    }
-
-    @Test
-    void tryParseReturnsEmptyForInvalidHint() {
-        assertTrue(ServerEndpoint.tryParse("leader-1").isEmpty());
-        assertFalse(ServerEndpoint.tryParse("localhost:8101").isEmpty());
     }
 
     @Test

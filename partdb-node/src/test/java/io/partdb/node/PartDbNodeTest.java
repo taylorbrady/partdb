@@ -75,6 +75,33 @@ class PartDbNodeTest {
     }
 
     @Test
+    void restartAfterBackupKeepsDurableStorageAndReplaysLog() throws Exception {
+        var nodeDirectory = tempDir.resolve("node-1");
+        var config = PartDbNodeConfig.builder("node-1", nodeDirectory)
+            .tickInterval(Duration.ofMillis(1))
+            .build();
+
+        try (var node = PartDbNode.open(config)) {
+            awaitLeader(node);
+            node.keyValues().put(bytes("key"), bytes("value-1")).toCompletableFuture().get(5, TimeUnit.SECONDS);
+            // A backup checkpoints storage, making revisions durable independently of the Raft log.
+            node.admin().createBackup().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            node.keyValues().put(bytes("key"), bytes("value-2")).toCompletableFuture().get(5, TimeUnit.SECONDS);
+        }
+
+        try (var recovered = PartDbNode.open(config)) {
+            awaitLeader(recovered);
+
+            assertEquals(
+                bytes("value-2"),
+                recovered.keyValues().get(bytes("key")).toCompletableFuture().get(5, TimeUnit.SECONDS)
+                    .orElseThrow()
+                    .value()
+            );
+        }
+    }
+
+    @Test
     void writeBatchAppliesAllWritesAtSingleRevision() throws Exception {
         var config = PartDbNodeConfig.builder("node-1", tempDir.resolve("node-1"))
             .tickInterval(Duration.ofMillis(1))

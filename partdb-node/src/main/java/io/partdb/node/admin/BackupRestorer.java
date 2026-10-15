@@ -4,6 +4,7 @@ import io.partdb.consensus.ConsensusBootstrap;
 import io.partdb.consensus.StoredSnapshot;
 import io.partdb.node.PartDbNodeConfig;
 import io.partdb.node.state.PartDbStateMachine;
+import io.partdb.storage.StorageOptions;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -30,7 +31,7 @@ public final class BackupRestorer {
             RestoreResult result;
             try (PartDbStateMachine stateMachine = PartDbStateMachine.open(
                 dataDirectory.resolve("db"),
-                config.storage().toStorageOptions()
+                StorageOptions.defaults()
             )) {
                 stateMachine.restore(new StoredSnapshot(backup.appliedIndex(), 0, backup.snapshotBytes()));
                 result = new RestoreResult(stateMachine.lastAppliedIndex());
@@ -39,7 +40,7 @@ public final class BackupRestorer {
 
             ConsensusBootstrap.initializeFromSnapshot(
                 dataDirectory.resolve("consensus"),
-                config.replication().toConsensusConfig(config.nodeId(), config.membership()),
+                config.toConsensusConfig(),
                 recoveredBackup.snapshotBytes(),
                 recoveredBackup.appliedIndex()
             );

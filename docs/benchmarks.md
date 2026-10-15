@@ -11,16 +11,15 @@ Low-level storage benchmarks live with the storage module:
 partdb-storage/src/jmh
 ```
 
-Cross-module and API-level workload benchmarks live in the benchmark assembly
-module:
+API-level workload benchmarks live in the benchmark module, which depends only
+on `partdb-storage`:
 
 ```text
 partdb-benchmarks/src/jmh
 ```
 
 Use module-local `src/jmh` directories for benchmarks of internals owned by one
-module. Use `partdb-benchmarks` for workloads that depend on multiple modules or
-exercise public APIs.
+module. Use `partdb-benchmarks` for workloads that exercise public APIs.
 
 ## Tasks
 
@@ -81,7 +80,7 @@ behavior:
 | `partdb-benchmarks` | `StorageWriteBenchmark.steadyStateUpdateRandom` | steady-state update write path |
 | `partdb-benchmarks` | `StorageScanBenchmark.persistedRange1000` | persisted range scan |
 | `partdb-benchmarks` | `StorageCheckpointBenchmark.checkpoint` | checkpoint creation |
-| `partdb-benchmarks` | `StorageCompactionBenchmark.flushToL0Burst` | flush and L0 compaction pressure |
+| `partdb-benchmarks` | `StorageCompactionBenchmark.flushToL0Burst` | write burst flushed into L0 (does not wait for compaction; `burstAndCatchUp` does) |
 
 The baseline uses a single representative parameter point for each benchmark
 family so it remains tractable. Use the full `jmh` task when tuning a subsystem

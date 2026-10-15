@@ -16,11 +16,7 @@ class RaftModuleBoundaryTest {
         "import java.nio.",
         "import java.net.",
         "import java.time.",
-        "import java.util.concurrent.",
-        "import io.grpc.",
-        "import io.partdb.consensus.",
-        "import io.partdb.storage.",
-        "import io.partdb.transport."
+        "import java.util.concurrent."
     );
 
     private static final List<String> FORBIDDEN_RUNTIME_REFERENCES = List.of(

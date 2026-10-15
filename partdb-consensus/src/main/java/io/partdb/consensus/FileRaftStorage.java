@@ -200,16 +200,6 @@ final class FileRaftStorage implements RaftStorage {
     }
 
     @Override
-    public void compact(long index) {
-        lock.writeLock().lock();
-        try {
-            wal.truncateBefore(index);
-        } finally {
-            lock.writeLock().unlock();
-        }
-    }
-
-    @Override
     public void close() {
         lock.writeLock().lock();
         try {

@@ -142,12 +142,12 @@ public final class RaftRuntime implements ConsensusRuntime {
         Objects.requireNonNull(transport, "transport must not be null");
         Objects.requireNonNull(stateMachine, "stateMachine must not be null");
 
-        var membership = RaftMembershipMapper.toRaftMembership(config.membership());
+        var membership = config.membership();
         RaftStorage store = openStore(dataDirectory, membership);
         return openRuntime(
             config.nodeId(),
             membership,
-            config.toRaftOptions(),
+            config.raftOptions(),
             config.tickInterval(),
             transport,
             store,
@@ -181,8 +181,8 @@ public final class RaftRuntime implements ConsensusRuntime {
         );
     }
 
-    public ConsensusMembership membership() {
-        return RaftMembershipMapper.toConsensusMembership(raft.membership());
+    public RaftMembership membership() {
+        return raft.membership();
     }
 
     @Override
@@ -428,10 +428,6 @@ public final class RaftRuntime implements ConsensusRuntime {
 
     private static byte[] longToBytes(long value) {
         return ByteBuffer.allocate(8).putLong(value).array();
-    }
-
-    private static long bytesToLong(Bytes bytes) {
-        return ByteBuffer.wrap(bytes.toByteArray()).getLong();
     }
 
     private CompletableFuture<ProposalResult> proposeInternal(Bytes data) {

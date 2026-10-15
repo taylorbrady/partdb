@@ -21,7 +21,6 @@ public final class RaftNode {
     private Set<String> peers;
     private Set<String> votingPeers;
     private int quorum;
-    private boolean isLearner;
     private Long pendingMembershipChangeIndex;
     private final int electionTimeoutMin;
     private final int electionTimeoutMax;
@@ -60,7 +59,6 @@ public final class RaftNode {
         }
         this.id = id;
         this.membership = membership;
-        this.isLearner = membership.isLearner(id);
         this.quorum = membership.quorumSize();
         this.peers = membership.peerIdsExcluding(id);
         this.votingPeers = membership.votingPeerIdsExcluding(id);
@@ -130,10 +128,6 @@ public final class RaftNode {
 
     public RaftMembership membership() {
         return membership;
-    }
-
-    public RaftStatus status() {
-        return new RaftStatus(id, role, term, leaderId(), commitIndex, lastApplied, membership);
     }
 
     private long lastIndex() {
@@ -311,7 +305,6 @@ public final class RaftNode {
 
     private void replaceConfiguration(RaftMembership newConfiguration) {
         this.membership = newConfiguration;
-        this.isLearner = newConfiguration.isLearner(id);
         this.quorum = newConfiguration.quorumSize();
         this.peers = newConfiguration.peerIdsExcluding(id);
         this.votingPeers = newConfiguration.votingPeerIdsExcluding(id);
@@ -583,24 +576,20 @@ public final class RaftNode {
             return;
         }
 
-        unstable.acceptSnapshot(new RaftSnapshot(
+        var snapshot = new RaftSnapshot(
             is.lastIncludedIndex(),
             is.lastIncludedTerm(),
             is.membership(),
             is.data()
-        ));
+        );
+        unstable.acceptSnapshot(snapshot);
         commitIndex = is.lastIncludedIndex();
         lastApplied = is.lastIncludedIndex();
         persistHardState(accumulator);
 
         replaceConfiguration(is.membership());
 
-        accumulator.setIncomingSnapshot(new RaftSnapshot(
-            is.lastIncludedIndex(),
-            is.lastIncludedTerm(),
-            is.membership(),
-            is.data()
-        ));
+        accumulator.setIncomingSnapshot(snapshot);
         accumulator.send(from, new RaftMessage.InstallSnapshotResponse(term));
     }
 

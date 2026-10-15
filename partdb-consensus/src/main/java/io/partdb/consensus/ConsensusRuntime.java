@@ -1,6 +1,7 @@
 package io.partdb.consensus;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.raft.RaftMembership;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -11,7 +12,7 @@ public interface ConsensusRuntime extends AutoCloseable {
 
     ConsensusStatus status();
 
-    ConsensusMembership membership();
+    RaftMembership membership();
 
     @Override
     void close();

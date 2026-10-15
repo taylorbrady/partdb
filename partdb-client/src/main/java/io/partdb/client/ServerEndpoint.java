@@ -2,7 +2,6 @@ package io.partdb.client;
 
 import java.net.URI;
 import java.util.Objects;
-import java.util.Optional;
 
 public record ServerEndpoint(String host, int port) {
     public ServerEndpoint {
@@ -40,17 +39,6 @@ public record ServerEndpoint(String host, int port) {
         }
 
         return new ServerEndpoint(normalizeHost(uri.getHost()), uri.getPort());
-    }
-
-    public static Optional<ServerEndpoint> tryParse(String value) {
-        if (value == null || value.isBlank()) {
-            return Optional.empty();
-        }
-        try {
-            return Optional.of(parse(value));
-        } catch (IllegalArgumentException e) {
-            return Optional.empty();
-        }
     }
 
     @Override
