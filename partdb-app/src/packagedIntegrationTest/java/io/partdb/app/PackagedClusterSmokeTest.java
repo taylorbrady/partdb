@@ -1,7 +1,7 @@
 package io.partdb.app;
 
-import io.partdb.client.testing.CommandResult;
-import io.partdb.client.testing.TestCluster;
+import io.partdb.app.testing.CommandResult;
+import io.partdb.app.testing.TestCluster;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
@@ -26,9 +26,11 @@ class PackagedClusterSmokeTest {
             cluster.startAll();
 
             var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            String endpoint = cluster.grpcAddress(leader.nodeId());
+            String endpoint = cluster.endpoint(leader.nodeId());
 
-            assertCommand(app.run("kv", "put", "smoke-key", "smoke-value", "--endpoint", endpoint), "OK\n");
+            var put = app.run("kv", "put", "smoke-key", "smoke-value", "--endpoints", cluster.endpoints());
+            assertEquals(0, put.exitCode(), put.stderr());
+            assertTrue(put.stdout().startsWith("OK revision="), put.stdout());
             assertCommand(app.run("kv", "get", "smoke-key", "--endpoint", endpoint), "smoke-value\n");
 
             var statusResult = app.run("cluster", "status", "--endpoint", endpoint);
@@ -40,7 +42,7 @@ class PackagedClusterSmokeTest {
             var membersResult = app.run("cluster", "members", "--endpoint", endpoint);
             assertEquals(0, membersResult.exitCode(), membersResult.stderr());
             assertEquals("", membersResult.stderr());
-            for (String nodeId : cluster.runningNodeIds()) {
+            for (String nodeId : cluster.startedNodeIds()) {
                 assertTrue(membersResult.stdout().contains(nodeId), membersResult.stdout());
             }
             assertTrue(membersResult.stdout().contains("leader"), membersResult.stdout());

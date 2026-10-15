@@ -1,7 +1,12 @@
 package io.partdb.app;
 
+import io.partdb.app.testing.TestCluster;
 import io.partdb.bytes.Bytes;
-import io.partdb.client.testing.TestCluster;
+import io.partdb.client.KeyRange;
+import io.partdb.client.Mutation;
+import io.partdb.client.PartDbClient;
+import io.partdb.client.ReadConsistency;
+import io.partdb.raft.runtime.SnapshotPolicy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
@@ -11,98 +16,66 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MultiNodeClusterIntegrationTest {
     private static final Duration CLUSTER_TIMEOUT = Duration.ofSeconds(10);
-    private static final int REPLAY_WRITE_COUNT = 32;
+    private static final int BURST = 32;
 
     @TempDir(cleanup = CleanupMode.ON_SUCCESS)
     Path tempDir;
 
+    private static Bytes bytes(String value) {
+        return Bytes.utf8(value);
+    }
+
+    private static String value(PartDbClient client, String key) {
+        return client.kv().get(bytes(key)).orElseThrow().value().utf8();
+    }
+
     @Test
-    void threeNodeClusterSupportsFailoverRestartCatchupAndScanThroughPublicClient() throws Exception {
+    void writesSentToAFollowerFirstAreRedirectedToTheLeader() throws Exception {
         try (var cluster = newCluster()) {
             cluster.startAll();
+            var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+            String follower = anyFollower(cluster, leader.nodeId());
 
-            var initialLeader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+            var endpoints = new ArrayList<String>();
+            endpoints.add(cluster.endpoint(follower));
+            cluster.startedNodeIds().stream().filter(id -> !id.equals(follower)).map(cluster::endpoint).forEach(endpoints::add);
+            try (var client = PartDbClient.connect(endpoints.toArray(String[]::new))) {
+                long first = client.kv().put(bytes("a"), bytes("one"));
+                long second = client.kv().write(List.of(Mutation.put(bytes("b"), bytes("two")), Mutation.put(bytes("c"), bytes("three"))));
 
-            try (var client = cluster.newKvClient()) {
-                client.put(Bytes.utf8("proof/a"), Bytes.utf8("one")).get();
-                client.put(Bytes.utf8("proof/b"), Bytes.utf8("two")).get();
-
-                assertEquals("one", client.get(Bytes.utf8("proof/a")).get().orElseThrow().utf8());
-                assertEquals("two", client.get(Bytes.utf8("proof/b")).get().orElseThrow().utf8());
-            }
-
-            cluster.stopNode(initialLeader.nodeId());
-
-            var newLeader = cluster.awaitStableLeaderExcluding(initialLeader.nodeId(), CLUSTER_TIMEOUT);
-            assertNotEquals(initialLeader.nodeId(), newLeader.nodeId());
-
-            try (var client = cluster.newKvClient()) {
-                assertEquals("one", client.get(Bytes.utf8("proof/a")).get().orElseThrow().utf8());
-                client.put(Bytes.utf8("proof/c"), Bytes.utf8("three")).get();
-                assertEquals("three", client.get(Bytes.utf8("proof/c")).get().orElseThrow().utf8());
-            }
-
-            cluster.startNode(initialLeader.nodeId());
-            cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            cluster.awaitMembershipSize(initialLeader.nodeId(), 3, CLUSTER_TIMEOUT);
-
-            cluster.awaitNodeValue(initialLeader.nodeId(), "proof/a", "one", CLUSTER_TIMEOUT);
-            cluster.awaitNodeValue(initialLeader.nodeId(), "proof/b", "two", CLUSTER_TIMEOUT);
-            cluster.awaitNodeValue(initialLeader.nodeId(), "proof/c", "three", CLUSTER_TIMEOUT);
-
-            try (var client = cluster.newKvClient()) {
-                var scanned = new ArrayList<String>();
-                try (var cursor = client.scan(Optional.of(Bytes.utf8("proof/")), Optional.of(Bytes.utf8("proof0"))).get()) {
-                    while (cursor.hasNext()) {
-                        var entry = cursor.next();
-                        scanned.add(entry.key().utf8() + "=" + entry.value().utf8());
-                    }
-                }
-
-                assertEquals(List.of("proof/a=one", "proof/b=two", "proof/c=three"), scanned);
+                assertTrue(second > first);
+                var entry = client.kv().get(bytes("b")).orElseThrow();
+                assertEquals(second, entry.revision());
+                assertEquals("three", value(client, "c"));
             }
         }
     }
 
     @Test
-    void leaderFailoverPreservesWritesAndRecoveredLeaderCatchesUp() throws Exception {
+    void oneClientRidesThroughLeaderFailover() throws Exception {
         try (var cluster = newCluster()) {
             cluster.startAll();
-
             var initialLeader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-
-            try (var client = cluster.newKvClient()) {
-                client.put(Bytes.utf8("alpha"), Bytes.utf8("one")).get();
-                assertEquals("one", client.get(Bytes.utf8("alpha")).get().orElseThrow().utf8());
-            }
-
-            cluster.awaitNodeValue(initialLeader.nodeId(), "alpha", "one", CLUSTER_TIMEOUT);
+            var client = cluster.client();
+            client.kv().put(bytes("alpha"), bytes("one"));
 
             cluster.stopNode(initialLeader.nodeId());
-
             var newLeader = cluster.awaitStableLeaderExcluding(initialLeader.nodeId(), CLUSTER_TIMEOUT);
             assertNotEquals(initialLeader.nodeId(), newLeader.nodeId());
 
-            try (var client = cluster.newKvClient()) {
-                client.put(Bytes.utf8("beta"), Bytes.utf8("two")).get();
-                assertEquals("two", client.get(Bytes.utf8("beta")).get().orElseThrow().utf8());
-            }
-
-            cluster.awaitNodeValue(newLeader.nodeId(), "beta", "two", CLUSTER_TIMEOUT);
+            client.kv().put(bytes("beta"), bytes("two"));
+            assertEquals("one", value(client, "alpha"));
+            assertEquals("two", value(client, "beta"));
 
             cluster.startNode(initialLeader.nodeId());
-
-            var stableLeader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            cluster.awaitMembershipSize(stableLeader.nodeId(), 3, CLUSTER_TIMEOUT);
-
-            cluster.awaitNodeValue(initialLeader.nodeId(), "alpha", "one", CLUSTER_TIMEOUT);
+            cluster.awaitCaughtUp(initialLeader.nodeId(), CLUSTER_TIMEOUT);
             cluster.awaitNodeValue(initialLeader.nodeId(), "beta", "two", CLUSTER_TIMEOUT);
         }
     }
@@ -111,22 +84,20 @@ class MultiNodeClusterIntegrationTest {
     void restartedFollowerCatchesUpOnMissedWrites() throws Exception {
         try (var cluster = newCluster()) {
             cluster.startAll();
-
             var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            String followerId = anyFollower(cluster, leader.nodeId());
+            String follower = anyFollower(cluster, leader.nodeId());
+            cluster.stopNode(follower);
 
-            cluster.stopNode(followerId);
-
-            try (var client = cluster.newKvClient()) {
-                client.put(Bytes.utf8("gamma"), Bytes.utf8("three")).get();
-                client.put(Bytes.utf8("delta"), Bytes.utf8("four")).get();
+            for (int i = 0; i < BURST; i++) {
+                cluster.client().kv().put(bytes("burst-" + i), bytes("value-" + i));
             }
 
-            cluster.startNode(followerId);
-            cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-
-            cluster.awaitNodeValue(followerId, "gamma", "three", CLUSTER_TIMEOUT);
-            cluster.awaitNodeValue(followerId, "delta", "four", CLUSTER_TIMEOUT);
+            cluster.startNode(follower);
+            cluster.awaitCaughtUp(follower, CLUSTER_TIMEOUT);
+            for (int i = 0; i < BURST; i++) {
+                assertEquals("value-" + i, cluster.client().kv().get(bytes("burst-" + i), ReadConsistency.LINEARIZABLE).orElseThrow().value().utf8());
+            }
+            cluster.awaitNodeValue(follower, "burst-" + (BURST - 1), "value-" + (BURST - 1), CLUSTER_TIMEOUT);
         }
     }
 
@@ -134,82 +105,64 @@ class MultiNodeClusterIntegrationTest {
     void clusterRecoversCommittedDataAfterFullRestart() throws Exception {
         try (var cluster = newCluster()) {
             cluster.startAll();
-
             cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-
-            try (var client = cluster.newKvClient()) {
-                client.put(Bytes.utf8("persist-1"), Bytes.utf8("value-1")).get();
-                client.put(Bytes.utf8("persist-2"), Bytes.utf8("value-2")).get();
-                client.put(Bytes.utf8("persist-3"), Bytes.utf8("value-3")).get();
-            }
-
-            for (String nodeId : cluster.runningNodeIds()) {
-                cluster.awaitNodeValue(nodeId, "persist-1", "value-1", CLUSTER_TIMEOUT);
-                cluster.awaitNodeValue(nodeId, "persist-2", "value-2", CLUSTER_TIMEOUT);
-                cluster.awaitNodeValue(nodeId, "persist-3", "value-3", CLUSTER_TIMEOUT);
+            for (int i = 1; i <= 3; i++) {
+                cluster.client().kv().put(bytes("persist-" + i), bytes("value-" + i));
             }
 
             cluster.stopAll();
             cluster.startAll();
+            cluster.awaitStableLeader(CLUSTER_TIMEOUT);
 
-            var recoveredLeader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            cluster.awaitMembershipSize(recoveredLeader.nodeId(), 3, CLUSTER_TIMEOUT);
-
-            for (String nodeId : cluster.runningNodeIds()) {
-                cluster.awaitNodeValue(nodeId, "persist-1", "value-1", CLUSTER_TIMEOUT);
-                cluster.awaitNodeValue(nodeId, "persist-2", "value-2", CLUSTER_TIMEOUT);
+            for (String nodeId : cluster.startedNodeIds()) {
+                cluster.awaitCaughtUp(nodeId, CLUSTER_TIMEOUT);
                 cluster.awaitNodeValue(nodeId, "persist-3", "value-3", CLUSTER_TIMEOUT);
             }
+            assertEquals("value-1", value(cluster.client(), "persist-1"));
         }
     }
 
     @Test
-    void restartedFollowerReplaysLargerBurstOfMissedWrites() throws Exception {
+    void restartedFollowerInstallsSnapshotOverThePeerTransport() throws Exception {
+        try (var cluster = TestCluster.create(3, spec -> new InProcessNode(tempDir, spec, SnapshotPolicy.everyEntries(8)))) {
+            cluster.startAll();
+            var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+            String follower = anyFollower(cluster, leader.nodeId());
+            cluster.stopNode(follower);
+
+            for (int i = 0; i < BURST; i++) {
+                cluster.client().kv().put(bytes("compacted-" + i), bytes("value-" + i));
+            }
+
+            cluster.startNode(follower);
+            cluster.awaitCaughtUp(follower, CLUSTER_TIMEOUT);
+            assertTrue(cluster.status(follower).snapshotIndex() > 0);
+            for (int i = 0; i < BURST; i++) {
+                cluster.awaitNodeValue(follower, "compacted-" + i, "value-" + i, CLUSTER_TIMEOUT);
+            }
+        }
+    }
+
+    @Test
+    void scanReadsAConsistentRangeInKeyOrder() throws Exception {
         try (var cluster = newCluster()) {
             cluster.startAll();
-
-            var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            String followerId = anyFollower(cluster, leader.nodeId());
-
-            cluster.stopNode(followerId);
-
-            try (var client = cluster.newKvClient()) {
-                for (int i = 0; i < REPLAY_WRITE_COUNT; i++) {
-                    client.put(Bytes.utf8("burst-" + i), Bytes.utf8("value-" + i)).get();
-                }
-            }
-
-            cluster.startNode(followerId);
             cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            cluster.awaitMembershipSize(followerId, 3, CLUSTER_TIMEOUT);
+            var client = cluster.client();
+            client.kv().put(bytes("proof/b"), bytes("two"));
+            client.kv().put(bytes("proof/a"), bytes("one"));
+            long last = client.kv().put(bytes("proof/c"), bytes("three"));
+            client.kv().put(bytes("other"), bytes("x"));
 
-            for (int i = 0; i < REPLAY_WRITE_COUNT; i++) {
-                cluster.awaitNodeValue(followerId, "burst-" + i, "value-" + i, CLUSTER_TIMEOUT);
-            }
-        }
-    }
-
-    @Test
-    void restartedFollowerInstallsSnapshotOverPeerTransport() throws Exception {
-        try (var cluster = TestCluster.create(3, spec -> new InProcessNode(tempDir, spec, config -> config.withSnapshotThreshold(8)))) {
-            cluster.startAll();
-
-            var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-            String followerId = anyFollower(cluster, leader.nodeId());
-            cluster.stopNode(followerId);
-
-            try (var client = cluster.newKvClient()) {
-                for (int i = 0; i < REPLAY_WRITE_COUNT; i++) {
-                    client.put(Bytes.utf8("compacted-" + i), Bytes.utf8("value-" + i)).get();
-                }
+            var scanned = new ArrayList<String>();
+            long readRevision;
+            try (var cursor = client.kv().scan(KeyRange.between(bytes("proof/"), bytes("proof0")))) {
+                readRevision = cursor.readRevision();
+                cursor.forEachRemaining(entry -> scanned.add(entry.key().utf8() + "=" + entry.value().utf8()));
             }
 
-            cluster.startNode(followerId);
-            cluster.awaitStableLeader(CLUSTER_TIMEOUT);
-
-            for (int i = 0; i < REPLAY_WRITE_COUNT; i++) {
-                cluster.awaitNodeValue(followerId, "compacted-" + i, "value-" + i, CLUSTER_TIMEOUT);
-            }
+            assertEquals(List.of("proof/a=one", "proof/b=two", "proof/c=three"), scanned);
+            assertTrue(readRevision >= last);
         }
     }
 
@@ -218,9 +171,6 @@ class MultiNodeClusterIntegrationTest {
     }
 
     private static String anyFollower(TestCluster<InProcessNode> cluster, String leaderId) {
-        return cluster.runningNodeIds().stream()
-            .filter(nodeId -> !nodeId.equals(leaderId))
-            .findFirst()
-            .orElseThrow();
+        return cluster.startedNodeIds().stream().filter(nodeId -> !nodeId.equals(leaderId)).findFirst().orElseThrow();
     }
 }

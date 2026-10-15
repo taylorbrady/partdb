@@ -15,7 +15,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -297,26 +296,6 @@ class RaftRuntimeTest {
     }
 
     @Test
-    void laggingFollowerCatchesUpFromStreamedSnapshot() throws Exception {
-        var two = Ids.voters("n1", "n2");
-        Path payload = directory.resolve("payload");
-        String contents = "snapshot-state-".repeat(1000);
-        Files.writeString(payload, contents);
-        RaftRuntime.bootstrap(directory.resolve("n1"), config("n1", two), 5, payload);
-        machines.put("n1", new RecordingStateMachine(5));
-
-        start("n1", two);
-        start("n2", two);
-        var leader = leader();
-        assertEquals("n1", name(leader));
-
-        await(() -> machines.get("n2").applied >= 5);
-        assertEquals(contents, machines.get("n2").restored);
-        join(leader.propose(Bytes.utf8("after")));
-        await(() -> machines.get("n2").commands.contains("after"));
-    }
-
-    @Test
     void isolatedLeaderStepsDownAndClusterMovesOn() throws Exception {
         startAll(THREE);
         var oldLeader = leader();
@@ -410,10 +389,6 @@ class RaftRuntimeTest {
         private volatile String restored;
 
         private RecordingStateMachine() {
-        }
-
-        private RecordingStateMachine(long applied) {
-            this.applied = applied;
         }
 
         @Override

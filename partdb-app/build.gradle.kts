@@ -1,13 +1,24 @@
 plugins {
     id("partdb.java-conventions")
     application
+    `java-test-fixtures`
 }
+
+version = "0.1.0-SNAPSHOT"
 
 dependencies {
     implementation(project(":partdb-server"))
     implementation(project(":partdb-client"))
 
+    testFixturesApi(project(":partdb-client"))
+
     runtimeOnly(libs.logback.classic)
+}
+
+tasks.jar {
+    manifest {
+        attributes("Implementation-Version" to project.version)
+    }
 }
 
 application {
@@ -21,7 +32,7 @@ testing {
             dependencies {
                 implementation(project())
                 implementation(project(":partdb-server"))
-                implementation(testFixtures(project(":partdb-client")))
+                implementation(testFixtures(project()))
             }
 
             targets {
@@ -36,7 +47,7 @@ testing {
 
         register<JvmTestSuite>("packagedIntegrationTest") {
             dependencies {
-                implementation(testFixtures(project(":partdb-client")))
+                implementation(testFixtures(project()))
             }
 
             targets {

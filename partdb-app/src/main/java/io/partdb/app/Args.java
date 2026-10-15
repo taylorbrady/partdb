@@ -16,24 +16,33 @@ final class Args {
 
     String next() {
         if (!hasNext()) {
-            throw new IllegalStateException("No more arguments available");
+            throw new IllegalStateException("no more arguments");
         }
         return values[index++];
     }
 
-    String requireValue(String optionName) {
+    String value(String option) {
         if (!hasNext()) {
-            throw new IllegalArgumentException(optionName + " requires a value");
+            throw new IllegalArgumentException(option + " requires a value");
         }
         return next();
     }
 
-    int requireIntValue(String optionName) {
-        String value = requireValue(optionName);
+    int intValue(String option) {
+        String value = value(option);
         try {
             return Integer.parseInt(value);
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(optionName + " must be a valid integer, got: " + value);
+            throw new IllegalArgumentException(option + " must be an integer, got: " + value);
+        }
+    }
+
+    long longValue(String option) {
+        String value = value(option);
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(option + " must be an integer, got: " + value);
         }
     }
 }

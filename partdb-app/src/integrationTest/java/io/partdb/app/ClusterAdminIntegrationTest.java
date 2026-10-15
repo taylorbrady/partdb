@@ -1,9 +1,8 @@
 package io.partdb.app;
 
-import io.partdb.client.ClusterMember;
-import io.partdb.client.ClusterMemberRole;
-import io.partdb.client.ClusterNodeRole;
-import io.partdb.client.testing.TestCluster;
+import io.partdb.app.testing.TestCluster;
+import io.partdb.client.MemberRole;
+import io.partdb.client.Role;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
@@ -23,69 +22,65 @@ class ClusterAdminIntegrationTest {
     Path tempDir;
 
     @Test
-    void statusAndMembershipConvergeAcrossAllNodes() throws Exception {
+    void statusAndMembersConvergeAcrossAllNodes() throws Exception {
         try (var cluster = newCluster()) {
             cluster.startAll();
-
             String leaderId = cluster.awaitStableLeader(CLUSTER_TIMEOUT).nodeId();
 
-            for (String nodeId : cluster.runningNodeIds()) {
+            for (String nodeId : cluster.startedNodeIds()) {
                 var status = cluster.awaitStatusLeader(nodeId, leaderId, CLUSTER_TIMEOUT);
-                assertTrue(status.running());
-                assertEquals(nodeId.equals(leaderId), status.role() == ClusterNodeRole.LEADER);
+                assertEquals(nodeId, status.nodeId());
+                assertEquals(nodeId.equals(leaderId), status.role() == Role.LEADER);
 
-                var membership = cluster.awaitMembershipLeader(nodeId, leaderId, CLUSTER_TIMEOUT);
-                assertEquals(3, membership.members().size());
-                assertEquals(leaderId, membership.leaderId().orElseThrow());
-
-                for (ClusterMember member : membership.members()) {
-                    assertEquals(ClusterMemberRole.VOTER, member.role());
-                    assertEquals(member.nodeId().equals(nodeId), member.self());
-                    assertEquals(member.nodeId().equals(leaderId), member.leader());
-                }
+                var members = cluster.awaitMembersLeader(nodeId, leaderId, CLUSTER_TIMEOUT);
+                assertEquals(3, members.members().size());
+                assertTrue(members.members().stream().allMatch(member -> member.role() == MemberRole.VOTER));
             }
         }
     }
 
     @Test
-    void statusAndMemberListCommandsReflectLeaderAfterFailover() throws Exception {
+    void cliReflectsTheLeaderAfterFailover() throws Exception {
         try (var cluster = newCluster()) {
             cluster.startAll();
-
             var initialLeader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
             cluster.stopNode(initialLeader.nodeId());
-
             var newLeader = cluster.awaitStableLeaderExcluding(initialLeader.nodeId(), CLUSTER_TIMEOUT);
             assertNotEquals(initialLeader.nodeId(), newLeader.nodeId());
-            String observerId = cluster.runningNodeIds().stream()
-                .filter(nodeId -> !nodeId.equals(newLeader.nodeId()))
-                .findFirst()
-                .orElseThrow();
+            String observer = cluster.startedNodeIds().stream().filter(id -> !id.equals(newLeader.nodeId())).findFirst().orElseThrow();
+            cluster.awaitStatusLeader(observer, newLeader.nodeId(), CLUSTER_TIMEOUT);
 
-            cluster.awaitStatusLeader(observerId, newLeader.nodeId(), CLUSTER_TIMEOUT);
-            cluster.awaitMembershipLeader(observerId, newLeader.nodeId(), CLUSTER_TIMEOUT);
+            var status = InProcessCli.run("cluster", "status", "--endpoint", cluster.endpoint(observer));
+            assertEquals(0, status.exitCode(), status.stderr());
+            assertTrue(status.stdout().contains("Node ID:        " + observer), status.stdout());
+            assertTrue(status.stdout().contains("Leader:         " + newLeader.nodeId()), status.stdout());
 
-            var statusResult = InProcessCli.run("cluster", "status", "--endpoint", cluster.grpcAddress(observerId));
-            assertEquals(0, statusResult.exitCode(), statusResult.stderr());
-            assertEquals("", statusResult.stderr());
-            assertTrue(statusResult.stdout().contains("Node ID:        " + observerId), statusResult.stdout());
-            assertTrue(statusResult.stdout().contains("Leader:         " + newLeader.nodeId()), statusResult.stdout());
-
-            var membersResult = InProcessCli.run(
-                "cluster",
-                "members",
-                "--endpoint",
-                cluster.grpcAddress(observerId),
-                "--output",
-                "json"
-            );
-            assertEquals(0, membersResult.exitCode(), membersResult.stderr());
-            assertEquals("", membersResult.stderr());
-            String json = membersResult.stdout();
+            var members = InProcessCli.run("cluster", "members", "--endpoint", cluster.endpoint(observer), "--output", "json");
+            assertEquals(0, members.exitCode(), members.stderr());
+            String json = members.stdout();
             assertTrue(json.contains("\"leaderId\":\"" + newLeader.nodeId() + "\""), json);
             assertTrue(json.contains("\"nodeId\":\"" + initialLeader.nodeId() + "\""), json);
-            assertTrue(json.contains("\"nodeId\":\"" + newLeader.nodeId() + "\""), json);
             assertEquals(1, json.split("\"isLeader\":true", -1).length - 1, json);
+        }
+    }
+
+    @Test
+    void cliWritesFollowTheLeaderFromAFollowerEndpoint() throws Exception {
+        try (var cluster = newCluster()) {
+            cluster.startAll();
+            var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+            String follower = cluster.startedNodeIds().stream().filter(id -> !id.equals(leader.nodeId())).findFirst().orElseThrow();
+
+            var put = InProcessCli.run("kv", "put", "key", "value", "--endpoints", cluster.endpoints());
+            assertEquals(0, put.exitCode(), put.stderr());
+            assertTrue(put.stdout().startsWith("OK revision="), put.stdout());
+
+            var get = InProcessCli.run("kv", "get", "key", "--endpoint", cluster.endpoint(follower));
+            assertEquals(0, get.exitCode(), get.stderr());
+            assertEquals("value\n", get.stdout());
+
+            var missing = InProcessCli.run("kv", "get", "missing", "--endpoint", cluster.endpoint(follower));
+            assertEquals(AppCommand.NOT_FOUND, missing.exitCode());
         }
     }
 

@@ -133,10 +133,16 @@ encoding.
 Role: replicated PartDB node domain.
 
 This module composes the Raft runtime with the PartDB KV state machine. It
-owns node-facing domain APIs: KV operations, cluster status, backup, and
-restore. Packages: `io.partdb.node` (node, config, admin and cluster views),
-`io.partdb.node.kv` (KV API types), and `io.partdb.node.state` (state machine
-and command codecs).
+owns node-facing domain APIs: blocking KV operations with explicit timeouts,
+cluster status, and metrics. Every write is one `Txn` (conditions plus
+mutations); `put`, `delete`, and `write` are unconditional transactions. Reads
+return the revision they read at. Failures are one sealed `NodeException`
+family that callers can switch over exhaustively. `KvLimits` are enforced
+before a command is proposed, so oversized or invalid commands never reach the
+log. Packages: `io.partdb.node` (`Node`, `NodeConfig`, `NodeException`,
+cluster view, metrics), `io.partdb.node.kv` (KV API types), and
+`io.partdb.node.state` (`KvStateMachine` and the versioned, strictly decoded
+`TxnCodec`).
 
 Allowed dependencies: `partdb-raft`, `partdb-storage`, `partdb-bytes`.
 
@@ -147,8 +153,10 @@ registration, or transport endpoint parsing.
 
 Role: public protobuf schemas and generated gRPC classes.
 
-This is the wire contract shared by the client and the server. It does not
-depend on the runtime.
+This is the wire contract shared by the client and the server
+(`partdb.kv.v1`, `partdb.cluster.v1`). Errors travel as gRPC status codes with
+a `google.rpc.ErrorInfo` detail; see [kv-semantics.md](kv-semantics.md). It
+does not depend on the runtime.
 
 Allowed dependencies: gRPC/protobuf libraries only.
 
@@ -159,8 +167,12 @@ protocol, or Raft runtime logic.
 
 Role: Java client API.
 
-This module exposes typed Java APIs over the public gRPC protocol. Its test
-fixtures hold `TestCluster`, the shared driver for both cluster test suites.
+This module exposes one blocking Java client, `PartDbClient`, with `kv()` and
+`cluster()` facets over the public gRPC protocol. It follows `NOT_LEADER`
+hints to the leader's endpoint (learned from each endpoint's status), retries
+reads and requests the server reports as not applied within one deadline, and
+reports any write that may have been applied as `OutcomeUnknown` instead of
+retrying it. Failures are one sealed `PartDbClientException` family.
 
 Allowed dependencies: `partdb-grpc`, `partdb-bytes`, gRPC/protobuf libraries.
 
@@ -195,6 +207,8 @@ algorithm logic.
 Role: executable CLI.
 
 This module parses commands, starts servers, and acts as an operational client.
+Its test fixtures hold `TestCluster`, the shared driver for both cluster test
+suites.
 
 Allowed dependencies: `partdb-server`, `partdb-client`.
 

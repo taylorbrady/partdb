@@ -1,8 +1,8 @@
 package io.partdb.app;
 
+import io.partdb.app.testing.NodeSpec;
+import io.partdb.app.testing.TestClusterNode;
 import io.partdb.client.ServerEndpoint;
-import io.partdb.client.testing.NodeSpec;
-import io.partdb.client.testing.TestClusterNode;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -39,17 +39,17 @@ final class PackagedNode implements TestClusterNode {
 
     @Override
     public ServerEndpoint endpoint() {
-        return spec.grpcEndpoint();
+        return spec.endpoint();
     }
 
     @Override
-    public boolean isRunning() {
-        return process != null && process.isAlive();
+    public boolean isStarted() {
+        return process != null;
     }
 
     @Override
     public void start() throws IOException {
-        if (isRunning()) {
+        if (process != null) {
             return;
         }
 
@@ -64,16 +64,14 @@ final class PackagedNode implements TestClusterNode {
         command.add("start");
         command.add("--node-id");
         command.add(spec.nodeId());
-        for (var peer : spec.raftPeerAddresses().entrySet()) {
-            command.add("--raft-peer");
+        for (var peer : spec.peers().entrySet()) {
+            command.add("--peer");
             command.add(peer.getKey() + "=" + peer.getValue());
         }
         command.add("--data-dir");
         command.add(nodeDir.resolve("data").toString());
-        command.add("--raft-port");
-        command.add(Integer.toString(spec.raftPort()));
-        command.add("--grpc-port");
-        command.add(Integer.toString(spec.grpcPort()));
+        command.add("--client-port");
+        command.add(Integer.toString(spec.clientPort()));
         command.add("--admin-port");
         command.add(Integer.toString(spec.adminPort()));
 
@@ -106,8 +104,8 @@ final class PackagedNode implements TestClusterNode {
     }
 
     @Override
-    public void assertStillRunning() {
-        if (!isRunning()) {
+    public void checkAlive() {
+        if (process != null && !process.isAlive()) {
             throw new AssertionError(nodeId() + " exited unexpectedly" + output());
         }
     }

@@ -1,7 +1,7 @@
 package io.partdb.app;
 
-import io.partdb.client.testing.CommandResult;
-import io.partdb.client.testing.NodeSpec;
+import io.partdb.app.testing.CommandResult;
+import io.partdb.app.testing.NodeSpec;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

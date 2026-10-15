@@ -1,50 +1,43 @@
 package io.partdb.app;
 
+import io.partdb.app.testing.NodeSpec;
+import io.partdb.app.testing.TestClusterNode;
 import io.partdb.client.ServerEndpoint;
-import io.partdb.client.testing.NodeSpec;
-import io.partdb.client.testing.TestClusterNode;
+import io.partdb.raft.runtime.SnapshotPolicy;
 import io.partdb.server.PartDbServer;
-import io.partdb.server.PartDbServerConfig;
+import io.partdb.server.ServerConfig;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.function.UnaryOperator;
+import java.util.Optional;
 
 final class InProcessNode implements TestClusterNode {
-    private final String nodeId;
-    private final ServerEndpoint endpoint;
-    private final PartDbServerConfig config;
+    private final NodeSpec spec;
+    private final ServerConfig config;
     private PartDbServer server;
 
-    InProcessNode(Path rootDir, NodeSpec spec) {
-        this(rootDir, spec, UnaryOperator.identity());
+    InProcessNode(Path root, NodeSpec spec) {
+        this(root, spec, SnapshotPolicy.DEFAULT);
     }
 
-    InProcessNode(Path rootDir, NodeSpec spec, UnaryOperator<PartDbServerConfig> customize) {
-        this.nodeId = spec.nodeId();
-        this.endpoint = spec.grpcEndpoint();
-        this.config = customize.apply(PartDbServerConfig.create(
-            spec.nodeId(),
-            spec.raftPeerAddresses(),
-            rootDir.resolve(spec.nodeId()),
-            spec.raftPort(),
-            spec.grpcPort(),
-            spec.adminPort()
-        ));
+    InProcessNode(Path root, NodeSpec spec, SnapshotPolicy snapshots) {
+        this.spec = spec;
+        this.config = ServerConfig.create(
+            spec.nodeId(), spec.peers(), root.resolve(spec.nodeId()), spec.clientPort(), spec.adminPort(), Optional.empty(), snapshots);
     }
 
     @Override
     public String nodeId() {
-        return nodeId;
+        return spec.nodeId();
     }
 
     @Override
     public ServerEndpoint endpoint() {
-        return endpoint;
+        return spec.endpoint();
     }
 
     @Override
-    public boolean isRunning() {
+    public boolean isStarted() {
         return server != null;
     }
 

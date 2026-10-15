@@ -1,424 +1,92 @@
 package io.partdb.client;
 
-import com.google.protobuf.ByteString;
-import io.grpc.ManagedChannel;
-import io.grpc.stub.StreamObserver;
+import io.grpc.Context;
+import io.grpc.StatusRuntimeException;
 import io.partdb.bytes.Bytes;
-import io.partdb.grpc.kv.proto.KvProto;
-import io.partdb.grpc.kv.proto.KvServiceGrpc;
+import io.partdb.grpc.kv.v1.DeleteRequest;
+import io.partdb.grpc.kv.v1.GetRequest;
+import io.partdb.grpc.kv.v1.KeyValueServiceGrpc;
+import io.partdb.grpc.kv.v1.PutRequest;
+import io.partdb.grpc.kv.v1.ScanRequest;
+import io.partdb.grpc.kv.v1.WriteRequest;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class KvClient implements AutoCloseable {
+public final class KvClient {
 
-    private final KvClientConfig config;
-    private final ConcurrentHashMap<ServerEndpoint, ManagedChannel> channels;
-    private final AtomicInteger roundRobinIndex;
+    private final Invoker invoker;
 
-    public KvClient(KvClientConfig config) {
-        this.config = config;
-        this.channels = new ConcurrentHashMap<>();
-        this.roundRobinIndex = new AtomicInteger(0);
+    KvClient(Invoker invoker) {
+        this.invoker = invoker;
     }
 
-    public CompletableFuture<Optional<Bytes>> get(Bytes key) {
+    public Optional<KeyValue> get(Bytes key) {
         return get(key, ReadConsistency.LINEARIZABLE);
     }
 
-    public CompletableFuture<Optional<Bytes>> get(Bytes key, ReadConsistency consistency) {
-        KvProto.GetRequest request = KvProto.GetRequest.newBuilder()
-            .setHeader(buildHeader())
-            .setKey(toByteString(key))
-            .setConsistency(toProtoConsistency(consistency))
-            .build();
-
-        return executeWithRetry(() -> {
-            CompletableFuture<Optional<Bytes>> future = new CompletableFuture<>();
-            getStub().get(request, new StreamObserver<>() {
-                @Override
-                public void onNext(KvProto.GetResponse response) {
-                    if (response.hasError() && response.getError().getCode() == KvProto.ErrorCode.NOT_FOUND) {
-                        future.complete(Optional.empty());
-                    } else if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
-                        handleError(response.getError(), future);
-                    } else {
-                        future.complete(Optional.of(Bytes.copyOf(response.getValue().toByteArray())));
-                    }
-                }
-
-                @Override
-                public void onError(Throwable t) {
-                    future.completeExceptionally(t);
-                }
-
-                @Override
-                public void onCompleted() {
-                }
-            });
-            return future;
-        });
+    public Optional<KeyValue> get(Bytes key, ReadConsistency consistency) {
+        Objects.requireNonNull(key, "key must not be null");
+        Objects.requireNonNull(consistency, "consistency must not be null");
+        var request = GetRequest.newBuilder().setKey(Protos.bytes(key)).setConsistency(Protos.consistency(consistency)).build();
+        var response = invoker.call(Invoker.Kind.READ, (channel, deadline) ->
+            KeyValueServiceGrpc.newBlockingStub(channel).withDeadline(deadline).get(request));
+        return response.hasEntry() ? Optional.of(Protos.keyValue(response.getEntry())) : Optional.empty();
     }
 
-    public CompletableFuture<Void> put(Bytes key, Bytes value) {
-        KvProto.PutRequest request = KvProto.PutRequest.newBuilder()
-            .setHeader(buildHeader())
-            .setKey(toByteString(key))
-            .setValue(toByteString(value))
-            .build();
-
-        return executeWithRetry(() -> {
-            CompletableFuture<Void> future = new CompletableFuture<>();
-            getStub().put(request, new StreamObserver<>() {
-                @Override
-                public void onNext(KvProto.PutResponse response) {
-                    if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
-                        handleError(response.getError(), future);
-                    } else {
-                        future.complete(null);
-                    }
-                }
-
-                @Override
-                public void onError(Throwable t) {
-                    future.completeExceptionally(t);
-                }
-
-                @Override
-                public void onCompleted() {
-                }
-            });
-            return future;
-        });
+    public long put(Bytes key, Bytes value) {
+        Objects.requireNonNull(key, "key must not be null");
+        Objects.requireNonNull(value, "value must not be null");
+        var request = PutRequest.newBuilder().setKey(Protos.bytes(key)).setValue(Protos.bytes(value)).build();
+        return invoker.call(Invoker.Kind.WRITE, (channel, deadline) ->
+            KeyValueServiceGrpc.newBlockingStub(channel).withDeadline(deadline).put(request)).getRevision();
     }
 
-    public CompletableFuture<Void> delete(Bytes key) {
-        KvProto.DeleteRequest request = KvProto.DeleteRequest.newBuilder()
-            .setHeader(buildHeader())
-            .setKey(toByteString(key))
-            .build();
-
-        return executeWithRetry(() -> {
-            CompletableFuture<Void> future = new CompletableFuture<>();
-            getStub().delete(request, new StreamObserver<>() {
-                @Override
-                public void onNext(KvProto.DeleteResponse response) {
-                    if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
-                        handleError(response.getError(), future);
-                    } else {
-                        future.complete(null);
-                    }
-                }
-
-                @Override
-                public void onError(Throwable t) {
-                    future.completeExceptionally(t);
-                }
-
-                @Override
-                public void onCompleted() {
-                }
-            });
-            return future;
-        });
+    public long delete(Bytes key) {
+        Objects.requireNonNull(key, "key must not be null");
+        var request = DeleteRequest.newBuilder().setKey(Protos.bytes(key)).build();
+        return invoker.call(Invoker.Kind.WRITE, (channel, deadline) ->
+            KeyValueServiceGrpc.newBlockingStub(channel).withDeadline(deadline).delete(request)).getRevision();
     }
 
-    public CompletableFuture<ScanCursor> scan(Optional<Bytes> startKey, Optional<Bytes> endKey) {
-        return scan(startKey, endKey, 0, ReadConsistency.LINEARIZABLE);
-    }
-
-    public CompletableFuture<ScanCursor> scan(
-        Optional<Bytes> startKey,
-        Optional<Bytes> endKey,
-        int limit,
-        ReadConsistency consistency
-    ) {
-        KvProto.ScanRequest request = KvProto.ScanRequest.newBuilder()
-            .setHeader(buildHeader())
-            .setStartKey(startKey.map(KvClient::toByteString).orElse(ByteString.EMPTY))
-            .setEndKey(endKey.map(KvClient::toByteString).orElse(ByteString.EMPTY))
-            .setLimit(limit)
-            .setConsistency(toProtoConsistency(consistency))
-            .build();
-
-        return startScan(request, 0);
-    }
-
-    public CompletableFuture<Void> batchWrite(List<WriteOp> ops) {
-        KvProto.BatchWriteRequest.Builder builder = KvProto.BatchWriteRequest.newBuilder()
-            .setHeader(buildHeader());
-
-        for (WriteOp op : ops) {
-            KvProto.WriteOp.Builder opBuilder = KvProto.WriteOp.newBuilder();
-            switch (op) {
-                case WriteOp.Put put -> opBuilder.setPut(KvProto.PutOp.newBuilder()
-                    .setKey(toByteString(put.key()))
-                    .setValue(toByteString(put.value()))
-                    .build());
-                case WriteOp.Delete delete -> opBuilder.setDelete(KvProto.DeleteOp.newBuilder()
-                    .setKey(toByteString(delete.key()))
-                    .build());
-            }
-            builder.addOps(opBuilder.build());
+    public long write(List<Mutation> mutations) {
+        Objects.requireNonNull(mutations, "mutations must not be null");
+        if (mutations.isEmpty()) {
+            throw new IllegalArgumentException("mutations must not be empty");
         }
-
-        KvProto.BatchWriteRequest request = builder.build();
-
-        return executeWithRetry(() -> {
-            CompletableFuture<Void> future = new CompletableFuture<>();
-            getStub().batchWrite(request, new StreamObserver<>() {
-                @Override
-                public void onNext(KvProto.BatchWriteResponse response) {
-                    if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
-                        handleError(response.getError(), future);
-                    } else {
-                        future.complete(null);
-                    }
-                }
-
-                @Override
-                public void onError(Throwable t) {
-                    future.completeExceptionally(t);
-                }
-
-                @Override
-                public void onCompleted() {
-                }
-            });
-            return future;
-        });
+        var request = WriteRequest.newBuilder().addAllMutations(mutations.stream().map(Protos::mutation).toList()).build();
+        return invoker.call(Invoker.Kind.WRITE, (channel, deadline) ->
+            KeyValueServiceGrpc.newBlockingStub(channel).withDeadline(deadline).write(request)).getRevision();
     }
 
-    @Override
-    public void close() {
-        for (ManagedChannel channel : channels.values()) {
-            channel.shutdown();
+    public ScanCursor scan(KeyRange range) {
+        return scan(range, ScanOptions.DEFAULT);
+    }
+
+    public ScanCursor scan(KeyRange range, ScanOptions options) {
+        Objects.requireNonNull(range, "range must not be null");
+        Objects.requireNonNull(options, "options must not be null");
+        var request = ScanRequest.newBuilder()
+            .setStartKey(Protos.bytes(range.start()))
+            .setLimit(options.limit())
+            .setConsistency(Protos.consistency(options.consistency()));
+        range.end().ifPresent(end -> request.setEndKey(Protos.bytes(end)));
+        return invoker.call(Invoker.Kind.READ, (channel, deadline) -> {
+            var context = Context.current().withCancellation();
             try {
-                if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
-                    channel.shutdownNow();
+                var responses = context.call(() -> KeyValueServiceGrpc.newBlockingStub(channel).withDeadline(deadline).scan(request.build()));
+                if (!responses.hasNext()) {
+                    throw new PartDbClientException.Internal("the server ended the scan without a response", null);
                 }
-            } catch (InterruptedException e) {
-                channel.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-        }
-        channels.clear();
-    }
-
-    private <T> CompletableFuture<T> executeWithRetry(java.util.function.Supplier<CompletableFuture<T>> operation) {
-        return executeWithRetry(operation, 0);
-    }
-
-    private <T> CompletableFuture<T> executeWithRetry(
-        java.util.function.Supplier<CompletableFuture<T>> operation,
-        int attempt
-    ) {
-        return operation.get()
-            .exceptionallyCompose(ex -> {
-                if (attempt >= config.maxRetries()) {
-                    return CompletableFuture.failedFuture(
-                        new KvClientException.ClusterUnavailable("All retries exhausted", ex));
-                }
-
-                if (ex instanceof NotLeaderException) {
-                    return executeWithRetry(operation, attempt + 1);
-                }
-
-                if (isRetryable(ex)) {
-                    return CompletableFuture.supplyAsync(() -> null,
-                            CompletableFuture.delayedExecutor(config.retryDelay().toMillis(), TimeUnit.MILLISECONDS))
-                        .thenCompose(v -> executeWithRetry(operation, attempt + 1));
-                }
-
-                return CompletableFuture.failedFuture(ex);
-            })
-            .orTimeout(config.requestTimeout().toMillis(), TimeUnit.MILLISECONDS);
-    }
-
-    private boolean isRetryable(Throwable ex) {
-        if (ex instanceof java.util.concurrent.TimeoutException) {
-            return true;
-        }
-        if (ex instanceof io.grpc.StatusRuntimeException sre) {
-            return switch (sre.getStatus().getCode()) {
-                case UNAVAILABLE, DEADLINE_EXCEEDED, ABORTED -> true;
-                default -> false;
-            };
-        }
-        return ex.getCause() != null && isRetryable(ex.getCause());
-    }
-
-    private <T> void handleError(KvProto.Error error, CompletableFuture<T> future) {
-        future.completeExceptionally(toException(error));
-    }
-
-    private KvProto.RequestHeader buildHeader() {
-        return KvProto.RequestHeader.newBuilder()
-            .setRequestId(UUID.randomUUID().toString())
-            .setTimeoutMs(config.requestTimeout().toMillis())
-            .build();
-    }
-
-    private KvProto.ReadConsistency toProtoConsistency(ReadConsistency consistency) {
-        return switch (consistency) {
-            case LINEARIZABLE -> KvProto.ReadConsistency.LINEARIZABLE;
-            case STALE -> KvProto.ReadConsistency.STALE;
-        };
-    }
-
-    private static ByteString toByteString(Bytes bytes) {
-        return ByteString.copyFrom(bytes.asReadOnlyByteBuffer());
-    }
-
-    private KvServiceGrpc.KvServiceStub getStub() {
-        ServerEndpoint endpoint = selectEndpoint();
-        return stubFor(endpoint);
-    }
-
-    private KvServiceGrpc.KvServiceStub stubFor(ServerEndpoint endpoint) {
-        ManagedChannel channel = channels.computeIfAbsent(endpoint, this::createChannel);
-        return KvServiceGrpc.newStub(channel)
-            .withDeadlineAfter(config.requestTimeout().toMillis(), TimeUnit.MILLISECONDS);
-    }
-
-    private ServerEndpoint selectEndpoint() {
-        List<ServerEndpoint> endpoints = config.endpoints();
-        int idx = roundRobinIndex.getAndIncrement() % endpoints.size();
-        return endpoints.get(idx);
-    }
-
-    private ManagedChannel createChannel(ServerEndpoint endpoint) {
-        return GrpcClientChannels.createChannel(endpoint, config.connectTimeout());
-    }
-
-    private CompletableFuture<ScanCursor> startScan(KvProto.ScanRequest request, int attempt) {
-        ServerEndpoint endpoint = selectEndpoint();
-        var future = new CompletableFuture<ScanCursor>();
-        var cursor = new GrpcScanCursor();
-        var active = new AtomicBoolean(true);
-        var published = new AtomicBoolean(false);
-
-        stubFor(endpoint).scan(request, new StreamObserver<>() {
-            @Override
-            public void onNext(KvProto.ScanResponse response) {
-                if (!active.get()) {
-                    return;
-                }
-
-                if (response.hasError() && response.getError().getCode() != KvProto.ErrorCode.OK) {
-                    RuntimeException exception = toException(response.getError());
-                    if (!published.get() && shouldRetryScan(exception, attempt)) {
-                        active.set(false);
-                        cursor.close();
-                        retryScan(request, attempt, exception, future);
-                        return;
-                    }
-
-                    failScan(cursor, future, active, exception);
-                    return;
-                }
-
-                cursor.addResult(new KeyValue(
-                    Bytes.copyOf(response.getKey().toByteArray()),
-                    Bytes.copyOf(response.getValue().toByteArray()),
-                    response.getRevision()
-                ));
-                published.set(true);
-                future.complete(cursor);
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                if (!active.get()) {
-                    return;
-                }
-
-                if (!published.get() && isRetryable(t) && attempt < config.maxRetries()) {
-                    active.set(false);
-                    cursor.close();
-                    retryScan(request, attempt, t, future);
-                    return;
-                }
-
-                failScan(cursor, future, active, t);
-            }
-
-            @Override
-            public void onCompleted() {
-                if (!active.getAndSet(false)) {
-                    return;
-                }
-                cursor.complete();
-                future.complete(cursor);
+                return new ScanCursor(context, responses, responses.next());
+            } catch (StatusRuntimeException | PartDbClientException e) {
+                context.cancel(null);
+                throw e;
+            } catch (Exception e) {
+                context.cancel(null);
+                throw new PartDbClientException.Internal("failed to start the scan", e);
             }
         });
-
-        return future;
-    }
-
-    private void retryScan(
-        KvProto.ScanRequest request,
-        int attempt,
-        Throwable cause,
-        CompletableFuture<ScanCursor> future
-    ) {
-        if (attempt >= config.maxRetries()) {
-            future.completeExceptionally(new KvClientException.ClusterUnavailable("All retries exhausted", cause));
-            return;
-        }
-
-        CompletableFuture<ScanCursor> retry = cause instanceof NotLeaderException
-            ? startScan(request, attempt + 1)
-            : CompletableFuture
-                .runAsync(
-                    () -> { },
-                    CompletableFuture.delayedExecutor(config.retryDelay().toMillis(), TimeUnit.MILLISECONDS)
-                )
-                .thenCompose(ignored -> startScan(request, attempt + 1));
-
-        retry.whenComplete((cursor, ex) -> {
-            if (ex != null) {
-                future.completeExceptionally(ex);
-            } else {
-                future.complete(cursor);
-            }
-        });
-    }
-
-    private boolean shouldRetryScan(RuntimeException exception, int attempt) {
-        if (attempt >= config.maxRetries()) {
-            return false;
-        }
-        return exception instanceof NotLeaderException;
-    }
-
-    private RuntimeException toException(KvProto.Error error) {
-        return switch (error.getCode()) {
-            case NOT_LEADER -> new NotLeaderException();
-            default -> new KvClientException.ClusterUnavailable(error.getMessage());
-        };
-    }
-
-    private static void failScan(
-        GrpcScanCursor cursor,
-        CompletableFuture<ScanCursor> future,
-        AtomicBoolean active,
-        Throwable failure
-    ) {
-        if (!active.getAndSet(false)) {
-            return;
-        }
-        if (!future.completeExceptionally(failure)) {
-            cursor.completeWithError(failure);
-        }
-    }
-
-    private static final class NotLeaderException extends RuntimeException {
     }
 }

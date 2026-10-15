@@ -99,10 +99,11 @@ modules together inside the Gradle test JVM. These tests may start real
 `PartDbServer` instances with public gRPC and Raft peer gRPC transports, but they do
 not use the installed application distribution.
 
-Both integration suites share `TestCluster` from the `partdb-client` test
-fixtures (`partdb-client/src/testFixtures`). It allocates ports, starts nodes
-through a `TestClusterNode` implementation, and polls cluster state through the
-public client. `integrationTest` plugs in `InProcessNode`;
+Both integration suites share `TestCluster` from the `partdb-app` test
+fixtures (`partdb-app/src/testFixtures`). It allocates ports, starts nodes
+through a `TestClusterNode` implementation, fails fast when a started node has
+died, and polls cluster state through one cached public client per node.
+`awaitCaughtUp` waits until a node has applied the leader's commit index. `integrationTest` plugs in `InProcessNode`;
 `packagedIntegrationTest` plugs in `PackagedNode`. Cluster tests keep their
 temp directories on failure (`@TempDir(cleanup = ON_SUCCESS)`).
 
@@ -111,16 +112,21 @@ Use this suite for:
 - 3-node startup
 - leader election
 - linearizable writes and reads through the public client
+- writes sent to a follower first and redirected to the leader
+- one long-lived client riding through leader failover
 - leader stop and failover
 - post-failover writes
 - old leader restart and catch-up
 - follower restart and catch-up
 - full cluster restart
-- range scan through the public client
+- range scan through the public client, with its read revision
+- snapshot install over the peer transport
+- CLI commands against a live cluster
 
 Health endpoint and JMX behavior for a single server are covered by
 `partdb-server` unit tests; startup configuration validation is covered by
-`PartDbServerConfigTest`.
+`ServerConfigTest`. The client's retry, redirect, and outcome-unknown rules are
+covered by `InvokerTest` against fake gRPC services.
 
 ## Packaged Integration Tests
 

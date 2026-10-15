@@ -1,7 +1,7 @@
 package io.partdb.app;
 
-import io.partdb.client.testing.CommandResult;
-import io.partdb.client.testing.TestCluster;
+import io.partdb.app.testing.CommandResult;
+import io.partdb.app.testing.TestCluster;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,30 +19,40 @@ class SingleNodeCliIntegrationTest {
     Path tempDir;
 
     @Test
-    void cliCommandsWorkAgainstLiveSingleNodeServer() throws Exception {
+    void cliCommandsWorkAgainstALiveSingleNodeServer() throws Exception {
         try (var cluster = TestCluster.create(1, spec -> new InProcessNode(tempDir, spec))) {
             cluster.startAll();
             var leader = cluster.awaitStableLeader(LEADER_TIMEOUT);
-            String endpoint = cluster.grpcAddress(leader.nodeId());
+            String endpoint = cluster.endpoint(leader.nodeId());
 
-            assertCommand(InProcessCli.run("kv", "put", "hello", "world", "--endpoint", endpoint), "OK\n");
-            assertCommand(InProcessCli.run("kv", "get", "hello", "--endpoint", endpoint), "world\n");
+            var put = InProcessCli.run("kv", "put", "hello", "world", "--endpoint", endpoint);
+            assertEquals(0, put.exitCode(), put.stderr());
+            assertTrue(put.stdout().startsWith("OK revision="), put.stdout());
+            assertOutput(InProcessCli.run("kv", "get", "hello", "--endpoint", endpoint), "world\n");
+            assertOutput(InProcessCli.run("kv", "put", "help", "me", "--endpoint", endpoint, "--output", "json"), null);
+            assertOutput(InProcessCli.run("kv", "scan", "he", "hf", "--endpoint", endpoint), "hello=world\nhelp=me\n");
 
-            var statusResult = InProcessCli.run("cluster", "status", "--endpoint", endpoint);
-            assertEquals(0, statusResult.exitCode(), statusResult.stderr());
-            assertTrue(statusResult.stdout().contains("Node ID:        " + leader.nodeId()), statusResult.stdout());
-            assertTrue(statusResult.stdout().contains("Role:           LEADER"), statusResult.stdout());
+            var delete = InProcessCli.run("kv", "delete", "hello", "--endpoint", endpoint);
+            assertEquals(0, delete.exitCode(), delete.stderr());
+            assertEquals(AppCommand.NOT_FOUND, InProcessCli.run("kv", "get", "hello", "--endpoint", endpoint).exitCode());
 
-            var memberResult = InProcessCli.run("cluster", "members", "--endpoint", endpoint);
-            assertEquals(0, memberResult.exitCode(), memberResult.stderr());
-            assertTrue(memberResult.stdout().contains(leader.nodeId()), memberResult.stdout());
-            assertTrue(memberResult.stdout().contains("leader"), memberResult.stdout());
+            var status = InProcessCli.run("cluster", "status", "--endpoint", endpoint);
+            assertEquals(0, status.exitCode(), status.stderr());
+            assertTrue(status.stdout().contains("Node ID:        " + leader.nodeId()), status.stdout());
+            assertTrue(status.stdout().contains("Role:           LEADER"), status.stdout());
+
+            var members = InProcessCli.run("cluster", "members", "--endpoint", endpoint);
+            assertEquals(0, members.exitCode(), members.stderr());
+            assertTrue(members.stdout().contains(leader.nodeId()), members.stdout());
+            assertTrue(members.stdout().contains("leader"), members.stdout());
         }
     }
 
-    private static void assertCommand(CommandResult result, String expectedStdout) {
+    private static void assertOutput(CommandResult result, String expected) {
         assertEquals(0, result.exitCode(), result.stderr());
-        assertEquals(expectedStdout, result.stdout());
+        if (expected != null) {
+            assertEquals(expected, result.stdout());
+        }
         assertEquals("", result.stderr());
     }
 }

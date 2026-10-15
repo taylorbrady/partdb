@@ -1,7 +1,6 @@
 plugins {
     id("partdb.java-conventions")
     `java-library`
-    `java-test-fixtures`
 }
 
 dependencies {

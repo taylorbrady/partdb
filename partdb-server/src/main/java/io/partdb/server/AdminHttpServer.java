@@ -2,7 +2,7 @@ package io.partdb.server;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import io.partdb.node.PartDbNode;
+import io.partdb.node.Node;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -14,9 +14,10 @@ import java.util.concurrent.Executors;
 final class AdminHttpServer implements AutoCloseable {
     private final HttpServer server;
     private final ExecutorService executor;
-    private final PartDbNode node;
+    private final Node node;
+    private volatile boolean draining;
 
-    AdminHttpServer(PartDbNode node, int port) throws IOException {
+    AdminHttpServer(Node node, int port) throws IOException {
         this.node = Objects.requireNonNull(node, "node must not be null");
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -27,6 +28,10 @@ final class AdminHttpServer implements AutoCloseable {
 
     void start() {
         server.start();
+    }
+
+    void drain() {
+        draining = true;
     }
 
     @Override
@@ -55,6 +60,9 @@ final class AdminHttpServer implements AutoCloseable {
 
     private HealthStatus readyStatus() {
         var status = node.cluster().status();
+        if (draining) {
+            return HealthStatus.unavailable("not ready: shutting down\n");
+        }
         if (!status.running()) {
             return HealthStatus.unavailable("not ready: node stopped\n");
         }

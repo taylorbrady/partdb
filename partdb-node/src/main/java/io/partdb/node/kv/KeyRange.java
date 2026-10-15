@@ -5,32 +5,30 @@ import io.partdb.bytes.Bytes;
 import java.util.Objects;
 import java.util.Optional;
 
-public record KeyRange(Optional<Bytes> startInclusive, Optional<Bytes> endExclusive) {
+public record KeyRange(Bytes start, Optional<Bytes> end) {
     public KeyRange {
-        startInclusive = Objects.requireNonNull(startInclusive, "startInclusive must not be null");
-        endExclusive = Objects.requireNonNull(endExclusive, "endExclusive must not be null");
-        if (startInclusive.isPresent() && endExclusive.isPresent()
-            && startInclusive.orElseThrow().compareTo(endExclusive.orElseThrow()) > 0) {
-            throw new IllegalArgumentException("startInclusive must be <= endExclusive");
-        }
+        Objects.requireNonNull(start, "start must not be null");
+        Objects.requireNonNull(end, "end must not be null");
+        end.ifPresent(limit -> {
+            if (start.compareTo(limit) > 0) {
+                throw new IllegalArgumentException("start must not be after end");
+            }
+        });
     }
 
     public static KeyRange all() {
-        return new KeyRange(Optional.empty(), Optional.empty());
+        return new KeyRange(Bytes.EMPTY, Optional.empty());
     }
 
-    public static KeyRange from(Bytes startInclusive) {
-        return new KeyRange(Optional.of(Objects.requireNonNull(startInclusive, "startInclusive must not be null")), Optional.empty());
+    public static KeyRange from(Bytes start) {
+        return new KeyRange(start, Optional.empty());
     }
 
-    public static KeyRange until(Bytes endExclusive) {
-        return new KeyRange(Optional.empty(), Optional.of(Objects.requireNonNull(endExclusive, "endExclusive must not be null")));
+    public static KeyRange until(Bytes end) {
+        return new KeyRange(Bytes.EMPTY, Optional.of(end));
     }
 
-    public static KeyRange between(Bytes startInclusive, Bytes endExclusive) {
-        return new KeyRange(
-            Optional.of(Objects.requireNonNull(startInclusive, "startInclusive must not be null")),
-            Optional.of(Objects.requireNonNull(endExclusive, "endExclusive must not be null"))
-        );
+    public static KeyRange between(Bytes start, Bytes end) {
+        return new KeyRange(start, Optional.of(end));
     }
 }

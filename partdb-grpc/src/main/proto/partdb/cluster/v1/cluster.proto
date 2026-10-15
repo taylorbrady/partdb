@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package partdb.cluster.v1;
+
+option java_multiple_files = true;
+option java_package = "io.partdb.grpc.cluster.v1";
+
+service ClusterService {
+  rpc GetStatus(GetStatusRequest) returns (NodeStatus);
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
+}
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_FOLLOWER = 1;
+  ROLE_PRE_CANDIDATE = 2;
+  ROLE_CANDIDATE = 3;
+  ROLE_LEADER = 4;
+}
+
+enum MemberRole {
+  MEMBER_ROLE_UNSPECIFIED = 0;
+  MEMBER_ROLE_VOTER = 1;
+  MEMBER_ROLE_LEARNER = 2;
+}
+
+message GetStatusRequest {}
+
+message NodeStatus {
+  string node_id = 1;
+  Role role = 2;
+  int64 term = 3;
+  optional string leader_id = 4;
+  int64 commit_index = 5;
+  int64 applied_index = 6;
+  int64 snapshot_index = 7;
+}
+
+message ListMembersRequest {}
+
+message Member {
+  string node_id = 1;
+  MemberRole role = 2;
+}
+
+message ListMembersResponse {
+  repeated Member members = 1;
+  optional string leader_id = 2;
+}

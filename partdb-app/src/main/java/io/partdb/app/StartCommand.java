@@ -1,17 +1,19 @@
 package io.partdb.app;
 
+import io.partdb.raft.runtime.ClusterId;
+import io.partdb.raft.runtime.SnapshotPolicy;
 import io.partdb.server.PartDbServer;
-import io.partdb.server.PartDbServerConfig;
+import io.partdb.server.ServerConfig;
 
+import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 
-record StartCommand(PartDbServerConfig config, Path dataDir) implements AppCommand {
-    private static final int DEFAULT_RAFT_PORT = 8100;
-    private static final int DEFAULT_GRPC_PORT = 8101;
+record StartCommand(ServerConfig config) implements AppCommand {
+    private static final int DEFAULT_CLIENT_PORT = 8101;
     private static final int DEFAULT_ADMIN_PORT = 8102;
 
     private static final String USAGE = """
@@ -20,132 +22,120 @@ record StartCommand(PartDbServerConfig config, Path dataDir) implements AppComma
         Start a PartDB server node.
 
         Options:
-          -n, --node-id <id>              Node identifier (required)
-          -r, --raft-peer <id=endpoint>   Raft peer endpoint (repeatable, omit for single-node)
-          -d, --data-dir <path>           Directory for data storage (required)
-              --raft-port <port>          Port for Raft communication (default: 8100)
-              --grpc-port <port>          Port for gRPC API traffic (default: 8101)
-              --admin-port <port>         Port for admin health checks (default: 8102)
-              --snapshot-threshold <n>    Applied entries between Raft snapshots (default: 10000)
-          -h, --help                      Show this help message
+          -n, --node-id <id>             Node identifier (required)
+          -d, --data-dir <path>          Directory for node data (required)
+          -p, --peer <id=host:port>      Raft address of a cluster member, including this node
+                                         (repeatable; omit for a single-node cluster)
+              --client-port <port>       Port for client gRPC traffic (default: 8101)
+              --admin-port <port>        Port for health checks (default: 8102)
+              --cluster-id <id>          Cluster identifier (default: derived from the peers)
+              --snapshot-entries <n>     Log entries between snapshots (default: 10000)
+              --snapshot-bytes <n>       Log bytes between snapshots (default: 67108864)
+          -h, --help                     Show this help message
 
         Examples:
           partdb server start --node-id node1 --data-dir ./data
 
-          partdb server start --node-id node1 \\
-                       --raft-peer node1=192.168.1.1:8100 \\
-                       --raft-peer node2=192.168.1.2:8100 \\
-                       --raft-peer node3=192.168.1.3:8100 \\
-                       --data-dir ./data/node1
+          partdb server start --node-id node1 --data-dir ./data/node1 \\
+                              --peer node1=10.0.0.1:8100 \\
+                              --peer node2=10.0.0.2:8100 \\
+                              --peer node3=10.0.0.3:8100
         """;
 
     StartCommand {
         Objects.requireNonNull(config, "config must not be null");
-        Objects.requireNonNull(dataDir, "dataDir must not be null");
     }
 
     static AppCommand parse(Args args) {
         String nodeId = null;
         Path dataDir = null;
-        Map<String, String> raftPeerAddresses = new LinkedHashMap<>();
-        int raftPort = DEFAULT_RAFT_PORT;
-        int grpcPort = DEFAULT_GRPC_PORT;
+        var peers = new LinkedHashMap<String, String>();
+        int clientPort = DEFAULT_CLIENT_PORT;
         int adminPort = DEFAULT_ADMIN_PORT;
-        Long snapshotThreshold = null;
-
-        while (args.hasNext()) {
-            String arg = args.next();
-            try {
+        Optional<ClusterId> clusterId = Optional.empty();
+        long snapshotEntries = SnapshotPolicy.DEFAULT.logEntries();
+        long snapshotBytes = SnapshotPolicy.DEFAULT.logBytes();
+        try {
+            while (args.hasNext()) {
+                String arg = args.next();
                 switch (arg) {
                     case "--help", "-h" -> {
-                        return new HelpCommand(USAGE);
+                        return new Help(USAGE);
                     }
-                    case "--node-id", "-n" -> nodeId = args.requireValue("--node-id");
-                    case "--raft-peer", "-r" -> {
-                        var peer = CliParsing.parseNodeEndpointSpec(args.requireValue("--raft-peer"), "--raft-peer");
-                        raftPeerAddresses.put(peer.nodeId(), peer.endpoint());
+                    case "--node-id", "-n" -> nodeId = args.value(arg);
+                    case "--data-dir", "-d" -> dataDir = Path.of(args.value(arg));
+                    case "--peer", "-p" -> {
+                        String peer = args.value(arg);
+                        int separator = peer.indexOf('=');
+                        if (separator <= 0 || separator == peer.length() - 1) {
+                            throw new IllegalArgumentException("--peer must look like id=host:port, got: " + peer);
+                        }
+                        peers.put(peer.substring(0, separator).trim(), peer.substring(separator + 1).trim());
                     }
-                    case "--data-dir", "-d" -> dataDir = Path.of(args.requireValue("--data-dir"));
-                    case "--raft-port" -> raftPort = args.requireIntValue("--raft-port");
-                    case "--grpc-port" -> grpcPort = args.requireIntValue("--grpc-port");
-                    case "--admin-port" -> adminPort = args.requireIntValue("--admin-port");
-                    case "--snapshot-threshold" -> snapshotThreshold = (long) args.requireIntValue("--snapshot-threshold");
-                    default -> {
-                        return new ErrorCommand("unknown option: " + arg, USAGE);
-                    }
+                    case "--client-port" -> clientPort = args.intValue(arg);
+                    case "--admin-port" -> adminPort = args.intValue(arg);
+                    case "--cluster-id" -> clusterId = Optional.of(ClusterId.of(args.value(arg)));
+                    case "--snapshot-entries" -> snapshotEntries = args.longValue(arg);
+                    case "--snapshot-bytes" -> snapshotBytes = args.longValue(arg);
+                    default -> throw new IllegalArgumentException("unknown option: " + arg);
                 }
-            } catch (IllegalArgumentException e) {
-                return new ErrorCommand(e.getMessage(), USAGE);
             }
-        }
-
-        if (nodeId == null || nodeId.isBlank()) {
-            return new ErrorCommand("--node-id is required", USAGE);
-        }
-        if (dataDir == null) {
-            return new ErrorCommand("--data-dir is required", USAGE);
-        }
-
-        try {
-            var config = PartDbServerConfig.create(nodeId, raftPeerAddresses, dataDir, raftPort, grpcPort, adminPort);
-            return new StartCommand(snapshotThreshold == null ? config : config.withSnapshotThreshold(snapshotThreshold), dataDir);
+            if (nodeId == null) {
+                throw new IllegalArgumentException("--node-id is required");
+            }
+            if (dataDir == null) {
+                throw new IllegalArgumentException("--data-dir is required");
+            }
+            return new StartCommand(ServerConfig.create(
+                nodeId, peers, dataDir, clientPort, adminPort, clusterId, new SnapshotPolicy(snapshotEntries, snapshotBytes)));
         } catch (IllegalArgumentException e) {
-            return new ErrorCommand(e.getMessage(), USAGE);
+            return new UsageError(e.getMessage(), USAGE);
         }
     }
 
     @Override
-    public int execute(CliRuntime runtime) {
+    public int execute(PrintStream out, PrintStream err) {
         var shutdownRequested = new CountDownLatch(1);
         var stopped = new CountDownLatch(1);
-        Thread shutdownHook = Thread.ofPlatform()
-            .name("shutdown-hook")
-            .unstarted(() -> {
-                runtime.out().println("Received shutdown signal");
-                shutdownRequested.countDown();
-                awaitUninterruptibly(stopped);
-            });
-
-        Runtime.getRuntime().addShutdownHook(shutdownHook);
+        Thread hook = Thread.ofPlatform().name("shutdown-hook").unstarted(() -> {
+            out.println("Received shutdown signal");
+            shutdownRequested.countDown();
+            awaitUninterruptibly(stopped);
+        });
+        Runtime.getRuntime().addShutdownHook(hook);
         try {
-            return runUntilShutdown(runtime, shutdownRequested);
+            return serve(out, err, shutdownRequested);
         } finally {
             stopped.countDown();
             try {
-                Runtime.getRuntime().removeShutdownHook(shutdownHook);
-            } catch (IllegalStateException ignored) {
+                Runtime.getRuntime().removeShutdownHook(hook);
+            } catch (IllegalStateException _) {
             }
         }
     }
 
-    private int runUntilShutdown(CliRuntime runtime, CountDownLatch shutdownRequested) {
+    private int serve(PrintStream out, PrintStream err, CountDownLatch shutdownRequested) {
         try (var server = new PartDbServer(config)) {
             server.start();
-            runtime.out().println("PartDB node '" + config.nodeId() + "' started");
-            runtime.out().println("  Raft port: " + config.raftPort());
-            runtime.out().println("  gRPC port: " + config.grpcPort());
-            runtime.out().println("  Admin port: " + config.adminPort());
-            runtime.out().println("  Data dir:  " + dataDir.toAbsolutePath());
-            if (config.raftPeerEndpoints().isEmpty()) {
-                runtime.out().println("  Mode:      single-node");
-            } else {
-                runtime.out().println("  Raft peers: " + config.raftPeerEndpoints().size());
-            }
-            runtime.out().println();
-            runtime.out().println("Press Ctrl+C to stop");
-
+            out.println("PartDB node '" + config.nodeId() + "' started");
+            out.println("  Cluster:     " + config.node().raft().clusterId());
+            out.println("  Client port: " + config.clientPort());
+            out.println("  Admin port:  " + config.adminPort());
+            config.raftPort().ifPresentOrElse(
+                port -> out.println("  Raft port:   " + port + " (" + config.peers().size() + " members)"),
+                () -> out.println("  Mode:        single-node"));
+            out.println("  Data dir:    " + config.node().dataDirectory().toAbsolutePath());
             shutdownRequested.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
-            runtime.err().println("Failed to start server: " + e.getMessage());
-            e.printStackTrace(runtime.err());
-            return 1;
+            err.println("Failed to start server: " + e.getMessage());
+            e.printStackTrace(err);
+            return FAILED;
         }
-
-        runtime.out().println("Server stopped");
-        runtime.out().flush();
-        return 0;
+        out.println("Server stopped");
+        out.flush();
+        return OK;
     }
 
     private static void awaitUninterruptibly(CountDownLatch latch) {

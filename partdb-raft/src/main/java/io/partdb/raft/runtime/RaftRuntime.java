@@ -16,14 +16,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.SplittableRandom;
@@ -34,15 +29,11 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.LongFunction;
-import java.util.stream.Stream;
-import java.util.zip.CRC32C;
-import java.util.zip.CheckedInputStream;
 
 public final class RaftRuntime<R> implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(RaftRuntime.class);
     private static final Executor CALLBACKS = Thread::startVirtualThread;
-    private static final long BOOTSTRAP_TERM = 1;
     private static final int MAX_BATCH = 4096;
 
     private final NodeId nodeId;
@@ -110,41 +101,6 @@ public final class RaftRuntime<R> implements AutoCloseable {
                 storage.close();
             }
             throw e;
-        }
-    }
-
-    public static void bootstrap(Path directory, RaftConfig config, long index, Path snapshot) {
-        Objects.requireNonNull(directory, "directory must not be null");
-        Objects.requireNonNull(config, "config must not be null");
-        Objects.requireNonNull(snapshot, "snapshot must not be null");
-        if (index <= 0) {
-            throw new IllegalArgumentException("index must be positive");
-        }
-        try {
-            if (Files.exists(directory)) {
-                try (Stream<Path> entries = Files.list(directory)) {
-                    if (entries.findAny().isPresent()) {
-                        throw new IllegalArgumentException("raft directory must be empty: " + directory);
-                    }
-                }
-            }
-            Files.createDirectories(directory);
-        } catch (IOException e) {
-            throw new UncheckedIOException("failed to prepare raft directory " + directory, e);
-        }
-        new ClusterFile(config.clusterId(), config.initialMembership()).write(directory);
-        try (var storage = LogStore.open(directory)) {
-            Path staged = storage.stagingFile();
-            var crc = new CRC32C();
-            try (InputStream in = new CheckedInputStream(Files.newInputStream(snapshot), crc);
-                 var out = Files.newOutputStream(staged, StandardOpenOption.TRUNCATE_EXISTING)) {
-                in.transferTo(out);
-            }
-            storage.installSnapshot(new SnapshotMetadata(index, BOOTSTRAP_TERM, config.initialMembership()), staged, (int) crc.getValue());
-            storage.append(Optional.of(new HardState(BOOTSTRAP_TERM, Optional.empty(), index)), List.of());
-            storage.sync();
-        } catch (IOException e) {
-            throw new UncheckedIOException("failed to stage bootstrap snapshot " + snapshot, e);
         }
     }
 

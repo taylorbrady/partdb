@@ -1,6 +1,6 @@
 package io.partdb.server;
 
-import io.partdb.node.PartDbNode;
+import io.partdb.node.Node;
 
 import javax.management.InstanceNotFoundException;
 import javax.management.MBeanRegistrationException;
@@ -12,12 +12,12 @@ import java.lang.management.ManagementFactory;
 
 final class JmxRegistrations implements AutoCloseable {
     private final MBeanServer mBeanServer;
-    private final PartDbNode node;
+    private final Node node;
     private final ObjectName nodeObjectName;
     private final ObjectName storageObjectName;
     private boolean registered;
 
-    JmxRegistrations(PartDbNode node) {
+    JmxRegistrations(Node node) {
         this.mBeanServer = ManagementFactory.getPlatformMBeanServer();
         this.node = node;
         String nodeId = node.cluster().status().nodeId().value();
@@ -33,11 +33,11 @@ final class JmxRegistrations implements AutoCloseable {
 
         try {
             mBeanServer.registerMBean(
-                new StandardMBean(new NodeMBean(node), PartDbNodeMXBean.class, true),
+                new StandardMBean(new NodeMBean(node), NodeMXBean.class, true),
                 nodeObjectName
             );
             mBeanServer.registerMBean(
-                new StandardMBean(new StorageMBean(node), PartDbStorageMXBean.class, true),
+                new StandardMBean(new StorageMBean(node), StorageMXBean.class, true),
                 storageObjectName
             );
             registered = true;
@@ -71,7 +71,7 @@ final class JmxRegistrations implements AutoCloseable {
         }
     }
 
-    private record NodeMBean(PartDbNode node) implements PartDbNodeMXBean {
+    private record NodeMBean(Node node) implements NodeMXBean {
         @Override
         public String getNodeId() {
             return node.cluster().status().nodeId().value();
@@ -116,74 +116,74 @@ final class JmxRegistrations implements AutoCloseable {
 
         @Override
         public long getProposalCount() {
-            return node.admin().nodeMetrics().proposalCount();
+            return node.metrics().proposals();
         }
 
         @Override
         public long getProposalFailureCount() {
-            return node.admin().nodeMetrics().proposalFailureCount();
+            return node.metrics().failedProposals();
         }
     }
 
-    private record StorageMBean(PartDbNode node) implements PartDbStorageMXBean {
+    private record StorageMBean(Node node) implements StorageMXBean {
         @Override
         public long getActiveMemtableBytes() {
-            return node.admin().storageMetrics().activeMemtableBytes();
+            return node.metrics().storage().activeMemtableBytes();
         }
 
         @Override
         public int getImmutableMemtableCount() {
-            return node.admin().storageMetrics().immutableMemtableCount();
+            return node.metrics().storage().immutableMemtableCount();
         }
 
         @Override
         public int getSstableCount() {
-            return node.admin().storageMetrics().sstableCount();
+            return node.metrics().storage().sstableCount();
         }
 
         @Override
         public long getTotalSstableBytes() {
-            return node.admin().storageMetrics().totalSstableBytes();
+            return node.metrics().storage().totalSstableBytes();
         }
 
         @Override
         public int getActiveCompactions() {
-            return node.admin().storageMetrics().activeCompactions();
+            return node.metrics().storage().activeCompactions();
         }
 
         @Override
         public long getCompletedCompactions() {
-            return node.admin().storageMetrics().completedCompactions();
+            return node.metrics().storage().completedCompactions();
         }
 
         @Override
         public long getFailedCompactions() {
-            return node.admin().storageMetrics().failedCompactions();
+            return node.metrics().storage().failedCompactions();
         }
 
         @Override
         public long getLastCompactionDurationMillis() {
-            return node.admin().storageMetrics().lastCompactionDuration().toMillis();
+            return node.metrics().storage().lastCompactionDuration().toMillis();
         }
 
         @Override
         public long getCheckpointCount() {
-            return node.admin().storageMetrics().checkpointCount();
+            return node.metrics().storage().checkpointCount();
         }
 
         @Override
         public long getRestoreCount() {
-            return node.admin().storageMetrics().restoreCount();
+            return node.metrics().storage().restoreCount();
         }
 
         @Override
         public long getLastCheckpointDurationMillis() {
-            return node.admin().storageMetrics().lastCheckpointDuration().toMillis();
+            return node.metrics().storage().lastCheckpointDuration().toMillis();
         }
 
         @Override
         public long getLastRestoreDurationMillis() {
-            return node.admin().storageMetrics().lastRestoreDuration().toMillis();
+            return node.metrics().storage().lastRestoreDuration().toMillis();
         }
     }
 }

@@ -1,157 +1,54 @@
 package io.partdb.client;
 
-import io.grpc.ManagedChannel;
-import io.grpc.stub.StreamObserver;
-import io.partdb.grpc.cluster.proto.ClusterProto.ErrorCode;
-import io.partdb.grpc.cluster.proto.ClusterProto.MemberListRequest;
-import io.partdb.grpc.cluster.proto.ClusterProto.MemberListResponse;
-import io.partdb.grpc.cluster.proto.ClusterProto.RequestHeader;
-import io.partdb.grpc.cluster.proto.ClusterProto.StatusRequest;
-import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
-import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
+import io.grpc.Deadline;
+import io.grpc.StatusRuntimeException;
+import io.partdb.grpc.cluster.v1.ClusterServiceGrpc;
+import io.partdb.grpc.cluster.v1.GetStatusRequest;
+import io.partdb.grpc.cluster.v1.ListMembersRequest;
 
-import java.util.Optional;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
+import java.time.Duration;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
-public final class ClusterClient implements AutoCloseable {
+public final class ClusterClient {
 
-    private final ManagedChannel channel;
-    private final ClusterServiceGrpc.ClusterServiceStub stub;
-    private final ClusterClientConfig config;
+    private final Connections connections;
+    private final Invoker invoker;
+    private final Duration timeout;
 
-    public ClusterClient(ClusterClientConfig config) {
-        this.config = config;
-        this.channel = GrpcClientChannels.createChannel(config.endpoint(), config.connectTimeout());
-        this.stub = ClusterServiceGrpc.newStub(channel);
+    ClusterClient(Connections connections, Invoker invoker, Duration timeout) {
+        this.connections = connections;
+        this.invoker = invoker;
+        this.timeout = timeout;
     }
 
-    public CompletableFuture<ClusterStatus> status() {
-        var request = StatusRequest.newBuilder()
-            .setHeader(buildHeader())
-            .build();
-
-        var future = new CompletableFuture<ClusterStatus>();
-        stub.withDeadlineAfter(config.requestTimeout().toMillis(), TimeUnit.MILLISECONDS)
-            .status(request, new StreamObserver<>() {
-                @Override
-                public void onNext(StatusResponse response) {
-                    if (response.hasError() && response.getError().getCode() != ErrorCode.OK) {
-                        future.completeExceptionally(
-                            new ClusterClientException(response.getError().getMessage()));
-                    } else {
-                        future.complete(toClusterStatus(response));
-                    }
-                }
-
-                @Override
-                public void onError(Throwable t) {
-                    future.completeExceptionally(t);
-                }
-
-                @Override
-                public void onCompleted() {}
-            });
-        return future;
+    public NodeStatus status() {
+        return invoker.call(Invoker.Kind.READ, (channel, deadline) ->
+            Protos.status(ClusterServiceGrpc.newBlockingStub(channel).withDeadline(deadline).getStatus(GetStatusRequest.getDefaultInstance())));
     }
 
-    public CompletableFuture<ClusterMembership> membership() {
-        var request = MemberListRequest.newBuilder()
-            .setHeader(buildHeader())
-            .build();
-
-        var future = new CompletableFuture<ClusterMembership>();
-        stub.withDeadlineAfter(config.requestTimeout().toMillis(), TimeUnit.MILLISECONDS)
-            .memberList(request, new StreamObserver<>() {
-                @Override
-                public void onNext(MemberListResponse response) {
-                    if (response.hasError() && response.getError().getCode() != ErrorCode.OK) {
-                        future.completeExceptionally(
-                            new ClusterClientException(response.getError().getMessage()));
-                    } else {
-                        future.complete(toClusterMembership(response));
-                    }
-                }
-
-                @Override
-                public void onError(Throwable t) {
-                    future.completeExceptionally(t);
-                }
-
-                @Override
-                public void onCompleted() {}
-            });
-        return future;
-    }
-
-    private static ClusterStatus toClusterStatus(StatusResponse response) {
-        return new ClusterStatus(
-            response.getNodeId(),
-            toClusterNodeRole(response.getRole()),
-            response.getTerm(),
-            emptyToOptional(response.getLeaderId()),
-            response.getCommitIndex(),
-            response.getLastAppliedIndex(),
-            response.getIsRunning()
-        );
-    }
-
-    private static ClusterMembership toClusterMembership(MemberListResponse response) {
-        var members = response.getMembersList().stream()
-            .map(member -> new ClusterMember(
-                member.getNodeId(),
-                toClusterMemberRole(member.getRole()),
-                member.getIsLeader(),
-                member.getIsSelf()
-            ))
-            .toList();
-
-        return new ClusterMembership(
-            emptyToOptional(response.getLeaderId()),
-            members
-        );
-    }
-
-    private static ClusterNodeRole toClusterNodeRole(io.partdb.grpc.cluster.proto.ClusterProto.NodeRole role) {
-        return switch (role) {
-            case FOLLOWER -> ClusterNodeRole.FOLLOWER;
-            case PRE_CANDIDATE -> ClusterNodeRole.PRE_CANDIDATE;
-            case CANDIDATE -> ClusterNodeRole.CANDIDATE;
-            case LEADER -> ClusterNodeRole.LEADER;
-            case UNRECOGNIZED -> throw new IllegalArgumentException("Unknown node role: " + role);
-        };
-    }
-
-    private static ClusterMemberRole toClusterMemberRole(io.partdb.grpc.cluster.proto.ClusterProto.MemberRole role) {
-        return switch (role) {
-            case VOTER -> ClusterMemberRole.VOTER;
-            case LEARNER -> ClusterMemberRole.LEARNER;
-            case UNRECOGNIZED -> throw new IllegalArgumentException("Unknown member role: " + role);
-        };
-    }
-
-    private static Optional<String> emptyToOptional(String value) {
-        return value.isEmpty() ? Optional.empty() : Optional.of(value);
-    }
-
-    private RequestHeader buildHeader() {
-        return RequestHeader.newBuilder()
-            .setRequestId(UUID.randomUUID().toString())
-            .setTimeoutMs(config.requestTimeout().toMillis())
-            .build();
-    }
-
-    @Override
-    public void close() {
-        channel.shutdown();
+    public NodeStatus status(ServerEndpoint endpoint) {
+        Objects.requireNonNull(endpoint, "endpoint must not be null");
         try {
-            if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
-                channel.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            channel.shutdownNow();
-            Thread.currentThread().interrupt();
+            var status = Protos.status(ClusterServiceGrpc.newBlockingStub(connections.channel(endpoint))
+                .withDeadline(Deadline.after(timeout.toNanos(), TimeUnit.NANOSECONDS))
+                .getStatus(GetStatusRequest.getDefaultInstance()));
+            connections.learn(status.nodeId(), endpoint);
+            return status;
+        } catch (StatusRuntimeException error) {
+            var failure = Failure.of(error);
+            throw switch (failure) {
+                case Failure.DeadlineExceeded _ -> new PartDbClientException.Timeout(failure.message(), error);
+                case Failure.Unreachable _, Failure.NotLeader _, Failure.Busy _ -> new PartDbClientException.Unavailable(failure.message(), error);
+                case Failure.Invalid _ -> new PartDbClientException.InvalidRequest(failure.message(), error);
+                case Failure.Cancelled _ -> new PartDbClientException.Cancelled(failure.message(), error);
+                case Failure.OutcomeUnknown _, Failure.Internal _ -> new PartDbClientException.Internal(failure.message(), error);
+            };
         }
+    }
+
+    public Members members() {
+        return invoker.call(Invoker.Kind.READ, (channel, deadline) ->
+            Protos.members(ClusterServiceGrpc.newBlockingStub(channel).withDeadline(deadline).listMembers(ListMembersRequest.getDefaultInstance())));
     }
 }

@@ -2,23 +2,33 @@ package io.partdb.node.kv;
 
 import io.partdb.bytes.Bytes;
 
+import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CompletionStage;
 
 public interface KeyValueStore {
-    CompletionStage<Optional<VersionedValue>> get(Bytes key);
+    Read<Optional<KeyValue>> get(Bytes key, ReadConsistency consistency, Duration timeout);
 
-    CompletionStage<Optional<VersionedValue>> get(Bytes key, ReadConsistency consistency);
+    Scan scan(KeyRange range, int limit, ReadConsistency consistency, Duration timeout);
 
-    CompletionStage<ScanCursor<KeyValueEntry>> scan(KeyRange range);
+    TxnResult transact(Txn txn, Duration timeout);
 
-    CompletionStage<ScanCursor<KeyValueEntry>> scan(KeyRange range, ReadConsistency consistency);
+    default long put(Bytes key, Bytes value, Duration timeout) {
+        return commit(Txn.of(List.of(Mutation.put(key, value))), timeout);
+    }
 
-    CompletionStage<WriteResult> put(Bytes key, Bytes value);
+    default long delete(Bytes key, Duration timeout) {
+        return commit(Txn.of(List.of(Mutation.delete(key))), timeout);
+    }
 
-    CompletionStage<WriteResult> delete(Bytes key);
+    default long write(List<Mutation> mutations, Duration timeout) {
+        return commit(Txn.of(mutations), timeout);
+    }
 
-    CompletionStage<WriteResult> write(WriteBatch batch);
-
-    CompletionStage<TransactionResult> transact(Transaction transaction);
+    private long commit(Txn txn, Duration timeout) {
+        return switch (transact(txn, timeout)) {
+            case TxnResult.Committed(long revision) -> revision;
+            case TxnResult.ConditionFailed() -> throw new IllegalStateException("an unconditional transaction failed a condition");
+        };
+    }
 }

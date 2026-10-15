@@ -1,88 +1,63 @@
 package io.partdb.server.grpc;
 
 import io.grpc.stub.StreamObserver;
-import io.partdb.grpc.cluster.proto.ClusterProto.Error;
-import io.partdb.grpc.cluster.proto.ClusterProto.ErrorCode;
-import io.partdb.grpc.cluster.proto.ClusterProto.Member;
-import io.partdb.grpc.cluster.proto.ClusterProto.MemberListRequest;
-import io.partdb.grpc.cluster.proto.ClusterProto.MemberListResponse;
-import io.partdb.grpc.cluster.proto.ClusterProto.MemberRole;
-import io.partdb.grpc.cluster.proto.ClusterProto.NodeRole;
-import io.partdb.grpc.cluster.proto.ClusterProto.StatusRequest;
-import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
-import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
-import io.partdb.node.PartDbNode;
-import io.partdb.raft.Membership;
+import io.partdb.grpc.cluster.v1.ClusterServiceGrpc;
+import io.partdb.grpc.cluster.v1.GetStatusRequest;
+import io.partdb.grpc.cluster.v1.ListMembersRequest;
+import io.partdb.grpc.cluster.v1.ListMembersResponse;
+import io.partdb.grpc.cluster.v1.Member;
+import io.partdb.grpc.cluster.v1.MemberRole;
+import io.partdb.grpc.cluster.v1.NodeStatus;
+import io.partdb.node.Node;
 import io.partdb.raft.NodeId;
 import io.partdb.raft.Role;
-import io.partdb.raft.runtime.RaftStatus;
 
 final class ClusterService extends ClusterServiceGrpc.ClusterServiceImplBase {
 
-    private final PartDbNode node;
+    private final Node node;
 
-    ClusterService(PartDbNode node) {
+    ClusterService(Node node) {
         this.node = node;
     }
 
     @Override
-    public void status(StatusRequest request, StreamObserver<StatusResponse> responseObserver) {
-        RaftStatus status = node.cluster().status();
-        var response = StatusResponse.newBuilder()
-            .setError(okError())
-            .setNodeId(status.nodeId().value())
-            .setRole(toProtoRole(status.role()))
-            .setTerm(status.term())
-            .setLeaderId(status.leader().map(NodeId::value).orElse(""))
-            .setCommitIndex(status.commitIndex())
-            .setLastAppliedIndex(status.appliedIndex())
-            .setIsRunning(status.running())
-            .build();
-        responseObserver.onNext(response);
-        responseObserver.onCompleted();
+    public void getStatus(GetStatusRequest request, StreamObserver<NodeStatus> responses) {
+        Calls.unary(responses, _ -> {
+            var status = node.cluster().status();
+            var response = NodeStatus.newBuilder()
+                .setNodeId(status.nodeId().value())
+                .setRole(role(status.role()))
+                .setTerm(status.term())
+                .setCommitIndex(status.commitIndex())
+                .setAppliedIndex(status.appliedIndex())
+                .setSnapshotIndex(status.snapshotIndex());
+            status.leader().map(NodeId::value).ifPresent(response::setLeaderId);
+            return response.build();
+        });
     }
 
     @Override
-    public void memberList(MemberListRequest request, StreamObserver<MemberListResponse> responseObserver) {
-        Membership membership = node.cluster().membership();
-        RaftStatus status = node.cluster().status();
-        String leaderId = status.leader().map(NodeId::value).orElse("");
-        String selfId = status.nodeId().value();
-
-        var builder = MemberListResponse.newBuilder()
-            .setError(okError())
-            .setLeaderId(leaderId);
-
-        for (NodeId voter : membership.voters()) {
-            builder.addMembers(buildMember(voter.value(), MemberRole.VOTER, leaderId, selfId));
-        }
-        for (NodeId learner : membership.learners()) {
-            builder.addMembers(buildMember(learner.value(), MemberRole.LEARNER, leaderId, selfId));
-        }
-
-        responseObserver.onNext(builder.build());
-        responseObserver.onCompleted();
+    public void listMembers(ListMembersRequest request, StreamObserver<ListMembersResponse> responses) {
+        Calls.unary(responses, _ -> {
+            var membership = node.cluster().membership();
+            var response = ListMembersResponse.newBuilder();
+            membership.voters().forEach(voter -> response.addMembers(member(voter, MemberRole.MEMBER_ROLE_VOTER)));
+            membership.learners().forEach(learner -> response.addMembers(member(learner, MemberRole.MEMBER_ROLE_LEARNER)));
+            node.cluster().status().leader().map(NodeId::value).ifPresent(response::setLeaderId);
+            return response.build();
+        });
     }
 
-    private Member buildMember(String nodeId, MemberRole role, String leaderId, String selfId) {
-        return Member.newBuilder()
-            .setNodeId(nodeId)
-            .setRole(role)
-            .setIsLeader(nodeId.equals(leaderId))
-            .setIsSelf(nodeId.equals(selfId))
-            .build();
+    private static Member member(NodeId node, MemberRole role) {
+        return Member.newBuilder().setNodeId(node.value()).setRole(role).build();
     }
 
-    private static NodeRole toProtoRole(Role role) {
+    private static io.partdb.grpc.cluster.v1.Role role(Role role) {
         return switch (role) {
-            case FOLLOWER -> NodeRole.FOLLOWER;
-            case PRE_CANDIDATE -> NodeRole.PRE_CANDIDATE;
-            case CANDIDATE -> NodeRole.CANDIDATE;
-            case LEADER -> NodeRole.LEADER;
+            case FOLLOWER -> io.partdb.grpc.cluster.v1.Role.ROLE_FOLLOWER;
+            case PRE_CANDIDATE -> io.partdb.grpc.cluster.v1.Role.ROLE_PRE_CANDIDATE;
+            case CANDIDATE -> io.partdb.grpc.cluster.v1.Role.ROLE_CANDIDATE;
+            case LEADER -> io.partdb.grpc.cluster.v1.Role.ROLE_LEADER;
         };
-    }
-
-    private static Error okError() {
-        return Error.newBuilder().setCode(ErrorCode.OK).build();
     }
 }
