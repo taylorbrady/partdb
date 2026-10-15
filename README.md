@@ -20,7 +20,7 @@ See [docs/design.md](docs/design.md) for the current design direction,
 
 - **Raft**: `partdb-raft` holds a deterministic Raft core (`step` inputs, drain batched `Ready` effects with `ready`) with pre-vote, check-quorum, pipelined replication, read-index, learners, membership changes, and leadership transfer, plus, in `io.partdb.raft.runtime`, the event-loop runtime that owns the write-ahead log, automatic snapshots and log compaction, snapshot streaming, and the transport SPI
 - **Node runtime**: a `partdb-node` module that composes the Raft runtime with the KV state machine for a single PartDB node
-- **Storage**: a `partdb-storage` module that exposes a versioned state-store API backed by an internal leveled LSM engine with memtables, SSTables, compaction, block cache, and self-contained snapshots
+- **Storage**: a `partdb-storage` module that exposes a versioned state-store API backed by an internal leveled LSM engine with memtables, tables, compaction, block cache, and self-contained snapshots
 - **Server**: public KV and cluster APIs defined in `partdb-grpc`; `partdb-server` implements them, carries Raft peer traffic over its own gRPC protocol, and assembles the process
 - **Client**: a blocking Java client (`PartDbClient`) that follows the leader, bounds retries by one deadline, and never silently retries a write whose outcome is unknown
 

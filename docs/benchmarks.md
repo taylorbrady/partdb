@@ -69,12 +69,12 @@ behavior:
 
 | Module | Benchmark | What it covers |
 | --- | --- | --- |
-| `partdb-storage` | `BlockCodecBenchmark.compress` | SSTable block compression cost |
-| `partdb-storage` | `BlockCodecBenchmark.decompress` | SSTable block decompression cost |
+| `partdb-storage` | `BlockCodecBenchmark.compress` | table block compression cost |
+| `partdb-storage` | `BlockCodecBenchmark.decompress` | table block decompression cost |
 | `partdb-storage` | `BlockCacheBenchmark.hotHit` | hot block-cache lookup overhead |
 | `partdb-storage` | `BloomFilterBenchmark.miss` | negative point-lookup filter cost |
-| `partdb-storage` | `DataBlockReadBenchmark.findMiddle` | indexed block point lookup |
-| `partdb-storage` | `DataBlockReadBenchmark.scanFull` | sequential block cursor scan |
+| `partdb-storage` | `BlockReadBenchmark.findMiddle` | indexed block point lookup |
+| `partdb-storage` | `BlockReadBenchmark.scanFull` | sequential block cursor scan |
 | `partdb-benchmarks` | `StoragePointReadBenchmark.hotHit` | API-level in-memory point read |
 | `partdb-benchmarks` | `StoragePointReadBenchmark.persistedHit` | API-level reopened-store point read |
 | `partdb-benchmarks` | `StorageWriteBenchmark.steadyStateUpdateRandom` | steady-state update write path |

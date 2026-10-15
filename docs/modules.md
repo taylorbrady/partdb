@@ -120,8 +120,26 @@ process lifecycle.
 
 Role: local durable versioned state store.
 
-This module owns the LSM engine, memtables, SSTables, manifests, compaction,
+This module owns the LSM engine, memtables, tables, manifests, compaction,
 block cache, streamed checkpoints, and storage-level tests/benchmarks.
+
+Its public surface is `Store` and a handful of values (`Snapshot`, `Cursor`,
+`Entry`, `Mutation`, `KeyRange`, `StoreOptions`, `StoreStats`,
+`StoreException`); everything else is package-private in `io.partdb.storage`.
+
+Contract with the replicated state machine:
+
+- A single writer calls `apply(index, mutations)` with strictly increasing
+  indexes, including empty mutation lists for entries that change nothing, so
+  `appliedIndex()` always equals the last Raft index handed to storage.
+- There is no storage WAL; the Raft log is the WAL. Flushes persist the applied
+  index of each memtable as the manifest's durable index, and reopening resumes
+  at `appliedIndex() == durableIndex()`.
+- `checkpoint` streams the state at exactly `appliedIndex()` from any thread;
+  `restore` stages the checkpoint into a new generation directory and swaps the
+  `CURRENT` pointer atomically.
+- The manifest is the only commit point within a generation; files it does not
+  reference are deleted on open.
 
 Allowed dependencies: `partdb-bytes`.
 
