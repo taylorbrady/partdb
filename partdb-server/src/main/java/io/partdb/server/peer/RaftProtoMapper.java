@@ -15,158 +15,137 @@ final class RaftProtoMapper {
     private RaftProtoMapper() {
     }
 
-    static RaftProto.RequestVoteRequest toProto(RaftMessage.RequestVote message) {
-        return RaftProto.RequestVoteRequest.newBuilder()
-            .setTerm(message.term())
-            .setCandidateId(message.candidateId())
-            .setLastLogIndex(message.lastLogIndex())
-            .setLastLogTerm(message.lastLogTerm())
-            .build();
+    static RaftProto.RaftMessage toProto(RaftMessage message) {
+        var builder = RaftProto.RaftMessage.newBuilder();
+        switch (message) {
+            case RaftMessage.PreVote vote -> builder.setPreVote(RaftProto.PreVote.newBuilder()
+                .setTerm(vote.term()).setLastLogIndex(vote.lastLogIndex()).setLastLogTerm(vote.lastLogTerm()));
+            case RaftMessage.PreVoteResponse response -> builder.setPreVoteResponse(RaftProto.PreVoteResponse.newBuilder()
+                .setTerm(response.term()).setGranted(response.granted()));
+            case RaftMessage.RequestVote vote -> builder.setRequestVote(RaftProto.RequestVote.newBuilder()
+                .setTerm(vote.term()).setLastLogIndex(vote.lastLogIndex()).setLastLogTerm(vote.lastLogTerm())
+                .setLeadershipTransfer(vote.leadershipTransfer()));
+            case RaftMessage.RequestVoteResponse response -> builder.setRequestVoteResponse(RaftProto.RequestVoteResponse.newBuilder()
+                .setTerm(response.term()).setGranted(response.granted()));
+            case RaftMessage.AppendEntries append -> builder.setAppendEntries(RaftProto.AppendEntries.newBuilder()
+                .setTerm(append.term()).setPrevLogIndex(append.prevLogIndex()).setPrevLogTerm(append.prevLogTerm())
+                .addAllEntries(append.entries().stream().map(RaftProtoMapper::toProto).toList())
+                .setCommitIndex(append.commitIndex()));
+            case RaftMessage.AppendAccepted accepted -> builder.setAppendAccepted(RaftProto.AppendAccepted.newBuilder()
+                .setTerm(accepted.term()).setMatchIndex(accepted.matchIndex()));
+            case RaftMessage.AppendRejected rejected -> builder.setAppendRejected(RaftProto.AppendRejected.newBuilder()
+                .setTerm(rejected.term()).setRejectedIndex(rejected.rejectedIndex())
+                .setHintIndex(rejected.hintIndex()).setHintTerm(rejected.hintTerm()));
+            case RaftMessage.Heartbeat heartbeat -> builder.setHeartbeat(RaftProto.Heartbeat.newBuilder()
+                .setTerm(heartbeat.term()).setCommitIndex(heartbeat.commitIndex()).setRound(heartbeat.round()));
+            case RaftMessage.HeartbeatResponse response -> builder.setHeartbeatResponse(RaftProto.HeartbeatResponse.newBuilder()
+                .setTerm(response.term()).setRound(response.round()));
+            case RaftMessage.InstallSnapshot _ -> throw new IllegalArgumentException("snapshots are streamed separately");
+            case RaftMessage.InstallSnapshotResponse response -> builder.setInstallSnapshotResult(RaftProto.InstallSnapshotResult.newBuilder()
+                .setTerm(response.term()).setMatchIndex(response.matchIndex()));
+            case RaftMessage.ReadIndex read -> builder.setReadIndex(RaftProto.ReadIndex.newBuilder()
+                .setTerm(read.term()).setId(read.id()));
+            case RaftMessage.ReadIndexResponse response -> builder.setReadIndexResponse(RaftProto.ReadIndexResponse.newBuilder()
+                .setTerm(response.term()).setId(response.id()).setReadIndex(response.readIndex()));
+            case RaftMessage.TimeoutNow timeout -> builder.setTimeoutNow(RaftProto.TimeoutNow.newBuilder().setTerm(timeout.term()));
+        }
+        return builder.build();
     }
 
-    static RaftMessage.RequestVote fromProto(RaftProto.RequestVoteRequest proto) {
-        return new RaftMessage.RequestVote(proto.getTerm(), proto.getCandidateId(), proto.getLastLogIndex(), proto.getLastLogTerm());
+    static RaftMessage fromProto(RaftProto.RaftMessage proto) {
+        return switch (proto.getMessageCase()) {
+            case PRE_VOTE -> {
+                var vote = proto.getPreVote();
+                yield new RaftMessage.PreVote(vote.getTerm(), vote.getLastLogIndex(), vote.getLastLogTerm());
+            }
+            case PRE_VOTE_RESPONSE -> {
+                var response = proto.getPreVoteResponse();
+                yield new RaftMessage.PreVoteResponse(response.getTerm(), response.getGranted());
+            }
+            case REQUEST_VOTE -> {
+                var vote = proto.getRequestVote();
+                yield new RaftMessage.RequestVote(vote.getTerm(), vote.getLastLogIndex(), vote.getLastLogTerm(), vote.getLeadershipTransfer());
+            }
+            case REQUEST_VOTE_RESPONSE -> {
+                var response = proto.getRequestVoteResponse();
+                yield new RaftMessage.RequestVoteResponse(response.getTerm(), response.getGranted());
+            }
+            case APPEND_ENTRIES -> {
+                var append = proto.getAppendEntries();
+                yield new RaftMessage.AppendEntries(
+                    append.getTerm(),
+                    append.getPrevLogIndex(),
+                    append.getPrevLogTerm(),
+                    append.getEntriesList().stream().map(RaftProtoMapper::fromProto).toList(),
+                    append.getCommitIndex()
+                );
+            }
+            case APPEND_ACCEPTED -> {
+                var accepted = proto.getAppendAccepted();
+                yield new RaftMessage.AppendAccepted(accepted.getTerm(), accepted.getMatchIndex());
+            }
+            case APPEND_REJECTED -> {
+                var rejected = proto.getAppendRejected();
+                yield new RaftMessage.AppendRejected(rejected.getTerm(), rejected.getRejectedIndex(), rejected.getHintIndex(), rejected.getHintTerm());
+            }
+            case HEARTBEAT -> {
+                var heartbeat = proto.getHeartbeat();
+                yield new RaftMessage.Heartbeat(heartbeat.getTerm(), heartbeat.getCommitIndex(), heartbeat.getRound());
+            }
+            case HEARTBEAT_RESPONSE -> {
+                var response = proto.getHeartbeatResponse();
+                yield new RaftMessage.HeartbeatResponse(response.getTerm(), response.getRound());
+            }
+            case INSTALL_SNAPSHOT_RESULT -> {
+                var result = proto.getInstallSnapshotResult();
+                yield new RaftMessage.InstallSnapshotResponse(result.getTerm(), result.getMatchIndex());
+            }
+            case READ_INDEX -> {
+                var read = proto.getReadIndex();
+                yield new RaftMessage.ReadIndex(read.getTerm(), read.getId());
+            }
+            case READ_INDEX_RESPONSE -> {
+                var response = proto.getReadIndexResponse();
+                yield new RaftMessage.ReadIndexResponse(response.getTerm(), response.getId(), response.getReadIndex());
+            }
+            case TIMEOUT_NOW -> new RaftMessage.TimeoutNow(proto.getTimeoutNow().getTerm());
+            case MESSAGE_NOT_SET -> throw new IllegalArgumentException("raft message not set");
+        };
     }
 
-    static RaftProto.RequestVoteResponse toProto(RaftMessage.RequestVoteResponse message) {
-        return RaftProto.RequestVoteResponse.newBuilder()
-            .setTerm(message.term())
-            .setVoteGranted(message.voteGranted())
-            .build();
-    }
-
-    static RaftMessage.RequestVoteResponse fromProto(RaftProto.RequestVoteResponse proto) {
-        return new RaftMessage.RequestVoteResponse(proto.getTerm(), proto.getVoteGranted());
-    }
-
-    static RaftProto.PreVoteRequest toProto(RaftMessage.PreVote message) {
-        return RaftProto.PreVoteRequest.newBuilder()
-            .setTerm(message.term())
-            .setCandidateId(message.candidateId())
-            .setLastLogIndex(message.lastLogIndex())
-            .setLastLogTerm(message.lastLogTerm())
-            .build();
-    }
-
-    static RaftMessage.PreVote fromProto(RaftProto.PreVoteRequest proto) {
-        return new RaftMessage.PreVote(proto.getTerm(), proto.getCandidateId(), proto.getLastLogIndex(), proto.getLastLogTerm());
-    }
-
-    static RaftProto.PreVoteResponse toProto(RaftMessage.PreVoteResponse message) {
-        return RaftProto.PreVoteResponse.newBuilder()
-            .setTerm(message.term())
-            .setVoteGranted(message.voteGranted())
-            .build();
-    }
-
-    static RaftMessage.PreVoteResponse fromProto(RaftProto.PreVoteResponse proto) {
-        return new RaftMessage.PreVoteResponse(proto.getTerm(), proto.getVoteGranted());
-    }
-
-    static RaftProto.AppendEntriesRequest toProto(RaftMessage.AppendEntries message) {
-        return RaftProto.AppendEntriesRequest.newBuilder()
-            .setTerm(message.term())
-            .setLeaderId(message.leaderId())
-            .setPrevLogIndex(message.prevLogIndex())
-            .setPrevLogTerm(message.prevLogTerm())
-            .addAllEntries(message.entries().stream().map(RaftProtoMapper::toProto).toList())
-            .setLeaderCommit(message.leaderCommit())
-            .setRound(message.round())
-            .build();
-    }
-
-    static RaftMessage.AppendEntries fromProto(RaftProto.AppendEntriesRequest proto) {
-        return new RaftMessage.AppendEntries(
-            proto.getTerm(),
-            proto.getLeaderId(),
-            proto.getPrevLogIndex(),
-            proto.getPrevLogTerm(),
-            proto.getEntriesList().stream().map(RaftProtoMapper::fromProto).toList(),
-            proto.getLeaderCommit(),
-            proto.getRound()
-        );
-    }
-
-    static RaftProto.AppendEntriesResponse toProto(RaftMessage.AppendEntriesResponse message) {
-        return RaftProto.AppendEntriesResponse.newBuilder()
-            .setTerm(message.term())
-            .setSuccess(message.success())
-            .setMatchIndex(message.matchIndex())
-            .setRound(message.round())
-            .build();
-    }
-
-    static RaftMessage.AppendEntriesResponse fromProto(RaftProto.AppendEntriesResponse proto) {
-        return new RaftMessage.AppendEntriesResponse(proto.getTerm(), proto.getSuccess(), proto.getMatchIndex(), proto.getRound());
-    }
-
-    static RaftProto.SnapshotHeader toProto(RaftMessage.InstallSnapshot message) {
+    static RaftProto.SnapshotHeader toProto(RaftMessage.InstallSnapshot install) {
+        var snapshot = install.snapshot();
         return RaftProto.SnapshotHeader.newBuilder()
-            .setTerm(message.term())
-            .setLeaderId(message.leaderId())
-            .setSnapshotIndex(message.snapshot().index())
-            .setSnapshotTerm(message.snapshot().term())
-            .setMembership(toProto(message.snapshot().membership()))
+            .setTerm(install.term())
+            .setSnapshotIndex(snapshot.index())
+            .setSnapshotTerm(snapshot.term())
+            .setMembership(toProto(snapshot.membership()))
             .build();
     }
 
     static RaftMessage.InstallSnapshot fromProto(RaftProto.SnapshotHeader proto) {
         return new RaftMessage.InstallSnapshot(
             proto.getTerm(),
-            proto.getLeaderId(),
             new SnapshotMetadata(proto.getSnapshotIndex(), proto.getSnapshotTerm(), fromProto(proto.getMembership()))
         );
     }
 
-    static RaftProto.InstallSnapshotResponse toProto(RaftMessage.InstallSnapshotResponse message) {
-        return RaftProto.InstallSnapshotResponse.newBuilder().setTerm(message.term()).setMatchIndex(message.matchIndex()).build();
-    }
-
-    static RaftMessage.InstallSnapshotResponse fromProto(RaftProto.InstallSnapshotResponse proto) {
-        return new RaftMessage.InstallSnapshotResponse(proto.getTerm(), proto.getMatchIndex());
-    }
-
-    static RaftProto.ReadIndexRequest toProto(RaftMessage.ReadIndexRequested message) {
-        return RaftProto.ReadIndexRequest.newBuilder()
-            .setTerm(message.term())
-            .setContext(message.context())
-            .build();
-    }
-
-    static RaftMessage.ReadIndexRequested fromProto(RaftProto.ReadIndexRequest proto) {
-        return new RaftMessage.ReadIndexRequested(proto.getTerm(), proto.getContext());
-    }
-
-    static RaftProto.ReadIndexResponse toProto(RaftMessage.ReadIndexResponse message) {
-        return RaftProto.ReadIndexResponse.newBuilder()
-            .setTerm(message.term())
-            .setReadIndex(message.readIndex())
-            .setContext(message.context())
-            .build();
-    }
-
-    static RaftMessage.ReadIndexResponse fromProto(RaftProto.ReadIndexResponse proto) {
-        return new RaftMessage.ReadIndexResponse(proto.getTerm(), proto.getReadIndex(), proto.getContext());
-    }
-
     private static RaftProto.LogEntry toProto(RaftLogEntry entry) {
-        var builder = RaftProto.LogEntry.newBuilder()
-            .setIndex(entry.index())
-            .setTerm(entry.term());
+        var builder = RaftProto.LogEntry.newBuilder().setIndex(entry.index()).setTerm(entry.term());
         switch (entry) {
-            case RaftLogEntry.Data data -> builder.setData(UnsafeByteOperations.unsafeWrap(data.data().asReadOnlyByteBuffer()));
+            case RaftLogEntry.Command command -> builder.setCommand(UnsafeByteOperations.unsafeWrap(command.command().asReadOnlyByteBuffer()));
             case RaftLogEntry.NoOp _ -> builder.setNoOp(true);
-            case RaftLogEntry.Config config -> builder.setConfig(toProto(config.membership()));
+            case RaftLogEntry.Membership membership -> builder.setMembership(toProto(membership.membership()));
         }
         return builder.build();
     }
 
     private static RaftLogEntry fromProto(RaftProto.LogEntry proto) {
         return switch (proto.getEntryCase()) {
-            case DATA -> new RaftLogEntry.Data(proto.getIndex(), proto.getTerm(), Bytes.copyOf(proto.getData().asReadOnlyByteBuffer()));
+            case COMMAND -> new RaftLogEntry.Command(proto.getIndex(), proto.getTerm(), Bytes.copyOf(proto.getCommand().asReadOnlyByteBuffer()));
             case NO_OP -> new RaftLogEntry.NoOp(proto.getIndex(), proto.getTerm());
-            case CONFIG -> new RaftLogEntry.Config(proto.getIndex(), proto.getTerm(), fromProto(proto.getConfig()));
-            case ENTRY_NOT_SET -> throw new IllegalArgumentException("Raft log entry type not set");
+            case MEMBERSHIP -> new RaftLogEntry.Membership(proto.getIndex(), proto.getTerm(), fromProto(proto.getMembership()));
+            case ENTRY_NOT_SET -> throw new IllegalArgumentException("raft log entry not set");
         };
     }
 
@@ -178,6 +157,6 @@ final class RaftProtoMapper {
     }
 
     private static RaftMembership fromProto(RaftProto.Membership proto) {
-        return new RaftMembership(Set.copyOf(proto.getVotersList()), Set.copyOf(proto.getLearnersList()));
+        return RaftMembership.of(Set.copyOf(proto.getVotersList()), Set.copyOf(proto.getLearnersList()));
     }
 }

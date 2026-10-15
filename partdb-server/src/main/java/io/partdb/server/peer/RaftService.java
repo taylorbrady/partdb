@@ -8,7 +8,7 @@ import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
-import io.partdb.raft.RaftMessage;
+import io.partdb.raft.Envelope;
 import io.partdb.raft.runtime.RaftTransport;
 import io.partdb.server.peer.proto.RaftProto;
 import io.partdb.server.peer.proto.RaftServiceGrpc;
@@ -16,8 +16,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.concurrent.CompletableFuture;
-import java.util.function.Function;
 
 final class RaftService extends RaftServiceGrpc.RaftServiceImplBase {
 
@@ -25,10 +23,12 @@ final class RaftService extends RaftServiceGrpc.RaftServiceImplBase {
     static final Metadata.Key<String> SENDER_KEY = Metadata.Key.of("x-raft-sender-id", Metadata.ASCII_STRING_MARSHALLER);
     private static final Context.Key<String> SENDER = Context.key("raft-sender");
 
-    private final RaftTransport.Inbound inbound;
+    private final String nodeId;
+    private final RaftTransport.Receiver receiver;
 
-    RaftService(RaftTransport.Inbound inbound) {
-        this.inbound = inbound;
+    RaftService(String nodeId, RaftTransport.Receiver receiver) {
+        this.nodeId = nodeId;
+        this.receiver = receiver;
     }
 
     static ServerInterceptor senderInterceptor() {
@@ -39,37 +39,43 @@ final class RaftService extends RaftServiceGrpc.RaftServiceImplBase {
                 Metadata headers,
                 ServerCallHandler<ReqT, RespT> next
             ) {
-                Context context = Context.current().withValue(SENDER, headers.get(SENDER_KEY));
-                return Contexts.interceptCall(context, call, headers, next);
+                String sender = headers.get(SENDER_KEY);
+                if (sender == null || sender.isBlank()) {
+                    call.close(Status.UNAUTHENTICATED.withDescription("missing raft sender"), new Metadata());
+                    return new ServerCall.Listener<>() {};
+                }
+                return Contexts.interceptCall(Context.current().withValue(SENDER, sender), call, headers, next);
             }
         };
     }
 
     @Override
-    public void requestVote(RaftProto.RequestVoteRequest request, StreamObserver<RaftProto.RequestVoteResponse> responses) {
-        respond("RequestVote", RaftProtoMapper.fromProto(request), RaftMessage.RequestVoteResponse.class, RaftProtoMapper::toProto, responses);
-    }
+    public StreamObserver<RaftProto.RaftMessage> send(StreamObserver<RaftProto.SendResponse> responses) {
+        String from = SENDER.get();
+        return new StreamObserver<>() {
+            @Override
+            public void onNext(RaftProto.RaftMessage message) {
+                receiver.receive(new Envelope(from, nodeId, RaftProtoMapper.fromProto(message)));
+            }
 
-    @Override
-    public void preVote(RaftProto.PreVoteRequest request, StreamObserver<RaftProto.PreVoteResponse> responses) {
-        respond("PreVote", RaftProtoMapper.fromProto(request), RaftMessage.PreVoteResponse.class, RaftProtoMapper::toProto, responses);
-    }
+            @Override
+            public void onError(Throwable error) {
+                log.atDebug().addKeyValue("from", from).addKeyValue("error", error.getMessage()).log("Raft stream closed");
+            }
 
-    @Override
-    public void appendEntries(RaftProto.AppendEntriesRequest request, StreamObserver<RaftProto.AppendEntriesResponse> responses) {
-        respond("AppendEntries", RaftProtoMapper.fromProto(request), RaftMessage.AppendEntriesResponse.class, RaftProtoMapper::toProto, responses);
-    }
-
-    @Override
-    public void readIndex(RaftProto.ReadIndexRequest request, StreamObserver<RaftProto.ReadIndexResponse> responses) {
-        respond("ReadIndex", RaftProtoMapper.fromProto(request), RaftMessage.ReadIndexResponse.class, RaftProtoMapper::toProto, responses);
+            @Override
+            public void onCompleted() {
+                responses.onNext(RaftProto.SendResponse.getDefaultInstance());
+                responses.onCompleted();
+            }
+        };
     }
 
     @Override
     public StreamObserver<RaftProto.InstallSnapshotRequest> installSnapshot(StreamObserver<RaftProto.InstallSnapshotResponse> responses) {
-        String from = sender();
+        String from = SENDER.get();
         return new StreamObserver<>() {
-            private RaftTransport.SnapshotReceiver receiver;
+            private RaftTransport.SnapshotReceiver snapshot;
             private boolean failed;
 
             @Override
@@ -80,18 +86,18 @@ final class RaftService extends RaftServiceGrpc.RaftServiceImplBase {
                 try {
                     switch (request.getPayloadCase()) {
                         case HEADER -> {
-                            if (receiver != null) {
-                                throw new IllegalArgumentException("Duplicate snapshot header");
+                            if (snapshot != null) {
+                                throw new IllegalArgumentException("duplicate snapshot header");
                             }
-                            receiver = inbound.receiveSnapshot(from, RaftProtoMapper.fromProto(request.getHeader()));
+                            snapshot = receiver.receiveSnapshot(from, RaftProtoMapper.fromProto(request.getHeader()));
                         }
                         case CHUNK -> {
-                            if (receiver == null) {
-                                throw new IllegalArgumentException("Snapshot chunk received before header");
+                            if (snapshot == null) {
+                                throw new IllegalArgumentException("snapshot chunk received before its header");
                             }
-                            receiver.write(request.getChunk().asReadOnlyByteBuffer());
+                            snapshot.write(request.getChunk().asReadOnlyByteBuffer());
                         }
-                        case PAYLOAD_NOT_SET -> throw new IllegalArgumentException("Snapshot request payload not set");
+                        case PAYLOAD_NOT_SET -> throw new IllegalArgumentException("snapshot payload not set");
                     }
                 } catch (IOException | RuntimeException e) {
                     fail(e);
@@ -100,8 +106,8 @@ final class RaftService extends RaftServiceGrpc.RaftServiceImplBase {
 
             @Override
             public void onError(Throwable error) {
-                if (receiver != null) {
-                    receiver.abort();
+                if (snapshot != null) {
+                    snapshot.abort();
                 }
                 log.atDebug().addKeyValue("from", from).addKeyValue("error", error.getMessage()).log("Snapshot stream failed");
             }
@@ -111,59 +117,28 @@ final class RaftService extends RaftServiceGrpc.RaftServiceImplBase {
                 if (failed) {
                     return;
                 }
-                if (receiver == null) {
-                    fail(new IllegalArgumentException("Snapshot stream ended without a header"));
+                if (snapshot == null) {
+                    fail(new IllegalArgumentException("snapshot stream ended without a header"));
                     return;
                 }
-                CompletableFuture<RaftMessage.InstallSnapshotResponse> response;
                 try {
-                    response = receiver.complete();
+                    snapshot.complete();
                 } catch (IOException | RuntimeException e) {
                     fail(e);
                     return;
                 }
-                response.whenComplete((message, error) -> {
-                    if (error != null) {
-                        responses.onError(Status.fromThrowable(error).asRuntimeException());
-                    } else {
-                        responses.onNext(RaftProtoMapper.toProto(message));
-                        responses.onCompleted();
-                    }
-                });
+                responses.onNext(RaftProto.InstallSnapshotResponse.getDefaultInstance());
+                responses.onCompleted();
             }
 
             private void fail(Exception error) {
                 failed = true;
-                if (receiver != null) {
-                    receiver.abort();
+                if (snapshot != null) {
+                    snapshot.abort();
                 }
                 log.atDebug().addKeyValue("from", from).addKeyValue("error", error.getMessage()).log("Snapshot install failed");
                 responses.onError(Status.INTERNAL.withDescription(error.getMessage()).withCause(error).asRuntimeException());
             }
         };
-    }
-
-    private <M extends RaftMessage.Response, P> void respond(
-        String rpc,
-        RaftMessage.Request request,
-        Class<M> responseType,
-        Function<M, P> mapper,
-        StreamObserver<P> responses
-    ) {
-        String from = sender();
-        inbound.receive(from, request).whenComplete((response, error) -> {
-            if (error != null) {
-                log.atDebug().addKeyValue("rpc", rpc).addKeyValue("from", from).addKeyValue("error", error.getMessage()).log("RPC failed");
-                responses.onError(Status.fromThrowable(error).asRuntimeException());
-            } else {
-                responses.onNext(mapper.apply(responseType.cast(response)));
-                responses.onCompleted();
-            }
-        });
-    }
-
-    private static String sender() {
-        String sender = SENDER.get();
-        return sender != null ? sender : "unknown";
     }
 }

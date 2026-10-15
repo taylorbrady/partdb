@@ -24,39 +24,47 @@ behavior.
 
 ### `partdb-raft`
 
-Tests of the pure core (`io.partdb.raft`) are deterministic protocol
-simulations. They must not use real files, sockets, clocks, threads,
-transports, WALs, or PartDB command semantics. Test behavior through
-`RaftInput`, `RaftEffects`, `RaftMessage`, `RaftLogEntry`, and in-memory
-`RaftLogReader` state.
-
-Tests of the runtime (`io.partdb.raft.runtime`) may use real files and
-threads. `FileRaftStorageTest` and `SegmentedRaftLogTest` cover durability;
-`RaftRuntimeSnapshotTest` runs two runtimes over an in-memory transport and
-forces a follower to catch up from a streamed snapshot.
+Tests of the pure core (`io.partdb.raft`) drive `Raft` through `step` and
+`ready` exactly as the runtime does. They must not use real files, sockets,
+clocks, threads, transports, or PartDB command semantics. `TestNode` wraps one
+core with an `InMemoryRaftLog`, persists every `RaftEffects`, acknowledges it
+with `Persisted`, and returns the combined output; `ClusterHarness` connects
+several cores through an in-memory message queue with isolation and
+compaction.
 
 Keep focused suites by protocol concern:
 
-- `RaftNodeElectionTest`: local election, pre-vote, voting, term changes.
-- `RaftNodeReplicationTest`: append entries, conflicts, commits, heartbeats.
-- `RaftNodeReadIndexTest`: local and forwarded read-index behavior.
-- `RaftNodeMembershipTest` and `RaftNodeLearnerTest`: voter/learner mechanics.
-- `RaftNodeSnapshotTest` and `RaftNodeRecoveryTest`: protocol-level snapshots
-  and recovery.
-- `Cluster*Test`: deterministic multi-node simulation scenarios.
+- `RaftElectionTest`: pre-vote, voting, leases, check-quorum, terms.
+- `RaftReplicationTest`: append handling, conflict hints, batching,
+  pipelining, inflight limits, commit rules, heartbeats.
+- `RaftReadIndexTest`: read rounds, deferral until the leader commits in its
+  term, forwarding, rejection and expiry.
+- `RaftMembershipTest`: single-server changes, learners, quorum changes,
+  leader removal.
+- `RaftSnapshotTest`, `RaftRecoveryTest`, `RaftLeadershipTransferTest`.
+- `ProgressTest`, `UnstableLogTest`, and `RaftCorePurityTest`: helper and
+  purity coverage. The purity test keeps the core package free of JDK IO,
+  time, threading, and runtime imports, which a package boundary inside one
+  module cannot enforce.
+- `ClusterTest`: deterministic multi-node scenarios (elections, partitions,
+  catch-up, snapshots, reads, membership, leadership transfer).
 - `SimulationTest`: randomized, seeded cluster histories. Each seed drives
   three or five cores through message loss, delay, duplication, reordering,
-  partitions, crashes, and log compaction while clients issue reads and
-  writes. Every run checks election safety, state machine safety, commit
-  monotonicity, log matching, convergence after faults heal, and
-  linearizability of the client history (`LinearizabilityChecker`, a WGL
-  search over per-key register histories). `test` runs 200 seeds;
-  `./gradlew :partdb-raft:simulationTest` runs 5000, and
-  `-Pseeds=N -PfirstSeed=S` selects a range. Replay a failing seed with
+  partitions, crashes, unreachable reports, leadership transfers, and log
+  compaction while clients issue reads and writes. Every run checks election
+  safety, state machine safety, commit monotonicity, log matching,
+  convergence after faults heal, and linearizability of the client history
+  (`LinearizabilityChecker`, a WGL search over per-key register histories).
+  `test` runs 200 seeds; `./gradlew :partdb-raft:simulationTest` runs 5000,
+  and `-Pseeds=N -PfirstSeed=S` selects a range. Replay a failing seed with
   `new Simulation(seed, Simulation.Settings.forSeed(seed)).trace(System.out).run()`.
-- `UnstableTest` and `RaftCorePurityTest`: helper and purity coverage. The
-  purity test keeps the core package free of JDK IO, time, threading, and
-  runtime imports, which a package boundary inside one module cannot enforce.
+
+Tests of the runtime (`io.partdb.raft.runtime`) may use real files and
+threads. `WriteAheadLogTest` and `FileRaftStorageTest` cover durability,
+replay, torn tails, snapshot resets, and compaction. `RaftRuntimeTest` runs
+real runtimes over `LocalNetwork`, an in-memory transport, and covers
+replication, follower reads, restart replay, leadership transfer, membership
+changes, partitions, and streamed snapshot catch-up.
 
 ## Project Checks
 

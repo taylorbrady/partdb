@@ -1,12 +1,17 @@
 package io.partdb.raft.runtime;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.raft.Envelope;
+import io.partdb.raft.MembershipChange;
+import io.partdb.raft.Raft;
 import io.partdb.raft.RaftEffects;
+import io.partdb.raft.RaftEffects.ProposalResult;
+import io.partdb.raft.RaftEffects.ReadResult;
 import io.partdb.raft.RaftHardState;
 import io.partdb.raft.RaftInput;
+import io.partdb.raft.RaftLogEntry;
 import io.partdb.raft.RaftMembership;
 import io.partdb.raft.RaftMessage;
-import io.partdb.raft.RaftNode;
 import io.partdb.raft.RaftRole;
 import io.partdb.raft.SnapshotMetadata;
 import org.slf4j.Logger;
@@ -23,100 +28,112 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
-import java.util.Deque;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.BlockingQueue;
+import java.util.SplittableRandom;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 public final class RaftRuntime implements AutoCloseable {
+
     private static final Logger log = LoggerFactory.getLogger(RaftRuntime.class);
+    private static final Executor CALLBACKS = Thread::startVirtualThread;
     private static final long BOOTSTRAP_TERM = 1;
+    private static final int MAX_BATCH = 4096;
 
     private sealed interface Event {
-        record Proposal(long id, Bytes command) implements Event {}
+        record Input(RaftInput input) implements Event {}
 
-        record Step(RaftInput input) implements Event {}
+        record Propose(Bytes command, CompletableFuture<Bytes> future) implements Event {}
+
+        record Read(CompletableFuture<Long> future) implements Event {}
+
+        record ChangeMembership(MembershipChange change, CompletableFuture<RaftMembership> future) implements Event {}
+
+        record Transfer(String target, CompletableFuture<Void> future) implements Event {}
 
         record SnapshotReceived(String from, RaftMessage.InstallSnapshot request, Path payload) implements Event {}
 
-        record Tick() implements Event {}
+        record SnapshotDelivered(String peer, boolean delivered) implements Event {}
 
         record Shutdown() implements Event {}
     }
 
-    private record PendingRpc(CompletableFuture<RaftMessage.Response> future, long createdAtTick) {}
+    private sealed interface PendingCommit {
+        long term();
 
-    private record RpcKey(String peer, Class<? extends RaftMessage.Request> type) {}
+        void fail(RuntimeException error);
+    }
 
-    private record PendingCommit(long term, CompletableFuture<Bytes> future) {}
+    private record PendingCommand(long term, CompletableFuture<Bytes> future) implements PendingCommit {
+        @Override
+        public void fail(RuntimeException error) {
+            future.completeExceptionally(error);
+        }
+    }
+
+    private record PendingMembership(long term, CompletableFuture<RaftMembership> future) implements PendingCommit {
+        @Override
+        public void fail(RuntimeException error) {
+            future.completeExceptionally(error);
+        }
+    }
+
+    private record PendingTransfer(String target, long deadline, CompletableFuture<Void> future) {}
 
     private final String nodeId;
-    private final RaftNode raft;
-    private final long rpcTimeoutTicks;
-    private final RaftTransport transport;
+    private final long tickNanos;
+    private final long transferTimeoutNanos;
+    private final Raft raft;
     private final FileRaftStorage storage;
+    private final RaftTransport transport;
     private final StateMachine stateMachine;
+    private final ApplyTracker applied = new ApplyTracker();
+    private final LinkedBlockingQueue<Event> events = new LinkedBlockingQueue<>();
 
-    private final BlockingQueue<Event> events = new LinkedBlockingQueue<>();
-    private final Map<RpcKey, Deque<PendingRpc>> pendingRpcs = new ConcurrentHashMap<>();
-    private final Map<Long, CompletableFuture<Bytes>> pendingProposals = new ConcurrentHashMap<>();
-    private final Map<Long, PendingCommit> pendingCommits = new ConcurrentHashMap<>();
-    private final Map<Long, CompletableFuture<Long>> pendingReads = new ConcurrentHashMap<>();
-    private final Set<String> snapshotTransfers = ConcurrentHashMap.newKeySet();
-    private final ApplyTracker applyTracker = new ApplyTracker();
-    private final AtomicLong proposalIds = new AtomicLong();
-    private final AtomicLong readIds = new AtomicLong();
+    private final Map<Long, CompletableFuture<Bytes>> proposals = new HashMap<>();
+    private final Map<Long, CompletableFuture<RaftMembership>> membershipChanges = new HashMap<>();
+    private final Map<Long, CompletableFuture<Long>> reads = new HashMap<>();
+    private final NavigableMap<Long, PendingCommit> commits = new TreeMap<>();
+    private final List<PendingTransfer> transfers = new ArrayList<>();
+    private final Map<Long, Path> stagedSnapshots = new HashMap<>();
+    private final Set<String> snapshotTransfers = new HashSet<>();
 
-    private volatile long tickCount;
+    private long requestIds;
+    private RaftHardState syncedState;
     private RaftRole lastRole;
-    private String lastLeaderId;
+    private Optional<String> lastLeader;
     private Instant lastLeaderChange;
+    private volatile boolean running = true;
     private volatile RaftStatus status;
     private volatile RaftMembership membership;
-    private volatile boolean running = true;
+    private Thread loop;
 
-    private final ExecutorService ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
-    private final ScheduledExecutorService ticker;
-    private final Thread eventLoop;
-
-    private RaftRuntime(
-        RaftConfig config,
-        RaftNode raft,
-        RaftTransport transport,
-        FileRaftStorage storage,
-        StateMachine stateMachine,
-        long appliedIndex
-    ) {
+    private RaftRuntime(RaftConfig config, Raft raft, FileRaftStorage storage, RaftTransport transport, StateMachine stateMachine) {
         this.nodeId = config.nodeId();
+        this.tickNanos = config.tickInterval().toNanos();
+        this.transferTimeoutNanos = 2L * config.options().electionTicks() * tickNanos;
         this.raft = raft;
-        this.rpcTimeoutTicks = config.options().electionTimeoutMax();
-        this.transport = transport;
         this.storage = storage;
+        this.transport = transport;
         this.stateMachine = stateMachine;
+        this.syncedState = storage.hardState();
         this.lastRole = raft.role();
-        this.lastLeaderId = raft.leaderId().orElse(null);
-        applyTracker.advance(appliedIndex);
-        publishStatus();
-
-        this.ticker = Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().name("raft-ticker-", 0).factory());
-        this.eventLoop = Thread.ofVirtual().name("raft-event-loop").start(this::runEventLoop);
-        long tickMillis = config.tickInterval().toMillis();
-        ticker.scheduleAtFixedRate(() -> events.offer(new Event.Tick()), tickMillis, tickMillis, TimeUnit.MILLISECONDS);
-        transport.start(new Inbound());
+        this.lastLeader = raft.leaderId();
+        applied.advance(raft.appliedIndex());
     }
 
     public static RaftRuntime open(Path directory, RaftConfig config, RaftTransport transport, StateMachine stateMachine) {
@@ -128,31 +145,25 @@ public final class RaftRuntime implements AutoCloseable {
         FileRaftStorage storage = null;
         try {
             storage = FileRaftStorage.open(directory);
-            var membership = storage.membership().orElse(config.membership());
-            if (!membership.isMember(config.nodeId())) {
-                throw new IllegalStateException("Recovered membership does not include " + config.nodeId());
-            }
-
             var snapshot = storage.snapshot();
             long snapshotIndex = snapshot.map(file -> file.metadata().index()).orElse(0L);
-            var raft = RaftNode.builder(config.nodeId(), membership, config.options(), storage)
-                .electionJitter(bound -> ThreadLocalRandom.current().nextInt(bound))
-                .restoredFrom(storage.hardState(), snapshotIndex)
-                .build();
-
             if (snapshot.isPresent() && stateMachine.appliedIndex() < snapshotIndex) {
                 restore(stateMachine, snapshot.get());
             }
-
-            var replay = raft.step(new RaftInput.ReplayCommitted()).application();
-            for (var entry : replay.entries()) {
-                stateMachine.apply(entry.index(), entry.data());
-            }
-            if (replay.appliedThroughIndex() > 0) {
-                raft.step(new RaftInput.Applied(replay.appliedThroughIndex()));
-            }
-
-            return new RaftRuntime(config, raft, transport, storage, stateMachine, raft.lastApplied());
+            var raft = Raft.recover(
+                config.nodeId(),
+                snapshot.map(file -> file.metadata().membership()).orElse(config.initialMembership()),
+                config.options(),
+                storage,
+                storage.hardState(),
+                Math.max(stateMachine.appliedIndex(), snapshotIndex),
+                new SplittableRandom()
+            );
+            var runtime = new RaftRuntime(config, raft, storage, transport, stateMachine);
+            runtime.processReady();
+            runtime.publishStatus();
+            runtime.start();
+            return runtime;
         } catch (RuntimeException e) {
             if (storage != null) {
                 storage.close();
@@ -169,56 +180,53 @@ public final class RaftRuntime implements AutoCloseable {
         if (index < 0) {
             throw new IllegalArgumentException("index must not be negative");
         }
-
         try {
             if (Files.exists(directory)) {
                 try (Stream<Path> entries = Files.list(directory)) {
                     if (entries.findAny().isPresent()) {
-                        throw new IllegalArgumentException("Raft directory must be empty: " + directory);
+                        throw new IllegalArgumentException("raft directory must be empty: " + directory);
                     }
                 }
             }
             Files.createDirectories(directory);
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to prepare raft directory: " + directory, e);
+            throw new UncheckedIOException("failed to prepare raft directory " + directory, e);
         }
-
         if (index == 0) {
             return;
         }
-
         try (var storage = FileRaftStorage.open(directory)) {
             Path staged = storage.stagingFile();
             Files.copy(snapshot, staged, StandardCopyOption.REPLACE_EXISTING);
-            storage.installSnapshot(new SnapshotMetadata(index, BOOTSTRAP_TERM, config.membership()), staged);
-            storage.append(new RaftHardState(BOOTSTRAP_TERM, null, index), List.of());
+            storage.installSnapshot(new SnapshotMetadata(index, BOOTSTRAP_TERM, config.initialMembership()), staged);
+            storage.append(Optional.of(new RaftHardState(BOOTSTRAP_TERM, Optional.empty(), index)), List.of());
             storage.sync();
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to stage bootstrap snapshot: " + snapshot, e);
+            throw new UncheckedIOException("failed to stage bootstrap snapshot " + snapshot, e);
         }
     }
 
-    public CompletableFuture<Bytes> propose(Bytes command) {
+    public CompletionStage<Bytes> propose(Bytes command) {
         Objects.requireNonNull(command, "command must not be null");
-        if (!running) {
-            return CompletableFuture.failedFuture(new RaftException.Closed());
-        }
-        long id = proposalIds.incrementAndGet();
         var future = new CompletableFuture<Bytes>();
-        pendingProposals.put(id, future);
-        events.offer(new Event.Proposal(id, command));
-        return future;
+        return submit(new Event.Propose(command, future), future);
     }
 
-    public CompletableFuture<Long> readBarrier() {
-        if (!running) {
-            return CompletableFuture.failedFuture(new RaftException.Closed());
-        }
-        long id = readIds.incrementAndGet();
+    public CompletionStage<Long> readBarrier() {
         var future = new CompletableFuture<Long>();
-        pendingReads.put(id, future);
-        events.offer(new Event.Step(new RaftInput.ReadIndexRequested(id)));
-        return future.thenCompose(applyTracker::waitFor);
+        return submit(new Event.Read(future), future);
+    }
+
+    public CompletionStage<RaftMembership> changeMembership(MembershipChange change) {
+        Objects.requireNonNull(change, "change must not be null");
+        var future = new CompletableFuture<RaftMembership>();
+        return submit(new Event.ChangeMembership(change, future), future);
+    }
+
+    public CompletionStage<Void> transferLeadership(String target) {
+        Objects.requireNonNull(target, "target must not be null");
+        var future = new CompletableFuture<Void>();
+        return submit(new Event.Transfer(target, future), future);
     }
 
     public RaftStatus status() {
@@ -235,269 +243,293 @@ public final class RaftRuntime implements AutoCloseable {
             return;
         }
         running = false;
-        failPending(new RaftException.Closed());
-        ticker.shutdown();
-        transport.close();
-        events.offer(new Event.Shutdown());
-
+        events.add(new Event.Shutdown());
         try {
-            eventLoop.join(TimeUnit.SECONDS.toMillis(5));
-            ioExecutor.shutdown();
-            ticker.awaitTermination(5, TimeUnit.SECONDS);
-            ioExecutor.awaitTermination(5, TimeUnit.SECONDS);
+            loop.join();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-
+        transport.close();
+        failPending(new RaftException.Closed());
+        stagedSnapshots.values().forEach(RaftRuntime::deleteQuietly);
         storage.close();
         publishStatus();
     }
 
-    private void runEventLoop() {
-        while (running) {
-            try {
-                switch (events.take()) {
-                    case Event.Proposal(long id, Bytes command) -> handleProposal(id, command);
-                    case Event.Step(RaftInput input) -> process(raft.step(input));
-                    case Event.SnapshotReceived(var from, var request, var payload) -> handleSnapshot(from, request, payload);
-                    case Event.Tick() -> {
-                        tickCount++;
-                        expireStaleRpcs();
-                        process(raft.step(new RaftInput.Tick()));
-                    }
-                    case Event.Shutdown() -> {
-                    }
+    private <T> CompletionStage<T> submit(Event event, CompletableFuture<T> future) {
+        if (!running) {
+            return CompletableFuture.failedFuture(new RaftException.Closed());
+        }
+        events.add(event);
+        if (!running) {
+            future.completeExceptionally(new RaftException.Closed());
+        }
+        return future.thenApplyAsync(Function.identity(), CALLBACKS);
+    }
+
+    private void start() {
+        loop = Thread.ofVirtual().name("raft-" + nodeId).start(this::run);
+        transport.start(new Receiver());
+    }
+
+    private void run() {
+        var batch = new ArrayList<Event>();
+        long nextTick = System.nanoTime() + tickNanos;
+        try {
+            while (running) {
+                long wait = nextTick - System.nanoTime();
+                var event = wait > 0 ? events.poll(wait, TimeUnit.NANOSECONDS) : events.poll();
+                if (event != null) {
+                    batch.add(event);
+                    events.drainTo(batch, MAX_BATCH);
                 }
+                for (Event next : batch) {
+                    handle(next);
+                }
+                batch.clear();
+                long now = System.nanoTime();
+                if (now - nextTick >= 0) {
+                    raft.step(new RaftInput.Tick());
+                    nextTick = now + tickNanos;
+                }
+                processReady();
+                discardUnusedSnapshots();
+                resolveTransfers(now);
+                observeLeadership();
                 publishStatus();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            } catch (RuntimeException e) {
-                log.atError()
-                    .addKeyValue("nodeId", nodeId)
-                    .setCause(e)
-                    .log("Fatal raft runtime error, shutting down");
-                running = false;
-                failPending(new RaftException.StorageFailure(String.valueOf(e.getMessage()), e));
-                publishStatus();
-                return;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException | Error e) {
+            log.atError().addKeyValue("nodeId", nodeId).setCause(e).log("Raft runtime failed");
+            running = false;
+            failPending(new RaftException.Failed(e));
+            publishStatus();
+        }
+    }
+
+    private void handle(Event event) {
+        switch (event) {
+            case Event.Input(var input) -> raft.step(input);
+            case Event.Propose(var command, var future) -> {
+                long id = ++requestIds;
+                proposals.put(id, future);
+                raft.step(new RaftInput.Propose(id, command));
+            }
+            case Event.Read(var future) -> {
+                long id = ++requestIds;
+                reads.put(id, future);
+                raft.step(new RaftInput.ReadIndex(id));
+            }
+            case Event.ChangeMembership(var change, var future) -> {
+                long id = ++requestIds;
+                membershipChanges.put(id, future);
+                raft.step(new RaftInput.ChangeMembership(id, change));
+            }
+            case Event.Transfer(var target, var future) -> transfer(target, future);
+            case Event.SnapshotReceived(var from, var request, var payload) -> {
+                var previous = stagedSnapshots.put(request.snapshot().index(), payload);
+                if (previous != null) {
+                    deleteQuietly(previous);
+                }
+                raft.step(new RaftInput.Receive(from, request));
+            }
+            case Event.SnapshotDelivered(var peer, boolean delivered) -> {
+                snapshotTransfers.remove(peer);
+                raft.step(delivered ? new RaftInput.SnapshotSent(peer) : new RaftInput.SnapshotFailed(peer));
+            }
+            case Event.Shutdown() -> {
             }
         }
     }
 
-    private void handleProposal(long id, Bytes command) {
-        var future = pendingProposals.remove(id);
+    private void processReady() {
+        for (var effects = raft.ready(); !effects.isEmpty(); effects = raft.ready()) {
+            effects.snapshot().ifPresent(this::installSnapshot);
+            persist(effects);
+            effects.messages().forEach(transport::send);
+            effects.proposals().forEach(this::resolveProposal);
+            for (RaftLogEntry entry : effects.committed()) {
+                apply(entry);
+            }
+            if (!effects.committed().isEmpty()) {
+                applied.advance(effects.committed().getLast().index());
+            }
+            effects.reads().forEach(this::resolveRead);
+            effects.snapshotRequests().forEach(this::sendSnapshot);
+            effects.persisted().ifPresent(raft::step);
+        }
+    }
+
+    private void persist(RaftEffects effects) {
+        if (effects.entries().isEmpty() && effects.hardState().isEmpty()) {
+            return;
+        }
+        storage.append(effects.hardState(), effects.entries());
+        var state = effects.hardState().orElse(syncedState);
+        boolean voteChanged = state.term() != syncedState.term() || !state.votedFor().equals(syncedState.votedFor());
+        if (!effects.entries().isEmpty() || voteChanged) {
+            storage.sync();
+        }
+        syncedState = state;
+    }
+
+    private void installSnapshot(SnapshotMetadata metadata) {
+        Path staged = stagedSnapshots.remove(metadata.index());
+        if (staged == null) {
+            throw new IllegalStateException("raft accepted snapshot " + metadata.index() + " without a payload");
+        }
+        storage.installSnapshot(metadata, staged);
+        restore(stateMachine, storage.snapshot().orElseThrow());
+        var superseded = commits.headMap(metadata.index(), true);
+        superseded.forEach((index, pending) -> pending.fail(new RaftException.OutcomeUnknown(index)));
+        superseded.clear();
+        applied.advance(metadata.index());
+    }
+
+    private void resolveProposal(ProposalResult result) {
+        switch (result) {
+            case ProposalResult.Accepted(long id, long index, long term) -> {
+                var proposal = proposals.remove(id);
+                if (proposal != null) {
+                    commits.put(index, new PendingCommand(term, proposal));
+                }
+                var change = membershipChanges.remove(id);
+                if (change != null) {
+                    commits.put(index, new PendingMembership(term, change));
+                }
+            }
+            case ProposalResult.Rejected(long id) -> {
+                var error = notLeader();
+                var proposal = proposals.remove(id);
+                if (proposal != null) {
+                    proposal.completeExceptionally(error);
+                }
+                var change = membershipChanges.remove(id);
+                if (change != null) {
+                    change.completeExceptionally(error);
+                }
+            }
+        }
+    }
+
+    private void apply(RaftLogEntry entry) {
+        var pending = commits.remove(entry.index());
+        boolean ours = pending != null && pending.term() == entry.term();
+        switch (entry) {
+            case RaftLogEntry.Command command -> {
+                Bytes result = stateMachine.apply(command.index(), command.command());
+                if (ours && pending instanceof PendingCommand(_, var future)) {
+                    future.complete(result);
+                    return;
+                }
+            }
+            case RaftLogEntry.Membership change -> {
+                if (ours && pending instanceof PendingMembership(_, var future)) {
+                    future.complete(change.membership());
+                    return;
+                }
+            }
+            case RaftLogEntry.NoOp _ -> {
+            }
+        }
+        if (pending != null) {
+            pending.fail(notLeader());
+        }
+    }
+
+    private void resolveRead(ReadResult result) {
+        var future = reads.remove(result.id());
         if (future == null) {
             return;
         }
-        if (!raft.isLeader()) {
-            future.completeExceptionally(new RaftException.NotLeader(raft.leaderId().orElse(null)));
-            return;
+        switch (result) {
+            case ReadResult.Confirmed(_, long index) -> applied.waitFor(index).whenComplete((value, error) -> {
+                if (error != null) {
+                    future.completeExceptionally(error);
+                } else {
+                    future.complete(value);
+                }
+            });
+            case ReadResult.Rejected _ -> future.completeExceptionally(notLeader());
         }
+    }
 
-        var effects = raft.step(new RaftInput.EntryProposed(command));
-        var entries = effects.persistence().entries();
-        if (entries.isEmpty()) {
-            future.completeExceptionally(new RaftException.NotLeader(raft.leaderId().orElse(null)));
+    private void transfer(String target, CompletableFuture<Void> future) {
+        if (raft.role() != RaftRole.LEADER) {
+            future.completeExceptionally(notLeader());
+        } else if (!raft.membership().isVoter(target)) {
+            future.completeExceptionally(new IllegalArgumentException(target + " is not a voter"));
+        } else if (target.equals(nodeId)) {
+            future.complete(null);
         } else {
-            var proposed = entries.getLast();
-            pendingCommits.put(proposed.index(), new PendingCommit(proposed.term(), future));
+            raft.step(new RaftInput.TransferLeadership(target));
+            transfers.add(new PendingTransfer(target, System.nanoTime() + transferTimeoutNanos, future));
         }
-        process(effects);
     }
 
-    private void handleSnapshot(String from, RaftMessage.InstallSnapshot request, Path payload) {
-        try {
-            process(raft.step(new RaftInput.MessageReceived(from, request)), payload);
-        } finally {
-            try {
-                Files.deleteIfExists(payload);
-            } catch (IOException e) {
-                log.atWarn().setCause(e).addKeyValue("payload", payload).log("Failed to delete staged snapshot");
+    private void resolveTransfers(long now) {
+        var iterator = transfers.iterator();
+        while (iterator.hasNext()) {
+            var transfer = iterator.next();
+            if (raft.leaderId().filter(transfer.target()::equals).isPresent()) {
+                transfer.future().complete(null);
+                iterator.remove();
+            } else if (now - transfer.deadline() >= 0) {
+                transfer.future().completeExceptionally(new RaftException.TransferTimedOut(transfer.target()));
+                iterator.remove();
             }
         }
     }
 
-    private void process(RaftEffects effects) {
-        process(effects, null);
-    }
-
-    private void process(RaftEffects effects, Path snapshotPayload) {
-        if (!effects.hasWork()) {
+    private void sendSnapshot(String peer) {
+        var snapshot = storage.snapshot().orElseThrow(() -> new IllegalStateException("raft requested a snapshot that does not exist"));
+        if (!snapshotTransfers.add(peer)) {
             return;
         }
-        observeLeadership();
-        persist(effects.persistence(), snapshotPayload);
-        for (var outbound : effects.messages()) {
-            switch (outbound.message()) {
-                case RaftMessage.Request request -> ioExecutor.execute(() -> sendRequest(outbound.to(), request));
-                case RaftMessage.Response response -> completeRpc(outbound.to(), response);
+        var request = new RaftMessage.InstallSnapshot(raft.term(), snapshot.metadata());
+        transport.sendSnapshot(peer, request, snapshot.payload()).whenComplete((_, error) -> {
+            if (error != null) {
+                log.atDebug().addKeyValue("nodeId", nodeId).addKeyValue("peer", peer).setCause(error).log("Snapshot transfer failed");
             }
-        }
-        apply(effects.application());
-        effects.snapshotNeeded().ifPresent(this::sendSnapshot);
-    }
-
-    private void persist(RaftEffects.Persistence persistence, Path snapshotPayload) {
-        if (!persistence.hasWork()) {
-            return;
-        }
-
-        storage.append(persistence.hardState().orElse(null), persistence.entries());
-        persistence.incomingSnapshot().ifPresent(metadata -> {
-            if (snapshotPayload == null) {
-                throw new IllegalStateException("Raft accepted snapshot " + metadata.index() + " without a payload");
-            }
-            storage.installSnapshot(metadata, snapshotPayload);
-            restore(stateMachine, storage.snapshot().orElseThrow());
-            applyTracker.advance(metadata.index());
-        });
-        storage.sync();
-
-        if (!persistence.entries().isEmpty()) {
-            var last = persistence.entries().getLast();
-            process(raft.step(new RaftInput.EntriesPersisted(last.index(), last.term())));
-        }
-        if (persistence.incomingSnapshot().isPresent()) {
-            process(raft.step(new RaftInput.SnapshotPersisted()));
-        }
-    }
-
-    private void apply(RaftEffects.Application application) {
-        for (var entry : application.entries()) {
-            Bytes result = stateMachine.apply(entry.index(), entry.data());
-            var pending = pendingCommits.remove(entry.index());
-            if (pending == null) {
-                continue;
-            }
-            if (pending.term() == entry.term()) {
-                pending.future().complete(result);
-            } else {
-                pending.future().completeExceptionally(new RaftException.NotLeader(raft.leaderId().orElse(null)));
-            }
-        }
-
-        if (application.appliedThroughIndex() > 0) {
-            process(raft.step(new RaftInput.Applied(application.appliedThroughIndex())));
-            applyTracker.advance(application.appliedThroughIndex());
-        }
-
-        for (var readState : application.readStates()) {
-            var future = pendingReads.remove(readState.context());
-            if (future == null) {
-                continue;
-            }
-            if (readState.index() == 0) {
-                future.completeExceptionally(new RaftException.NotLeader(raft.leaderId().orElse(null)));
-            } else {
-                future.complete(readState.index());
-            }
-        }
-    }
-
-    private void sendSnapshot(RaftEffects.SnapshotNeeded needed) {
-        String peer = needed.peer();
-        var snapshot = storage.snapshot();
-        if (snapshot.isEmpty() || !snapshotTransfers.add(peer)) {
-            return;
-        }
-        var request = new RaftMessage.InstallSnapshot(raft.term(), nodeId, snapshot.get().metadata());
-        Path payload = snapshot.get().payload();
-        ioExecutor.execute(() -> {
-            try {
-                var response = transport.sendSnapshot(peer, request, payload).join();
-                events.offer(new Event.Step(new RaftInput.MessageReceived(peer, response)));
-            } catch (RuntimeException e) {
-                log.atDebug()
-                    .addKeyValue("nodeId", nodeId)
-                    .addKeyValue("peer", peer)
-                    .addKeyValue("error", e.getMessage())
-                    .log("Failed to send snapshot");
-            } finally {
-                snapshotTransfers.remove(peer);
-            }
+            events.add(new Event.SnapshotDelivered(peer, error == null));
         });
     }
 
-    private void sendRequest(String to, RaftMessage.Request request) {
-        try {
-            var response = transport.send(to, request).join();
-            events.offer(new Event.Step(new RaftInput.MessageReceived(to, response)));
-        } catch (RuntimeException e) {
-            log.atDebug()
-                .addKeyValue("nodeId", nodeId)
-                .addKeyValue("peer", to)
-                .addKeyValue("error", e.getMessage())
-                .log("Failed to send request");
-        }
+    private void discardUnusedSnapshots() {
+        stagedSnapshots.values().forEach(RaftRuntime::deleteQuietly);
+        stagedSnapshots.clear();
     }
 
-    private CompletableFuture<RaftMessage.Response> awaitResponse(String from, Class<? extends RaftMessage.Request> type) {
-        var future = new CompletableFuture<RaftMessage.Response>();
-        pendingRpcs.computeIfAbsent(new RpcKey(from, type), _ -> new ConcurrentLinkedDeque<>())
-            .addLast(new PendingRpc(future, tickCount));
-        return future;
-    }
-
-    private void completeRpc(String to, RaftMessage.Response response) {
-        Class<? extends RaftMessage.Request> type = switch (response) {
-            case RaftMessage.AppendEntriesResponse _ -> RaftMessage.AppendEntries.class;
-            case RaftMessage.RequestVoteResponse _ -> RaftMessage.RequestVote.class;
-            case RaftMessage.InstallSnapshotResponse _ -> RaftMessage.InstallSnapshot.class;
-            case RaftMessage.PreVoteResponse _ -> RaftMessage.PreVote.class;
-            case RaftMessage.ReadIndexResponse _ -> RaftMessage.ReadIndexRequested.class;
-        };
-        var key = new RpcKey(to, type);
-        var queue = pendingRpcs.get(key);
-        if (queue == null) {
-            return;
-        }
-        var pending = queue.pollFirst();
-        if (pending != null) {
-            pending.future().complete(response);
-        }
-        if (queue.isEmpty()) {
-            pendingRpcs.remove(key);
-        }
-    }
-
-    private void expireStaleRpcs() {
-        long threshold = tickCount - rpcTimeoutTicks;
-        pendingRpcs.entrySet().removeIf(entry -> {
-            var queue = entry.getValue();
-            PendingRpc pending;
-            while ((pending = queue.peekFirst()) != null && pending.createdAtTick() < threshold) {
-                queue.pollFirst();
-                pending.future().completeExceptionally(new RaftException.RpcTimeout(entry.getKey().peer()));
-            }
-            return queue.isEmpty();
-        });
+    private RaftException.NotLeader notLeader() {
+        return new RaftException.NotLeader(raft.leaderId());
     }
 
     private void observeLeadership() {
         RaftRole role = raft.role();
-        String leaderId = raft.leaderId().orElse(null);
-        if (role == lastRole && Objects.equals(leaderId, lastLeaderId)) {
+        var leader = raft.leaderId();
+        if (role == lastRole && leader.equals(lastLeader)) {
             return;
         }
         log.atInfo()
             .addKeyValue("nodeId", nodeId)
             .addKeyValue("term", raft.term())
             .addKeyValue("previousRole", lastRole)
-            .addKeyValue("newRole", role)
-            .log("State transition");
+            .addKeyValue("role", role)
+            .addKeyValue("leader", leader.orElse(null))
+            .log("Raft role changed");
 
         var event = new LeaderChangeEvent();
         event.nodeId = nodeId;
         event.term = raft.term();
         event.previousRole = lastRole.name();
         event.newRole = role.name();
-        event.previousLeaderId = lastLeaderId;
-        event.newLeaderId = leaderId;
+        event.previousLeaderId = lastLeader.orElse(null);
+        event.newLeaderId = leader.orElse(null);
         event.commit();
 
         lastRole = role;
-        lastLeaderId = leaderId;
+        lastLeader = leader;
         lastLeaderChange = Instant.now();
     }
 
@@ -509,41 +541,59 @@ public final class RaftRuntime implements AutoCloseable {
             raft.term(),
             raft.leaderId(),
             raft.commitIndex(),
-            applyTracker.lastApplied(),
+            applied.lastApplied(),
             Optional.ofNullable(lastLeaderChange),
             running
         );
     }
 
-    private void failPending(Throwable cause) {
-        pendingProposals.values().forEach(future -> future.completeExceptionally(cause));
-        pendingProposals.clear();
-        pendingCommits.values().forEach(pending -> pending.future().completeExceptionally(cause));
-        pendingCommits.clear();
-        pendingReads.values().forEach(future -> future.completeExceptionally(cause));
-        pendingReads.clear();
-        pendingRpcs.values().forEach(queue -> queue.forEach(pending -> pending.future().completeExceptionally(cause)));
-        pendingRpcs.clear();
-        applyTracker.failAll(cause);
+    private void failPending(RuntimeException error) {
+        proposals.values().forEach(future -> future.completeExceptionally(error));
+        proposals.clear();
+        membershipChanges.values().forEach(future -> future.completeExceptionally(error));
+        membershipChanges.clear();
+        reads.values().forEach(future -> future.completeExceptionally(error));
+        reads.clear();
+        commits.values().forEach(pending -> pending.fail(error));
+        commits.clear();
+        transfers.forEach(transfer -> transfer.future().completeExceptionally(error));
+        transfers.clear();
+        applied.failAll(error);
+        for (Event event; (event = events.poll()) != null; ) {
+            switch (event) {
+                case Event.Propose(_, var future) -> future.completeExceptionally(error);
+                case Event.Read(var future) -> future.completeExceptionally(error);
+                case Event.ChangeMembership(_, var future) -> future.completeExceptionally(error);
+                case Event.Transfer(_, var future) -> future.completeExceptionally(error);
+                case Event.SnapshotReceived(_, _, var payload) -> deleteQuietly(payload);
+                case Event.Input _, Event.SnapshotDelivered _, Event.Shutdown _ -> {
+                }
+            }
+        }
     }
 
     private static void restore(StateMachine stateMachine, SnapshotStore.SnapshotFile snapshot) {
         try (InputStream in = new BufferedInputStream(Files.newInputStream(snapshot.payload()))) {
             stateMachine.restore(snapshot.metadata().index(), in);
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to restore snapshot " + snapshot.metadata().index(), e);
+            throw new UncheckedIOException("failed to restore snapshot " + snapshot.metadata().index(), e);
         }
     }
 
-    private final class Inbound implements RaftTransport.Inbound {
+    private static void deleteQuietly(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            log.atWarn().addKeyValue("path", path).setCause(e).log("Failed to delete staged snapshot");
+        }
+    }
+
+    private final class Receiver implements RaftTransport.Receiver {
         @Override
-        public CompletableFuture<RaftMessage.Response> receive(String from, RaftMessage.Request request) {
-            if (!running) {
-                return CompletableFuture.failedFuture(new RaftException.Closed());
+        public void receive(Envelope envelope) {
+            if (running && !(envelope.message() instanceof RaftMessage.InstallSnapshot)) {
+                events.add(new Event.Input(new RaftInput.Receive(envelope.from(), envelope.message())));
             }
-            var response = awaitResponse(from, request.getClass());
-            events.offer(new Event.Step(new RaftInput.MessageReceived(from, request)));
-            return response;
         }
 
         @Override
@@ -552,6 +602,13 @@ public final class RaftRuntime implements AutoCloseable {
                 throw new RaftException.Closed();
             }
             return new StagedSnapshot(from, request, storage.stagingFile());
+        }
+
+        @Override
+        public void unreachable(String peer) {
+            if (running) {
+                events.add(new Event.Input(new RaftInput.Unreachable(peer)));
+            }
         }
     }
 
@@ -576,26 +633,24 @@ public final class RaftRuntime implements AutoCloseable {
         }
 
         @Override
-        public CompletableFuture<RaftMessage.InstallSnapshotResponse> complete() throws IOException {
+        public void complete() throws IOException {
             channel.force(true);
             channel.close();
             if (!running) {
-                Files.deleteIfExists(path);
-                return CompletableFuture.failedFuture(new RaftException.Closed());
+                deleteQuietly(path);
+                throw new RaftException.Closed();
             }
-            var response = awaitResponse(from, RaftMessage.InstallSnapshot.class);
-            events.offer(new Event.SnapshotReceived(from, request, path));
-            return response.thenApply(RaftMessage.InstallSnapshotResponse.class::cast);
+            events.add(new Event.SnapshotReceived(from, request, path));
         }
 
         @Override
         public void abort() {
             try {
                 channel.close();
-                Files.deleteIfExists(path);
             } catch (IOException e) {
-                log.atWarn().setCause(e).addKeyValue("payload", path).log("Failed to discard staged snapshot");
+                log.atDebug().setCause(e).log("Failed to close staged snapshot");
             }
+            deleteQuietly(path);
         }
     }
 }

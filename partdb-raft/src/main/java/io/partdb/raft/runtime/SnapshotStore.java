@@ -15,7 +15,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.zip.CRC32C;
 
-import static io.partdb.raft.runtime.LogRecordCodec.BYTE_ORDER;
+import static io.partdb.raft.runtime.BinaryFormat.ORDER;
 
 final class SnapshotStore {
 
@@ -117,7 +117,7 @@ final class SnapshotStore {
 
     private SnapshotFile load(Path metadataFile) {
         try {
-            ByteBuffer buffer = ByteBuffer.wrap(Files.readAllBytes(metadataFile)).order(BYTE_ORDER);
+            ByteBuffer buffer = ByteBuffer.wrap(Files.readAllBytes(metadataFile)).order(ORDER);
             if (buffer.remaining() < Integer.BYTES) {
                 throw new RaftStorageException.Corruption("Truncated snapshot metadata: " + metadataFile);
             }
@@ -137,7 +137,7 @@ final class SnapshotStore {
             long term = buffer.getLong();
             long index = buffer.getLong();
             long size = buffer.getLong();
-            var membership = LogRecordCodec.readConfiguration(buffer);
+            var membership = BinaryFormat.getMembership(buffer);
 
             Path payload = payloadFor(metadataFile);
             if (!Files.exists(payload) || Files.size(payload) != size) {
@@ -150,14 +150,14 @@ final class SnapshotStore {
     }
 
     private static ByteBuffer encode(SnapshotMetadata metadata, long payloadSize) {
-        int bodyLength = 4 + 4 + 8 + 8 + 8 + LogRecordCodec.configurationSize(metadata.membership());
-        ByteBuffer buffer = ByteBuffer.allocate(bodyLength + Integer.BYTES).order(BYTE_ORDER);
+        int bodyLength = 4 + 4 + 8 + 8 + 8 + BinaryFormat.membershipSize(metadata.membership());
+        ByteBuffer buffer = ByteBuffer.allocate(bodyLength + Integer.BYTES).order(ORDER);
         buffer.putInt(MAGIC);
         buffer.putInt(VERSION);
         buffer.putLong(metadata.term());
         buffer.putLong(metadata.index());
         buffer.putLong(payloadSize);
-        LogRecordCodec.writeConfiguration(buffer, metadata.membership());
+        BinaryFormat.putMembership(buffer, metadata.membership());
         CRC32C crc = new CRC32C();
         crc.update(buffer.slice(0, bodyLength));
         buffer.putInt((int) crc.getValue());

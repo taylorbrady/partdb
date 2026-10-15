@@ -77,13 +77,22 @@ Role: Raft consensus, from the pure algorithm to the durable runtime.
 
 The module has two packages:
 
-- `io.partdb.raft` is the pure core: one `RaftInput` in, one `RaftEffects`
-  out. It is deterministic and side-effect free. `RaftCorePurityTest` keeps
-  JDK IO, clocks, threads, and runtime imports out of it.
-- `io.partdb.raft.runtime` adapts the core to a segmented write-ahead log,
-  file-based snapshots, a transport SPI with streamed snapshot transfer, read
-  barriers, proposal tracking, and state-machine application. It is generic
-  over a `StateMachine`.
+- `io.partdb.raft` is the pure core. `Raft.step(RaftInput)` mutates state and
+  `Raft.ready()` drains everything that must happen next as one
+  `RaftEffects`: hard state, snapshot and entries to persist, messages to
+  send, committed entries to apply, proposal and read results, and snapshot
+  requests. Any number of inputs batch into one `ready`. The leader tracks
+  each peer with a `Progress` (probe, replicate with an inflight window,
+  snapshot), confirms reads with heartbeat rounds, and supports pre-vote,
+  check-quorum, learners, single-server membership changes, and leadership
+  transfer. It is deterministic and side-effect free; `RaftCorePurityTest`
+  keeps JDK IO, clocks, threads, and runtime imports out of it.
+- `io.partdb.raft.runtime` drives the core from one virtual-thread event loop:
+  it persists each `ready` with one sync, sends one-way messages through the
+  `RaftTransport` SPI, applies committed entries to a `StateMachine`, and
+  completes proposals, read barriers, membership changes, and leadership
+  transfers. Storage is an append-only write-ahead log replayed into memory
+  plus file-based snapshots streamed to lagging peers.
 
 Membership, role, and status are modeled once (`RaftMembership`, `RaftRole`,
 `RaftStatus`) and used as-is by the node API.
@@ -156,8 +165,8 @@ This is the one place gRPC is implemented on the server side:
   shut everything down in order.
 - `io.partdb.server.grpc` implements the public KV and cluster services.
 - `io.partdb.server.peer` implements `RaftTransport` over a private gRPC
-  protocol (`raft.proto`), including chunked snapshot streaming with flow
-  control.
+  protocol (`raft.proto`): one long-lived, flow-controlled message stream per
+  peer, plus chunked snapshot uploads.
 
 Allowed dependencies: `partdb-node`, `partdb-grpc`, gRPC/protobuf libraries.
 

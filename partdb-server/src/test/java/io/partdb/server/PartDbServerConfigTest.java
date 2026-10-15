@@ -26,7 +26,7 @@ class PartDbServerConfigTest {
             8102
         );
 
-        assertEquals(Set.of("node1", "node2"), config.nodeConfig().raft().membership().memberIds());
+        assertEquals(Set.of("node1", "node2"), config.nodeConfig().raft().initialMembership().members());
         assertEquals(
             Map.of(
                 "node1", new PeerEndpoint("127.0.0.1", 8100),

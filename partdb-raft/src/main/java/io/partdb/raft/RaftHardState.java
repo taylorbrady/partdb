@@ -1,14 +1,14 @@
 package io.partdb.raft;
 
-public record RaftHardState(long term, String votedFor, long commit) {
-    public static final RaftHardState INITIAL = new RaftHardState(0, null, 0);
+import java.util.Objects;
+import java.util.Optional;
+
+public record RaftHardState(long term, Optional<String> votedFor, long commit) {
+    public static final RaftHardState INITIAL = new RaftHardState(0, Optional.empty(), 0);
 
     public RaftHardState {
-        if (term < 0) {
-            throw new IllegalArgumentException("term must be non-negative: " + term);
-        }
-        if (commit < 0) {
-            throw new IllegalArgumentException("commit must be non-negative: " + commit);
-        }
+        Validation.nonNegative(term, "term");
+        Objects.requireNonNull(votedFor, "votedFor must not be null");
+        Validation.nonNegative(commit, "commit");
     }
 }

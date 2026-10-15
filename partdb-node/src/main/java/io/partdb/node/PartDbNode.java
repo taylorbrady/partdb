@@ -64,7 +64,7 @@ public final class PartDbNode implements AutoCloseable {
 
     public static PartDbNode open(PartDbNodeConfig config) {
         Objects.requireNonNull(config, "config must not be null");
-        if (config.raft().membership().memberIds().size() != 1) {
+        if (config.raft().initialMembership().members().size() != 1) {
             throw new IllegalArgumentException("A node without a transport must be the only cluster member");
         }
         return open(config, RaftTransport.standalone());
@@ -147,7 +147,7 @@ public final class PartDbNode implements AutoCloseable {
         }
     }
 
-    private CompletableFuture<KvCommandResult> propose(KvCommand command) {
+    private CompletionStage<KvCommandResult> propose(KvCommand command) {
         proposalCount.incrementAndGet();
         return raft.propose(KvCommandCodec.encode(command))
             .thenApply(KvCommandResultCodec::decode)
@@ -158,14 +158,14 @@ public final class PartDbNode implements AutoCloseable {
             });
     }
 
-    private CompletableFuture<WriteResult> submit(KvCommand command) {
+    private CompletionStage<WriteResult> submit(KvCommand command) {
         return mapFailure(propose(command).thenApply(result -> switch (result) {
             case KvCommandResult.Applied(long revision) -> new WriteResult(revision);
             case KvCommandResult.ConditionFailed _ -> throw new IllegalStateException("Unconditional write reported a failed condition");
         }));
     }
 
-    private <T> CompletableFuture<T> afterReadBarrier(ReadConsistency consistency, Supplier<T> read) {
+    private <T> CompletionStage<T> afterReadBarrier(ReadConsistency consistency, Supplier<T> read) {
         return switch (consistency) {
             case LOCAL -> CompletableFuture.completedFuture(read.get());
             case LINEARIZABLE -> mapFailure(raft.readBarrier().thenApply(_ -> read.get()));
@@ -194,8 +194,8 @@ public final class PartDbNode implements AutoCloseable {
         }
     }
 
-    private static <T> CompletableFuture<T> mapFailure(CompletableFuture<T> future) {
-        return future.exceptionallyCompose(error -> CompletableFuture.failedFuture(FailureMapper.map(error)));
+    private static <T> CompletionStage<T> mapFailure(CompletionStage<T> stage) {
+        return stage.exceptionallyCompose(error -> CompletableFuture.failedFuture(FailureMapper.map(error)));
     }
 
     private static Path storageDirectory(PartDbNodeConfig config) {

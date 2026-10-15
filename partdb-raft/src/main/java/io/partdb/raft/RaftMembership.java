@@ -1,26 +1,29 @@
 package io.partdb.raft;
 
 import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
+import java.util.SortedSet;
 import java.util.TreeSet;
 
-public record RaftMembership(Set<String> voters, Set<String> learners) {
+public record RaftMembership(SortedSet<String> voters, SortedSet<String> learners) {
     public RaftMembership {
-        voters = normalizeIds(voters, "voters");
-        learners = normalizeIds(learners, "learners");
+        voters = normalize(voters, "voters");
+        learners = normalize(learners, "learners");
         if (voters.isEmpty()) {
             throw new IllegalArgumentException("voters must not be empty");
         }
-        if (!disjoint(voters, learners)) {
-            throw new IllegalArgumentException("node cannot be both voter and learner");
+        if (!Collections.disjoint(voters, learners)) {
+            throw new IllegalArgumentException("a node cannot be both voter and learner");
         }
     }
 
+    public static RaftMembership of(Set<String> voters, Set<String> learners) {
+        return new RaftMembership(new TreeSet<>(voters), new TreeSet<>(learners));
+    }
+
     public static RaftMembership voters(String... voters) {
-        Objects.requireNonNull(voters, "voters must not be null");
-        return new RaftMembership(Set.of(voters), Set.of());
+        return of(Set.of(voters), Set.of());
     }
 
     public boolean isVoter(String nodeId) {
@@ -35,115 +38,58 @@ public record RaftMembership(Set<String> voters, Set<String> learners) {
         return isVoter(nodeId) || isLearner(nodeId);
     }
 
-    public int quorumSize() {
+    public int quorum() {
         return voters.size() / 2 + 1;
     }
 
-    public Set<String> memberIds() {
+    public SortedSet<String> members() {
         var members = new TreeSet<>(voters);
         members.addAll(learners);
         return Collections.unmodifiableSortedSet(members);
     }
 
-    public Set<String> peerIdsExcluding(String nodeId) {
-        requireNonBlank(nodeId, "nodeId");
-        var peers = new TreeSet<>(memberIds());
-        peers.remove(nodeId);
-        return Collections.unmodifiableSortedSet(peers);
-    }
-
-    public Set<String> votingPeerIdsExcluding(String nodeId) {
-        requireNonBlank(nodeId, "nodeId");
-        var peers = new TreeSet<>(voters);
-        peers.remove(nodeId);
-        return Collections.unmodifiableSortedSet(peers);
-    }
-
     public RaftMembership apply(MembershipChange change) {
         Objects.requireNonNull(change, "change must not be null");
-        return switch (change) {
-            case MembershipChange.AddLearner(var nodeId) -> addLearner(nodeId);
-            case MembershipChange.PromoteToVoter(var nodeId) -> promoteToVoter(nodeId);
-            case MembershipChange.DemoteToLearner(var nodeId) -> demoteToLearner(nodeId);
-            case MembershipChange.RemoveNode(var nodeId) -> removeNode(nodeId);
-        };
+        String node = change.nodeId();
+        var nextVoters = new TreeSet<>(voters);
+        var nextLearners = new TreeSet<>(learners);
+        switch (change) {
+            case MembershipChange.AddLearner _ -> {
+                require(!isMember(node), "node is already a member: " + node);
+                nextLearners.add(node);
+            }
+            case MembershipChange.PromoteToVoter _ -> {
+                require(isLearner(node), "node must be a learner to promote: " + node);
+                nextLearners.remove(node);
+                nextVoters.add(node);
+            }
+            case MembershipChange.DemoteToLearner _ -> {
+                require(isVoter(node), "node must be a voter to demote: " + node);
+                nextVoters.remove(node);
+                nextLearners.add(node);
+            }
+            case MembershipChange.RemoveNode _ -> {
+                require(isMember(node), "node is not a member: " + node);
+                nextVoters.remove(node);
+                nextLearners.remove(node);
+            }
+        }
+        require(!nextVoters.isEmpty(), "cannot remove the last voter");
+        return new RaftMembership(nextVoters, nextLearners);
     }
 
-    public RaftMembership addLearner(String nodeId) {
-        requireNonBlank(nodeId, "nodeId");
-        if (isMember(nodeId)) {
-            throw new IllegalArgumentException("node already a member: " + nodeId);
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new IllegalArgumentException(message);
         }
-        var updatedLearners = new LinkedHashSet<>(learners);
-        updatedLearners.add(nodeId);
-        return new RaftMembership(voters, updatedLearners);
     }
 
-    public RaftMembership promoteToVoter(String nodeId) {
-        requireNonBlank(nodeId, "nodeId");
-        if (!learners.contains(nodeId)) {
-            throw new IllegalArgumentException("node must be a learner to promote: " + nodeId);
-        }
-        var updatedLearners = new LinkedHashSet<>(learners);
-        updatedLearners.remove(nodeId);
-        var updatedVoters = new LinkedHashSet<>(voters);
-        updatedVoters.add(nodeId);
-        return new RaftMembership(updatedVoters, updatedLearners);
-    }
-
-    public RaftMembership demoteToLearner(String nodeId) {
-        requireNonBlank(nodeId, "nodeId");
-        if (!voters.contains(nodeId)) {
-            throw new IllegalArgumentException("node must be a voter to demote: " + nodeId);
-        }
-        if (voters.size() == 1) {
-            throw new IllegalArgumentException("cannot demote the last voter");
-        }
-        var updatedVoters = new LinkedHashSet<>(voters);
-        updatedVoters.remove(nodeId);
-        var updatedLearners = new LinkedHashSet<>(learners);
-        updatedLearners.add(nodeId);
-        return new RaftMembership(updatedVoters, updatedLearners);
-    }
-
-    public RaftMembership removeNode(String nodeId) {
-        requireNonBlank(nodeId, "nodeId");
-        if (!isMember(nodeId)) {
-            throw new IllegalArgumentException("node not a member: " + nodeId);
-        }
-        if (voters.contains(nodeId) && voters.size() == 1) {
-            throw new IllegalArgumentException("cannot remove the last voter");
-        }
-        var updatedVoters = new LinkedHashSet<>(voters);
-        updatedVoters.remove(nodeId);
-        var updatedLearners = new LinkedHashSet<>(learners);
-        updatedLearners.remove(nodeId);
-        return new RaftMembership(updatedVoters, updatedLearners);
-    }
-
-    private static Set<String> normalizeIds(Set<String> ids, String name) {
+    private static SortedSet<String> normalize(Set<String> ids, String name) {
         Objects.requireNonNull(ids, name + " must not be null");
         var normalized = new TreeSet<String>();
         for (String id : ids) {
-            normalized.add(requireNonBlank(id, "memberId"));
+            normalized.add(Validation.nodeId(id, name));
         }
         return Collections.unmodifiableSortedSet(normalized);
-    }
-
-    private static boolean disjoint(Set<String> left, Set<String> right) {
-        for (String id : left) {
-            if (right.contains(id)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static String requireNonBlank(String value, String name) {
-        Objects.requireNonNull(value, name + " must not be null");
-        if (value.isBlank()) {
-            throw new IllegalArgumentException(name + " must not be blank");
-        }
-        return value;
     }
 }

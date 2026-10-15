@@ -1,182 +1,148 @@
 package io.partdb.raft.runtime;
 
 import io.partdb.raft.RaftHardState;
+import io.partdb.raft.RaftLog;
 import io.partdb.raft.RaftLogEntry;
-import io.partdb.raft.RaftLogReader;
-import io.partdb.raft.RaftMembership;
 import io.partdb.raft.SnapshotMetadata;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-final class FileRaftStorage implements RaftLogReader, AutoCloseable {
+final class FileRaftStorage implements RaftLog, AutoCloseable {
 
-    private final SegmentedRaftLog wal;
+    private static final long SEGMENT_BYTES = 64L << 20;
+
+    private final WriteAheadLog wal;
     private final SnapshotStore snapshots;
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-
+    private final List<RaftLogEntry> entries;
     private SnapshotStore.SnapshotFile snapshot;
-    private RaftMembership membership;
+    private RaftHardState hardState;
 
-    private FileRaftStorage(SegmentedRaftLog wal, SnapshotStore snapshots, SnapshotStore.SnapshotFile snapshot) {
+    private FileRaftStorage(WriteAheadLog wal, SnapshotStore snapshots) {
         this.wal = wal;
         this.snapshots = snapshots;
-        this.snapshot = snapshot;
-        this.membership = snapshot == null ? null : snapshot.metadata().membership();
-        if (snapshot != null && !walContinues(snapshot.metadata())) {
-            wal.reset(snapshot.metadata().index());
-        }
-        recoverMembershipFromLog();
-    }
-
-    private boolean walContinues(SnapshotMetadata metadata) {
-        long index = metadata.index();
-        if (wal.firstIndex() == index + 1) {
-            return true;
-        }
-        return wal.firstIndex() <= index && index <= wal.lastIndex() && wal.term(index) == metadata.term();
+        this.snapshot = snapshots.latest().orElse(null);
+        var replay = wal.replay();
+        this.hardState = replay.hardState();
+        this.entries = new ArrayList<>(continuation(replay));
     }
 
     static FileRaftStorage open(Path directory) {
-        Path walDirectory = directory.resolve("wal");
-        SnapshotStore snapshots = SnapshotStore.open(directory.resolve("snap"));
-        SegmentedRaftLog wal = Files.exists(walDirectory)
-            ? SegmentedRaftLog.open(walDirectory)
-            : SegmentedRaftLog.create(walDirectory);
-        return new FileRaftStorage(wal, snapshots, snapshots.latest().orElse(null));
+        return new FileRaftStorage(WriteAheadLog.open(directory.resolve("wal"), SEGMENT_BYTES), SnapshotStore.open(directory.resolve("snap")));
     }
 
-    private void recoverMembershipFromLog() {
-        long committedThrough = Math.min(wal.hardState().commit(), wal.lastIndex());
-        for (RaftLogEntry entry : wal.entries(wal.firstIndex(), committedThrough + 1, Long.MAX_VALUE)) {
-            if (entry instanceof RaftLogEntry.Config(_, _, var committed)) {
-                membership = committed;
+    private List<RaftLogEntry> continuation(WriteAheadLog.Replay replay) {
+        var replayed = replay.entries();
+        if (snapshot == null) {
+            if (!replayed.isEmpty() && replayed.getFirst().index() != 1) {
+                throw new RaftStorageException.Corruption("WAL starts at " + replayed.getFirst().index() + " without a snapshot");
             }
+            return replayed;
         }
+        var metadata = snapshot.metadata();
+        long index = metadata.index();
+        boolean resetHere = replay.resetIndex().isPresent() && replay.resetIndex().getAsLong() == index;
+        boolean startsAfter = !replayed.isEmpty() && replayed.getFirst().index() == index + 1;
+        boolean containsSnapshotEntry = replayed.stream().anyMatch(entry -> entry.index() == index && entry.term() == metadata.term());
+        if (resetHere || startsAfter || containsSnapshotEntry) {
+            return replayed.stream().filter(entry -> entry.index() > index).toList();
+        }
+        wal.reset(index, metadata.term());
+        return List.of();
     }
 
     RaftHardState hardState() {
-        lock.readLock().lock();
-        try {
-            return wal.hardState();
-        } finally {
-            lock.readLock().unlock();
-        }
-    }
-
-    Optional<RaftMembership> membership() {
-        lock.readLock().lock();
-        try {
-            return Optional.ofNullable(membership);
-        } finally {
-            lock.readLock().unlock();
-        }
+        return hardState;
     }
 
     Optional<SnapshotStore.SnapshotFile> snapshot() {
-        lock.readLock().lock();
-        try {
-            return Optional.ofNullable(snapshot);
-        } finally {
-            lock.readLock().unlock();
-        }
-    }
-
-    @Override
-    public List<RaftLogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
-        lock.readLock().lock();
-        try {
-            if (snapshot != null && fromIndex <= snapshot.metadata().index()) {
-                throw new RaftException.Compacted(fromIndex, snapshot.metadata().index() + 1);
-            }
-            return wal.entries(fromIndex, toIndex, maxBytes);
-        } finally {
-            lock.readLock().unlock();
-        }
-    }
-
-    @Override
-    public long term(long index) {
-        lock.readLock().lock();
-        try {
-            if (snapshot != null && index == snapshot.metadata().index()) {
-                return snapshot.metadata().term();
-            }
-            return wal.term(index);
-        } finally {
-            lock.readLock().unlock();
-        }
+        return Optional.ofNullable(snapshot);
     }
 
     @Override
     public long firstIndex() {
-        lock.readLock().lock();
-        try {
-            return snapshot != null ? snapshot.metadata().index() + 1 : wal.firstIndex();
-        } finally {
-            lock.readLock().unlock();
-        }
+        return snapshot == null ? 1 : snapshot.metadata().index() + 1;
     }
 
     @Override
     public long lastIndex() {
-        lock.readLock().lock();
-        try {
-            return Math.max(wal.lastIndex(), snapshot != null ? snapshot.metadata().index() : 0);
-        } finally {
-            lock.readLock().unlock();
-        }
+        return entries.isEmpty() ? firstIndex() - 1 : entries.getLast().index();
     }
 
-    void append(RaftHardState hardState, List<RaftLogEntry> entries) {
-        lock.writeLock().lock();
-        try {
-            wal.append(hardState, entries);
-            for (RaftLogEntry entry : entries) {
-                if (entry instanceof RaftLogEntry.Config(_, _, var appended)) {
-                    membership = appended;
-                }
-            }
-        } finally {
-            lock.writeLock().unlock();
+    @Override
+    public long term(long index) {
+        if (snapshot != null && index == snapshot.metadata().index()) {
+            return snapshot.metadata().term();
         }
+        return entries.get(position(index)).term();
+    }
+
+    @Override
+    public List<RaftLogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
+        int from = position(fromIndex);
+        int to = Math.min(entries.size(), position(Math.max(fromIndex, toIndex)));
+        var result = new ArrayList<RaftLogEntry>();
+        long bytes = 0;
+        for (int i = from; i < to; i++) {
+            var entry = entries.get(i);
+            if (!result.isEmpty() && bytes + entry.payloadSize() > maxBytes) {
+                break;
+            }
+            result.add(entry);
+            bytes += entry.payloadSize();
+        }
+        return result;
+    }
+
+    void append(Optional<RaftHardState> state, List<RaftLogEntry> newEntries) {
+        if (!newEntries.isEmpty()) {
+            long first = newEntries.getFirst().index();
+            if (first < firstIndex() || first > lastIndex() + 1) {
+                throw new IllegalArgumentException("cannot append index " + first + " to log [" + firstIndex() + ", " + lastIndex() + "]");
+            }
+            entries.subList(position(first), entries.size()).clear();
+            entries.addAll(newEntries);
+        }
+        wal.append(state, newEntries);
+        state.ifPresent(next -> hardState = next);
     }
 
     void sync() {
-        lock.readLock().lock();
-        try {
-            wal.sync();
-        } finally {
-            lock.readLock().unlock();
-        }
+        wal.sync();
     }
 
     Path stagingFile() {
         return snapshots.stagingFile();
     }
 
-    void installSnapshot(SnapshotMetadata metadata, Path stagedPayload) {
-        lock.writeLock().lock();
-        try {
-            SnapshotStore.SnapshotFile installed = snapshots.install(metadata, stagedPayload);
-            wal.reset(metadata.index());
-            snapshot = installed;
-            membership = metadata.membership();
-        } finally {
-            lock.writeLock().unlock();
+    void installSnapshot(SnapshotMetadata metadata, Path staged) {
+        snapshot = snapshots.install(metadata, staged);
+        wal.reset(metadata.index(), metadata.term());
+        entries.clear();
+    }
+
+    void compact(SnapshotMetadata metadata, Path staged) {
+        if (metadata.index() > lastIndex() || term(metadata.index()) != metadata.term()) {
+            throw new IllegalArgumentException("snapshot " + metadata.index() + " does not match the log");
         }
+        int keepFrom = position(metadata.index() + 1);
+        snapshot = snapshots.install(metadata, staged);
+        entries.subList(0, keepFrom).clear();
+        wal.compact(metadata.index());
     }
 
     @Override
     public void close() {
-        lock.writeLock().lock();
-        try {
-            wal.close();
-        } finally {
-            lock.writeLock().unlock();
+        wal.close();
+    }
+
+    private int position(long index) {
+        long position = index - firstIndex();
+        if (position < 0) {
+            throw new IllegalArgumentException("index " + index + " is compacted; the log starts at " + firstIndex());
         }
+        return Math.toIntExact(Math.min(position, entries.size()));
     }
 }

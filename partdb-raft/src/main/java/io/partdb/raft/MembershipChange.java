@@ -5,32 +5,25 @@ public sealed interface MembershipChange {
 
     record AddLearner(String nodeId) implements MembershipChange {
         public AddLearner {
-            nodeId = requireNodeId(nodeId);
+            Validation.nodeId(nodeId, "nodeId");
         }
     }
 
     record PromoteToVoter(String nodeId) implements MembershipChange {
         public PromoteToVoter {
-            nodeId = requireNodeId(nodeId);
+            Validation.nodeId(nodeId, "nodeId");
         }
     }
 
     record DemoteToLearner(String nodeId) implements MembershipChange {
         public DemoteToLearner {
-            nodeId = requireNodeId(nodeId);
+            Validation.nodeId(nodeId, "nodeId");
         }
     }
 
     record RemoveNode(String nodeId) implements MembershipChange {
         public RemoveNode {
-            nodeId = requireNodeId(nodeId);
+            Validation.nodeId(nodeId, "nodeId");
         }
-    }
-
-    private static String requireNodeId(String nodeId) {
-        if (nodeId == null || nodeId.isBlank()) {
-            throw new IllegalArgumentException("nodeId must not be null or blank");
-        }
-        return nodeId;
     }
 }

@@ -14,7 +14,7 @@ import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.ClientCallStreamObserver;
 import io.grpc.stub.ClientResponseObserver;
-import io.grpc.stub.StreamObserver;
+import io.partdb.raft.Envelope;
 import io.partdb.raft.RaftMessage;
 import io.partdb.raft.runtime.RaftTransport;
 import io.partdb.server.peer.proto.RaftProto;
@@ -31,22 +31,23 @@ import java.nio.file.StandardOpenOption;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BiConsumer;
-import java.util.function.Function;
 
 public final class GrpcRaftTransport implements RaftTransport {
 
     private static final Logger log = LoggerFactory.getLogger(GrpcRaftTransport.class);
-    private static final int SNAPSHOT_CHUNK_SIZE = 1024 * 1024;
+    private static final int SNAPSHOT_CHUNK_BYTES = 1 << 20;
+    private static final int STREAM_CAPACITY = 4096;
 
     private final String nodeId;
     private final int port;
     private final Map<String, PeerEndpoint> peers;
     private final Map<String, ManagedChannel> channels = new ConcurrentHashMap<>();
-    private final Map<String, RaftServiceGrpc.RaftServiceStub> stubs = new ConcurrentHashMap<>();
+    private final Map<String, PeerStream> streams = new ConcurrentHashMap<>();
+    private Receiver receiver;
     private Server server;
 
     public GrpcRaftTransport(String nodeId, int port, Map<String, PeerEndpoint> peers) {
@@ -56,49 +57,36 @@ public final class GrpcRaftTransport implements RaftTransport {
     }
 
     @Override
-    public void start(Inbound inbound) {
+    public void start(Receiver receiver) {
+        this.receiver = receiver;
         try {
             server = NettyServerBuilder.forPort(port)
-                .addService(new RaftService(inbound))
+                .addService(new RaftService(nodeId, receiver))
                 .intercept(RaftService.senderInterceptor())
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .build()
                 .start();
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to start raft transport on port " + port, e);
+            throw new UncheckedIOException("failed to start raft transport on port " + port, e);
         }
         log.atInfo().addKeyValue("nodeId", nodeId).addKeyValue("port", port).log("Raft transport started");
     }
 
     @Override
-    public CompletableFuture<RaftMessage.Response> send(String to, RaftMessage.Request request) {
-        var stub = stub(to);
-        if (stub == null) {
-            return CompletableFuture.failedFuture(new IllegalArgumentException("Unknown peer: " + to));
+    public void send(Envelope envelope) {
+        var stream = streams.computeIfAbsent(envelope.to(), this::openStream);
+        if (stream == null) {
+            receiver.unreachable(envelope.to());
+            return;
         }
-        return switch (request) {
-            case RaftMessage.RequestVote message ->
-                unary(stub::requestVote, RaftProtoMapper.toProto(message), RaftProtoMapper::fromProto);
-            case RaftMessage.PreVote message ->
-                unary(stub::preVote, RaftProtoMapper.toProto(message), RaftProtoMapper::fromProto);
-            case RaftMessage.AppendEntries message ->
-                unary(stub::appendEntries, RaftProtoMapper.toProto(message), RaftProtoMapper::fromProto);
-            case RaftMessage.ReadIndexRequested message ->
-                unary(stub::readIndex, RaftProtoMapper.toProto(message), RaftProtoMapper::fromProto);
-            case RaftMessage.InstallSnapshot _ ->
-                CompletableFuture.failedFuture(new IllegalArgumentException("Snapshots must be sent with sendSnapshot"));
-        };
+        stream.send(envelope.message());
     }
 
     @Override
-    public CompletableFuture<RaftMessage.InstallSnapshotResponse> sendSnapshot(
-        String to,
-        RaftMessage.InstallSnapshot request,
-        Path payload
-    ) {
+    public CompletionStage<Void> sendSnapshot(String to, RaftMessage.InstallSnapshot request, Path payload) {
         var stub = stub(to);
         if (stub == null) {
-            return CompletableFuture.failedFuture(new IllegalArgumentException("Unknown peer: " + to));
+            return CompletableFuture.failedFuture(new IllegalArgumentException("unknown peer " + to));
         }
         FileChannel file;
         try {
@@ -108,70 +96,46 @@ public final class GrpcRaftTransport implements RaftTransport {
         }
         var upload = new SnapshotUpload(RaftProtoMapper.toProto(request), file);
         stub.installSnapshot(upload);
-        return upload.response;
+        return upload.result;
     }
 
     @Override
     public void close() {
+        streams.values().forEach(PeerStream::close);
+        streams.clear();
         if (server != null) {
-            server.shutdown();
-            awaitTermination(server::awaitTermination, server::shutdownNow);
+            server.shutdownNow();
+            awaitTermination(server::awaitTermination);
         }
         for (ManagedChannel channel : channels.values()) {
-            channel.shutdown();
-            awaitTermination(channel::awaitTermination, channel::shutdownNow);
+            channel.shutdownNow();
+            awaitTermination(channel::awaitTermination);
         }
         channels.clear();
-        stubs.clear();
         log.atInfo().addKeyValue("nodeId", nodeId).log("Raft transport stopped");
     }
 
-    private RaftServiceGrpc.RaftServiceStub stub(String peerId) {
-        PeerEndpoint endpoint = peers.get(peerId);
+    private PeerStream openStream(String peer) {
+        var stub = stub(peer);
+        return stub == null ? null : new PeerStream(peer, stub, receiver, STREAM_CAPACITY);
+    }
+
+    private RaftServiceGrpc.RaftServiceStub stub(String peer) {
+        PeerEndpoint endpoint = peers.get(peer);
         if (endpoint == null) {
             return null;
         }
-        return stubs.computeIfAbsent(peerId, id -> {
-            ManagedChannel channel = channels.computeIfAbsent(id, _ -> NettyChannelBuilder
-                .forAddress(endpoint.host(), endpoint.port())
-                .usePlaintext()
-                .build());
-            return RaftServiceGrpc.newStub(channel).withInterceptors(new SenderInterceptor());
-        });
+        var channel = channels.computeIfAbsent(peer, _ -> NettyChannelBuilder
+            .forAddress(endpoint.host(), endpoint.port())
+            .usePlaintext()
+            .build());
+        return RaftServiceGrpc.newStub(channel).withInterceptors(new SenderInterceptor());
     }
 
-    private static <Req, Resp> CompletableFuture<RaftMessage.Response> unary(
-        BiConsumer<Req, StreamObserver<Resp>> call,
-        Req request,
-        Function<Resp, ? extends RaftMessage.Response> mapper
-    ) {
-        var future = new CompletableFuture<RaftMessage.Response>();
-        call.accept(request, new StreamObserver<>() {
-            @Override
-            public void onNext(Resp response) {
-                future.complete(mapper.apply(response));
-            }
-
-            @Override
-            public void onError(Throwable error) {
-                future.completeExceptionally(error);
-            }
-
-            @Override
-            public void onCompleted() {
-            }
-        });
-        return future;
-    }
-
-    private static void awaitTermination(Termination termination, Runnable forceShutdown) {
+    private static void awaitTermination(Termination termination) {
         try {
-            if (!termination.await(5, TimeUnit.SECONDS)) {
-                forceShutdown.run();
-                termination.await(5, TimeUnit.SECONDS);
-            }
+            termination.await(5, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
-            forceShutdown.run();
             Thread.currentThread().interrupt();
         }
     }
@@ -203,10 +167,10 @@ public final class GrpcRaftTransport implements RaftTransport {
 
         private final RaftProto.SnapshotHeader header;
         private final FileChannel file;
-        private final CompletableFuture<RaftMessage.InstallSnapshotResponse> response = new CompletableFuture<>();
+        private final CompletableFuture<Void> result = new CompletableFuture<>();
         private ClientCallStreamObserver<RaftProto.InstallSnapshotRequest> requests;
         private boolean headerSent;
-        private volatile boolean finished;
+        private boolean finished;
 
         private SnapshotUpload(RaftProto.SnapshotHeader header, FileChannel file) {
             this.header = header;
@@ -219,7 +183,7 @@ public final class GrpcRaftTransport implements RaftTransport {
             requests.setOnReadyHandler(this::pump);
         }
 
-        private void pump() {
+        private synchronized void pump() {
             try {
                 while (!finished && requests.isReady()) {
                     if (!headerSent) {
@@ -227,10 +191,10 @@ public final class GrpcRaftTransport implements RaftTransport {
                         headerSent = true;
                         continue;
                     }
-                    ByteBuffer chunk = ByteBuffer.allocate(SNAPSHOT_CHUNK_SIZE);
+                    ByteBuffer chunk = ByteBuffer.allocate(SNAPSHOT_CHUNK_BYTES);
                     if (file.read(chunk) < 0) {
                         finished = true;
-                        file.close();
+                        closeFile();
                         requests.onCompleted();
                         return;
                     }
@@ -242,25 +206,25 @@ public final class GrpcRaftTransport implements RaftTransport {
                 finished = true;
                 closeFile();
                 requests.onError(e);
-                response.completeExceptionally(e);
+                result.completeExceptionally(e);
             }
         }
 
         @Override
         public void onNext(RaftProto.InstallSnapshotResponse value) {
-            response.complete(RaftProtoMapper.fromProto(value));
         }
 
         @Override
-        public void onError(Throwable error) {
+        public synchronized void onError(Throwable error) {
             finished = true;
             closeFile();
-            response.completeExceptionally(error);
+            result.completeExceptionally(error);
         }
 
         @Override
         public void onCompleted() {
             closeFile();
+            result.complete(null);
         }
 
         private void closeFile() {

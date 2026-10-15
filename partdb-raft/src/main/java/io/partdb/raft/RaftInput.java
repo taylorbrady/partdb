@@ -6,40 +6,56 @@ import java.util.Objects;
 
 public sealed interface RaftInput {
     record Tick() implements RaftInput {}
-    record EntryProposed(Bytes data) implements RaftInput {
-        public EntryProposed {
-            data = Objects.requireNonNull(data, "data must not be null");
+
+    record Propose(long id, Bytes command) implements RaftInput {
+        public Propose {
+            Objects.requireNonNull(command, "command must not be null");
         }
     }
-    record MessageReceived(String from, RaftMessage message) implements RaftInput {}
-    record ReadIndexRequested(long context) implements RaftInput {}
 
-    record MembershipChangeProposed(MembershipChange change) implements RaftInput {
-        public MembershipChangeProposed {
+    record Receive(String from, RaftMessage message) implements RaftInput {
+        public Receive {
+            Validation.nodeId(from, "from");
+            Objects.requireNonNull(message, "message must not be null");
+        }
+    }
+
+    record ReadIndex(long id) implements RaftInput {}
+
+    record ChangeMembership(long id, MembershipChange change) implements RaftInput {
+        public ChangeMembership {
             Objects.requireNonNull(change, "change must not be null");
         }
     }
 
-    record EntriesPersisted(long index, long term) implements RaftInput {
-        public EntriesPersisted {
-            if (index < 0) {
-                throw new IllegalArgumentException("index must be non-negative");
-            }
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
+    record TransferLeadership(String target) implements RaftInput {
+        public TransferLeadership {
+            Validation.nodeId(target, "target");
         }
     }
 
-    record SnapshotPersisted() implements RaftInput {}
-
-    record Applied(long index) implements RaftInput {
-        public Applied {
-            if (index < 0) {
-                throw new IllegalArgumentException("index must be non-negative");
-            }
+    record Persisted(long index, long term) implements RaftInput {
+        public Persisted {
+            Validation.positive(index, "index");
+            Validation.positive(term, "term");
         }
     }
 
-    record ReplayCommitted() implements RaftInput {}
+    record SnapshotSent(String peer) implements RaftInput {
+        public SnapshotSent {
+            Validation.nodeId(peer, "peer");
+        }
+    }
+
+    record SnapshotFailed(String peer) implements RaftInput {
+        public SnapshotFailed {
+            Validation.nodeId(peer, "peer");
+        }
+    }
+
+    record Unreachable(String peer) implements RaftInput {
+        public Unreachable {
+            Validation.nodeId(peer, "peer");
+        }
+    }
 }

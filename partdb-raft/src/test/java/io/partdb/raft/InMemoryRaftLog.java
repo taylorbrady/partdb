@@ -4,33 +4,22 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-final class InMemoryRaftLog implements RaftLogReader {
-    private volatile RaftHardState hardState = RaftHardState.INITIAL;
+final class InMemoryRaftLog implements RaftLog {
     private final List<RaftLogEntry> entries = new ArrayList<>();
-    private volatile SnapshotMetadata snapshot;
-    private volatile RaftMembership configuration;
+    private RaftHardState hardState = RaftHardState.INITIAL;
+    private SnapshotMetadata snapshot;
 
-    InMemoryRaftLog(RaftMembership initialConfiguration) {
-        this.configuration = initialConfiguration;
+    @Override
+    public long firstIndex() {
+        return snapshot != null ? snapshot.index() + 1 : 1;
     }
 
     @Override
-    public List<RaftLogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
-        List<RaftLogEntry> result = new ArrayList<>();
-        long bytes = 0;
-        for (RaftLogEntry entry : entries) {
-            if (entry.index() >= fromIndex && entry.index() < toIndex) {
-                result.add(entry);
-                switch (entry) {
-                    case RaftLogEntry.Data data -> bytes += data.data().size();
-                    case RaftLogEntry.NoOp _, RaftLogEntry.Config _ -> {}
-                }
-                if (bytes >= maxBytes && !result.isEmpty()) {
-                    break;
-                }
-            }
+    public long lastIndex() {
+        if (!entries.isEmpty()) {
+            return entries.getLast().index();
         }
-        return result;
+        return snapshot != null ? snapshot.index() : 0;
     }
 
     @Override
@@ -38,74 +27,75 @@ final class InMemoryRaftLog implements RaftLogReader {
         if (snapshot != null && index == snapshot.index()) {
             return snapshot.term();
         }
-        for (RaftLogEntry entry : entries) {
-            if (entry.index() == index) {
-                return entry.term();
-            }
+        if (index < firstIndex() || index > lastIndex()) {
+            throw new IllegalArgumentException("index " + index + " is outside [" + firstIndex() + ", " + lastIndex() + "]");
         }
-        return 0;
+        return entries.get(position(index)).term();
     }
 
     @Override
-    public long firstIndex() {
-        if (entries.isEmpty()) {
-            return snapshot != null ? snapshot.index() + 1 : 1;
+    public List<RaftLogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
+        if (fromIndex < firstIndex()) {
+            throw new IllegalArgumentException("index " + fromIndex + " is compacted");
         }
-        return entries.getFirst().index();
-    }
-
-    @Override
-    public long lastIndex() {
-        if (entries.isEmpty()) {
-            return snapshot != null ? snapshot.index() : 0;
-        }
-        return entries.getLast().index();
-    }
-
-    public void append(RaftHardState hardState, List<RaftLogEntry> newEntries) {
-        if (hardState != null) {
-            this.hardState = hardState;
-        }
-
-        if (newEntries.isEmpty()) {
-            return;
-        }
-
-        long firstNewIndex = newEntries.getFirst().index();
-        entries.removeIf(e -> e.index() >= firstNewIndex);
-        entries.addAll(newEntries);
-
-        for (RaftLogEntry entry : newEntries) {
-            switch (entry) {
-                case RaftLogEntry.Config config -> this.configuration = config.membership();
-                case RaftLogEntry.Data _, RaftLogEntry.NoOp _ -> {}
+        var result = new ArrayList<RaftLogEntry>();
+        long bytes = 0;
+        for (long index = fromIndex; index < Math.min(toIndex, lastIndex() + 1); index++) {
+            var entry = entries.get(position(index));
+            if (!result.isEmpty() && bytes + entry.payloadSize() > maxBytes) {
+                break;
             }
+            result.add(entry);
+            bytes += entry.payloadSize();
         }
+        return result;
     }
 
-    public void sync() {
-    }
-
-    public RaftHardState hardState() {
+    RaftHardState hardState() {
         return hardState;
     }
 
-    public List<RaftLogEntry> entries() {
-        return List.copyOf(entries);
-    }
-
-    public Optional<SnapshotMetadata> snapshot() {
+    Optional<SnapshotMetadata> snapshot() {
         return Optional.ofNullable(snapshot);
     }
 
-    public void compact(SnapshotMetadata snapshot) {
-        this.snapshot = snapshot;
-        entries.removeIf(e -> e.index() <= snapshot.index());
+    List<RaftLogEntry> entries() {
+        return List.copyOf(entries);
     }
 
-    public void installSnapshot(SnapshotMetadata snapshot) {
-        this.snapshot = snapshot;
-        this.configuration = snapshot.membership();
+    void persistHardState(RaftHardState state) {
+        hardState = state;
+    }
+
+    void persist(RaftEffects effects) {
+        effects.snapshot().ifPresent(this::installSnapshot);
+        effects.hardState().ifPresent(state -> hardState = state);
+        append(effects.entries());
+    }
+
+    void append(List<RaftLogEntry> newEntries) {
+        if (newEntries.isEmpty()) {
+            return;
+        }
+        long first = newEntries.getFirst().index();
+        if (first > lastIndex() + 1) {
+            throw new IllegalArgumentException("append leaves a gap before index " + first);
+        }
+        entries.removeIf(entry -> entry.index() >= first);
+        entries.addAll(newEntries);
+    }
+
+    void compact(SnapshotMetadata metadata) {
+        snapshot = metadata;
+        entries.removeIf(entry -> entry.index() <= metadata.index());
+    }
+
+    void installSnapshot(SnapshotMetadata metadata) {
+        snapshot = metadata;
         entries.clear();
+    }
+
+    private int position(long index) {
+        return Math.toIntExact(index - entries.getFirst().index());
     }
 }

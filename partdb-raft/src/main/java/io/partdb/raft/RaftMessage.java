@@ -6,132 +6,110 @@ import java.util.Objects;
 public sealed interface RaftMessage {
     long term();
 
-    sealed interface Request extends RaftMessage {}
-    sealed interface Response extends RaftMessage {}
-
-    record AppendEntries(
-        long term,
-        String leaderId,
-        long prevLogIndex,
-        long prevLogTerm,
-        List<RaftLogEntry> entries,
-        long leaderCommit,
-        long round
-    ) implements Request {
-        public AppendEntries {
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
-            Objects.requireNonNull(leaderId, "leaderId must not be null");
-            entries = List.copyOf(Objects.requireNonNull(entries, "entries must not be null"));
+    record PreVote(long term, long lastLogIndex, long lastLogTerm) implements RaftMessage {
+        public PreVote {
+            Validation.nonNegative(term, "term");
+            Validation.nonNegative(lastLogIndex, "lastLogIndex");
+            Validation.nonNegative(lastLogTerm, "lastLogTerm");
         }
     }
 
-    record AppendEntriesResponse(
-        long term,
-        boolean success,
-        long matchIndex,
-        long round
-    ) implements Response {
-        public AppendEntriesResponse {
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
+    record PreVoteResponse(long term, boolean granted) implements RaftMessage {
+        public PreVoteResponse {
+            Validation.nonNegative(term, "term");
         }
     }
 
-    record RequestVote(
-        long term,
-        String candidateId,
-        long lastLogIndex,
-        long lastLogTerm
-    ) implements Request {
+    record RequestVote(long term, long lastLogIndex, long lastLogTerm, boolean leadershipTransfer) implements RaftMessage {
         public RequestVote {
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
-            Objects.requireNonNull(candidateId, "candidateId must not be null");
+            Validation.nonNegative(term, "term");
+            Validation.nonNegative(lastLogIndex, "lastLogIndex");
+            Validation.nonNegative(lastLogTerm, "lastLogTerm");
         }
     }
 
-    record RequestVoteResponse(
-        long term,
-        boolean voteGranted
-    ) implements Response {
+    record RequestVoteResponse(long term, boolean granted) implements RaftMessage {
         public RequestVoteResponse {
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
+            Validation.nonNegative(term, "term");
         }
     }
 
-    record InstallSnapshot(
-        long term,
-        String leaderId,
-        SnapshotMetadata snapshot
-    ) implements Request {
+    record AppendEntries(long term, long prevLogIndex, long prevLogTerm, List<RaftLogEntry> entries, long commitIndex)
+        implements RaftMessage {
+        public AppendEntries {
+            Validation.nonNegative(term, "term");
+            Validation.nonNegative(prevLogIndex, "prevLogIndex");
+            Validation.nonNegative(prevLogTerm, "prevLogTerm");
+            entries = List.copyOf(Objects.requireNonNull(entries, "entries must not be null"));
+            Validation.nonNegative(commitIndex, "commitIndex");
+        }
+    }
+
+    record AppendAccepted(long term, long matchIndex) implements RaftMessage {
+        public AppendAccepted {
+            Validation.nonNegative(term, "term");
+            Validation.nonNegative(matchIndex, "matchIndex");
+        }
+    }
+
+    record AppendRejected(long term, long rejectedIndex, long hintIndex, long hintTerm) implements RaftMessage {
+        public AppendRejected {
+            Validation.nonNegative(term, "term");
+            Validation.nonNegative(rejectedIndex, "rejectedIndex");
+            Validation.nonNegative(hintIndex, "hintIndex");
+            Validation.nonNegative(hintTerm, "hintTerm");
+        }
+    }
+
+    record Heartbeat(long term, long commitIndex, long round) implements RaftMessage {
+        public Heartbeat {
+            Validation.nonNegative(term, "term");
+            Validation.nonNegative(commitIndex, "commitIndex");
+            Validation.nonNegative(round, "round");
+        }
+    }
+
+    record HeartbeatResponse(long term, long round) implements RaftMessage {
+        public HeartbeatResponse {
+            Validation.nonNegative(term, "term");
+            Validation.nonNegative(round, "round");
+        }
+    }
+
+    record InstallSnapshot(long term, SnapshotMetadata snapshot) implements RaftMessage {
         public InstallSnapshot {
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
-            Objects.requireNonNull(leaderId, "leaderId must not be null");
+            Validation.nonNegative(term, "term");
             Objects.requireNonNull(snapshot, "snapshot must not be null");
         }
     }
 
-    record InstallSnapshotResponse(long term, long matchIndex) implements Response {
+    record InstallSnapshotResponse(long term, long matchIndex) implements RaftMessage {
         public InstallSnapshotResponse {
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
+            Validation.nonNegative(term, "term");
+            Validation.nonNegative(matchIndex, "matchIndex");
         }
     }
 
-    record PreVote(
-        long term,
-        String candidateId,
-        long lastLogIndex,
-        long lastLogTerm
-    ) implements Request {
-        public PreVote {
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
-            Objects.requireNonNull(candidateId, "candidateId must not be null");
+    record ReadIndex(long term, long id) implements RaftMessage {
+        public ReadIndex {
+            Validation.nonNegative(term, "term");
         }
     }
 
-    record PreVoteResponse(
-        long term,
-        boolean voteGranted
-    ) implements Response {
-        public PreVoteResponse {
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
-        }
-    }
-
-    record ReadIndexRequested(
-        long term,
-        long context
-    ) implements Request {
-        public ReadIndexRequested {
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
-        }
-    }
-
-    record ReadIndexResponse(
-        long term,
-        long readIndex,
-        long context
-    ) implements Response {
+    record ReadIndexResponse(long term, long id, long readIndex) implements RaftMessage {
         public ReadIndexResponse {
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
+            Validation.nonNegative(term, "term");
+            Validation.nonNegative(readIndex, "readIndex");
+        }
+
+        public boolean rejected() {
+            return readIndex == 0;
+        }
+    }
+
+    record TimeoutNow(long term) implements RaftMessage {
+        public TimeoutNow {
+            Validation.nonNegative(term, "term");
         }
     }
 }

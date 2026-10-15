@@ -6,42 +6,36 @@ import java.util.Objects;
 
 public sealed interface RaftLogEntry {
     long index();
+
     long term();
 
-    record Data(long index, long term, Bytes data) implements RaftLogEntry {
-        public Data {
-            if (index < 1) {
-                throw new IllegalArgumentException("index must be positive");
-            }
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
-            data = Objects.requireNonNull(data, "data must not be null");
+    default long payloadSize() {
+        return switch (this) {
+            case Command command -> command.command().size();
+            case Membership _, NoOp _ -> 0;
+        };
+    }
+
+    record Command(long index, long term, Bytes command) implements RaftLogEntry {
+        public Command {
+            Validation.positive(index, "index");
+            Validation.positive(term, "term");
+            Objects.requireNonNull(command, "command must not be null");
+        }
+    }
+
+    record Membership(long index, long term, RaftMembership membership) implements RaftLogEntry {
+        public Membership {
+            Validation.positive(index, "index");
+            Validation.positive(term, "term");
+            Objects.requireNonNull(membership, "membership must not be null");
         }
     }
 
     record NoOp(long index, long term) implements RaftLogEntry {
         public NoOp {
-            if (index < 1) {
-                throw new IllegalArgumentException("index must be positive");
-            }
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
-        }
-    }
-
-    record Config(long index, long term, RaftMembership membership) implements RaftLogEntry {
-        public Config {
-            if (index < 1) {
-                throw new IllegalArgumentException("index must be positive");
-            }
-            if (term < 0) {
-                throw new IllegalArgumentException("term must be non-negative");
-            }
-            if (membership == null) {
-                throw new IllegalArgumentException("membership must not be null");
-            }
+            Validation.positive(index, "index");
+            Validation.positive(term, "term");
         }
     }
 }
