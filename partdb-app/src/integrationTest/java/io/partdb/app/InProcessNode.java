@@ -8,6 +8,7 @@ import io.partdb.server.PartDbServerConfig;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.function.UnaryOperator;
 
 final class InProcessNode implements TestClusterNode {
     private final String nodeId;
@@ -16,16 +17,20 @@ final class InProcessNode implements TestClusterNode {
     private PartDbServer server;
 
     InProcessNode(Path rootDir, NodeSpec spec) {
+        this(rootDir, spec, UnaryOperator.identity());
+    }
+
+    InProcessNode(Path rootDir, NodeSpec spec, UnaryOperator<PartDbServerConfig> customize) {
         this.nodeId = spec.nodeId();
         this.endpoint = spec.grpcEndpoint();
-        this.config = PartDbServerConfig.create(
+        this.config = customize.apply(PartDbServerConfig.create(
             spec.nodeId(),
             spec.raftPeerAddresses(),
             rootDir.resolve(spec.nodeId()),
             spec.raftPort(),
             spec.grpcPort(),
             spec.adminPort()
-        );
+        ));
     }
 
     @Override

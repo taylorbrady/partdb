@@ -13,6 +13,7 @@ public record RaftStatus(
     Optional<String> leaderId,
     long commitIndex,
     long appliedIndex,
+    long snapshotIndex,
     Optional<Instant> lastLeaderChange,
     boolean running
 ) {

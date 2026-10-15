@@ -189,6 +189,30 @@ class MultiNodeClusterIntegrationTest {
         }
     }
 
+    @Test
+    void restartedFollowerInstallsSnapshotOverPeerTransport() throws Exception {
+        try (var cluster = TestCluster.create(3, spec -> new InProcessNode(tempDir, spec, config -> config.withSnapshotThreshold(8)))) {
+            cluster.startAll();
+
+            var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+            String followerId = anyFollower(cluster, leader.nodeId());
+            cluster.stopNode(followerId);
+
+            try (var client = cluster.newKvClient()) {
+                for (int i = 0; i < REPLAY_WRITE_COUNT; i++) {
+                    client.put(Bytes.utf8("compacted-" + i), Bytes.utf8("value-" + i)).get();
+                }
+            }
+
+            cluster.startNode(followerId);
+            cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+
+            for (int i = 0; i < REPLAY_WRITE_COUNT; i++) {
+                cluster.awaitNodeValue(followerId, "compacted-" + i, "value-" + i, CLUSTER_TIMEOUT);
+            }
+        }
+    }
+
     private TestCluster<InProcessNode> newCluster() throws IOException {
         return TestCluster.create(3, spec -> new InProcessNode(tempDir, spec));
     }

@@ -30,6 +30,10 @@ public record PartDbServerConfig(
         return nodeConfig.nodeId();
     }
 
+    public PartDbServerConfig withSnapshotThreshold(long threshold) {
+        return new PartDbServerConfig(nodeConfig.withSnapshotThreshold(threshold), raftPeerEndpoints, raftPort, grpcPort, adminPort);
+    }
+
     public static PartDbServerConfig create(
         String nodeId,
         Map<String, String> raftPeerAddresses,

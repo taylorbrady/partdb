@@ -183,7 +183,7 @@ public final class PartDbNode implements AutoCloseable {
                 StandardOpenOption.WRITE
             )) {
                 OutputStream out = new BufferedOutputStream(Channels.newOutputStream(channel));
-                revision = stateMachine.checkpoint(out);
+                revision = stateMachine.snapshot(out);
                 out.flush();
                 channel.force(true);
             }

@@ -91,7 +91,8 @@ public final class PartDbStateMachine implements StateMachine, AutoCloseable {
         return lastApplied;
     }
 
-    public long checkpoint(OutputStream target) {
+    @Override
+    public long snapshot(OutputStream target) {
         return store.checkpoint(target).value();
     }
 

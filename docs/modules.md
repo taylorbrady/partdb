@@ -92,7 +92,10 @@ The module has two packages:
   `RaftTransport` SPI, applies committed entries to a `StateMachine`, and
   completes proposals, read barriers, membership changes, and leadership
   transfers. Storage is an append-only write-ahead log replayed into memory
-  plus file-based snapshots streamed to lagging peers.
+  plus file-based snapshots. Once the applied index runs `snapshotThreshold`
+  entries past the last snapshot, the runtime asks the `StateMachine` for a
+  point-in-time snapshot and compacts the log behind it; lagging peers
+  receive that snapshot as a stream.
 
 Membership, role, and status are modeled once (`RaftMembership`, `RaftRole`,
 `RaftStatus`) and used as-is by the node API.

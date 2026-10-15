@@ -18,10 +18,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -69,6 +72,8 @@ public final class RaftRuntime implements AutoCloseable {
 
         record SnapshotDelivered(String peer, boolean delivered) implements Event {}
 
+        record SnapshotCreated(Path payload, long index, Throwable failure) implements Event {}
+
         record Shutdown() implements Event {}
     }
 
@@ -94,9 +99,12 @@ public final class RaftRuntime implements AutoCloseable {
 
     private record PendingTransfer(String target, long deadline, CompletableFuture<Void> future) {}
 
+    private record SnapshotTask(Path payload, CompletableFuture<Long> index) {}
+
     private final String nodeId;
     private final long tickNanos;
     private final long transferTimeoutNanos;
+    private final long snapshotThreshold;
     private final Raft raft;
     private final FileRaftStorage storage;
     private final RaftTransport transport;
@@ -111,8 +119,11 @@ public final class RaftRuntime implements AutoCloseable {
     private final List<PendingTransfer> transfers = new ArrayList<>();
     private final Map<Long, Path> stagedSnapshots = new HashMap<>();
     private final Set<String> snapshotTransfers = new HashSet<>();
+    private final NavigableMap<Long, RaftMembership> membershipHistory = new TreeMap<>();
 
     private long requestIds;
+    private long snapshotIndex;
+    private SnapshotTask snapshotTask;
     private RaftHardState syncedState;
     private RaftRole lastRole;
     private Optional<String> lastLeader;
@@ -126,6 +137,7 @@ public final class RaftRuntime implements AutoCloseable {
         this.nodeId = config.nodeId();
         this.tickNanos = config.tickInterval().toNanos();
         this.transferTimeoutNanos = 2L * config.options().electionTicks() * tickNanos;
+        this.snapshotThreshold = config.snapshotThreshold();
         this.raft = raft;
         this.storage = storage;
         this.transport = transport;
@@ -133,6 +145,17 @@ public final class RaftRuntime implements AutoCloseable {
         this.syncedState = storage.hardState();
         this.lastRole = raft.role();
         this.lastLeader = raft.leaderId();
+        this.snapshotIndex = storage.firstIndex() - 1;
+        membershipHistory.put(snapshotIndex, storage.snapshot()
+            .map(file -> file.metadata().membership())
+            .orElse(config.initialMembership()));
+        if (raft.appliedIndex() > snapshotIndex) {
+            for (RaftLogEntry entry : storage.entries(snapshotIndex + 1, raft.appliedIndex() + 1, Long.MAX_VALUE)) {
+                if (entry instanceof RaftLogEntry.Membership(long index, _, var next)) {
+                    membershipHistory.put(index, next);
+                }
+            }
+        }
         applied.advance(raft.appliedIndex());
     }
 
@@ -294,6 +317,7 @@ public final class RaftRuntime implements AutoCloseable {
                 }
                 processReady();
                 discardUnusedSnapshots();
+                maybeSnapshot();
                 resolveTransfers(now);
                 observeLeadership();
                 publishStatus();
@@ -338,6 +362,7 @@ public final class RaftRuntime implements AutoCloseable {
                 snapshotTransfers.remove(peer);
                 raft.step(delivered ? new RaftInput.SnapshotSent(peer) : new RaftInput.SnapshotFailed(peer));
             }
+            case Event.SnapshotCreated(var payload, long index, var failure) -> compact(payload, index, failure);
             case Event.Shutdown() -> {
             }
         }
@@ -379,8 +404,14 @@ public final class RaftRuntime implements AutoCloseable {
         if (staged == null) {
             throw new IllegalStateException("raft accepted snapshot " + metadata.index() + " without a payload");
         }
+        if (snapshotTask != null) {
+            snapshotTask.index().handle((_, _) -> null).join();
+        }
         storage.installSnapshot(metadata, staged);
         restore(stateMachine, storage.snapshot().orElseThrow());
+        snapshotIndex = metadata.index();
+        membershipHistory.clear();
+        membershipHistory.put(metadata.index(), metadata.membership());
         var superseded = commits.headMap(metadata.index(), true);
         superseded.forEach((index, pending) -> pending.fail(new RaftException.OutcomeUnknown(index)));
         superseded.clear();
@@ -425,6 +456,7 @@ public final class RaftRuntime implements AutoCloseable {
                 }
             }
             case RaftLogEntry.Membership change -> {
+                membershipHistory.put(change.index(), change.membership());
                 if (ours && pending instanceof PendingMembership(_, var future)) {
                     future.complete(change.membership());
                     return;
@@ -496,6 +528,48 @@ public final class RaftRuntime implements AutoCloseable {
         });
     }
 
+    private void maybeSnapshot() {
+        if (snapshotTask != null || applied.lastApplied() - snapshotIndex < snapshotThreshold) {
+            return;
+        }
+        Path payload = storage.stagingFile();
+        var index = CompletableFuture.supplyAsync(() -> writeSnapshot(payload), CALLBACKS);
+        snapshotTask = new SnapshotTask(payload, index);
+        index.whenComplete((value, error) -> events.add(new Event.SnapshotCreated(payload, error == null ? value : 0, error)));
+    }
+
+    private long writeSnapshot(Path payload) {
+        try (FileChannel channel = FileChannel.open(payload, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            OutputStream out = new BufferedOutputStream(Channels.newOutputStream(channel));
+            long index = stateMachine.snapshot(out);
+            out.flush();
+            channel.force(true);
+            return index;
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to write snapshot " + payload, e);
+        }
+    }
+
+    private void compact(Path payload, long index, Throwable failure) {
+        if (snapshotTask != null && snapshotTask.payload().equals(payload)) {
+            snapshotTask = null;
+        }
+        if (failure != null) {
+            log.atWarn().addKeyValue("nodeId", nodeId).setCause(failure).log("Snapshot failed");
+            deleteQuietly(payload);
+            return;
+        }
+        if (index <= snapshotIndex) {
+            deleteQuietly(payload);
+            return;
+        }
+        var metadata = new SnapshotMetadata(index, storage.term(index), membershipHistory.floorEntry(index).getValue());
+        storage.compact(metadata, payload);
+        snapshotIndex = index;
+        membershipHistory.headMap(membershipHistory.floorKey(index), false).clear();
+        log.atDebug().addKeyValue("nodeId", nodeId).addKeyValue("index", index).log("Compacted raft log");
+    }
+
     private void discardUnusedSnapshots() {
         stagedSnapshots.values().forEach(RaftRuntime::deleteQuietly);
         stagedSnapshots.clear();
@@ -542,6 +616,7 @@ public final class RaftRuntime implements AutoCloseable {
             raft.leaderId(),
             raft.commitIndex(),
             applied.lastApplied(),
+            snapshotIndex,
             Optional.ofNullable(lastLeaderChange),
             running
         );
@@ -566,6 +641,7 @@ public final class RaftRuntime implements AutoCloseable {
                 case Event.ChangeMembership(_, var future) -> future.completeExceptionally(error);
                 case Event.Transfer(_, var future) -> future.completeExceptionally(error);
                 case Event.SnapshotReceived(_, _, var payload) -> deleteQuietly(payload);
+                case Event.SnapshotCreated(var payload, _, _) -> deleteQuietly(payload);
                 case Event.Input _, Event.SnapshotDelivered _, Event.Shutdown _ -> {
                 }
             }

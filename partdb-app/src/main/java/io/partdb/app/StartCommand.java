@@ -26,6 +26,7 @@ record StartCommand(PartDbServerConfig config, Path dataDir) implements AppComma
               --raft-port <port>          Port for Raft communication (default: 8100)
               --grpc-port <port>          Port for gRPC API traffic (default: 8101)
               --admin-port <port>         Port for admin health checks (default: 8102)
+              --snapshot-threshold <n>    Applied entries between Raft snapshots (default: 10000)
           -h, --help                      Show this help message
 
         Examples:
@@ -50,6 +51,7 @@ record StartCommand(PartDbServerConfig config, Path dataDir) implements AppComma
         int raftPort = DEFAULT_RAFT_PORT;
         int grpcPort = DEFAULT_GRPC_PORT;
         int adminPort = DEFAULT_ADMIN_PORT;
+        Long snapshotThreshold = null;
 
         while (args.hasNext()) {
             String arg = args.next();
@@ -67,6 +69,7 @@ record StartCommand(PartDbServerConfig config, Path dataDir) implements AppComma
                     case "--raft-port" -> raftPort = args.requireIntValue("--raft-port");
                     case "--grpc-port" -> grpcPort = args.requireIntValue("--grpc-port");
                     case "--admin-port" -> adminPort = args.requireIntValue("--admin-port");
+                    case "--snapshot-threshold" -> snapshotThreshold = (long) args.requireIntValue("--snapshot-threshold");
                     default -> {
                         return new ErrorCommand("unknown option: " + arg, USAGE);
                     }
@@ -85,7 +88,7 @@ record StartCommand(PartDbServerConfig config, Path dataDir) implements AppComma
 
         try {
             var config = PartDbServerConfig.create(nodeId, raftPeerAddresses, dataDir, raftPort, grpcPort, adminPort);
-            return new StartCommand(config, dataDir);
+            return new StartCommand(snapshotThreshold == null ? config : config.withSnapshotThreshold(snapshotThreshold), dataDir);
         } catch (IllegalArgumentException e) {
             return new ErrorCommand(e.getMessage(), USAGE);
         }

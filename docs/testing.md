@@ -172,22 +172,19 @@ checks, and must not be attached to `check` or `ci`. See
   bind failures during startup.
 - Process tests use graceful process termination. They do not yet cover forced
   kills during log writes, compaction, snapshot creation, or shutdown.
-- Network partitions are not simulated. Current failover tests stop a node
-  rather than dropping or delaying Raft traffic.
+- Network partitions are simulated in `partdb-raft` (`SimulationTest`,
+  `ClusterTest`, `RaftRuntimeTest`) but not over the gRPC peer transport;
+  process-level failover tests stop a node rather than dropping traffic.
 - Startup readiness is inferred through cluster status polling. There is no
   dedicated test that exercises `/livez` and `/readyz` for all lifecycle states.
-- Snapshot transfer is covered at the runtime level but not in an end-to-end
-  gRPC cluster test. The runtime does not compact its log on its own yet, so
-  in a live cluster snapshots only exist after a restore from backup.
 - Linearizable multi-key read views are not implemented yet, so there is no
   consistency proof for multi-key reads beyond scan behavior.
 
 ## Next Testing Goals
 
-1. Add automatic log compaction, then a cluster test that forces a restarted
-   peer to install a snapshot over the gRPC peer transport.
-2. Add startup failure tests for occupied ports and invalid peer configuration.
-3. Add health endpoint lifecycle tests for starting, ready, leaderless, and
+1. Add startup failure tests for occupied ports and invalid peer configuration.
+2. Add health endpoint lifecycle tests for starting, ready, leaderless, and
    shutting-down states.
-4. Add crash-recovery tests that kill a process without graceful shutdown.
-5. Add network fault injection once the Raft transport boundary is clearer.
+3. Add crash-recovery tests that kill a process without graceful shutdown.
+4. Add fault injection to the gRPC peer transport so process-level tests can
+   drop and delay Raft traffic.

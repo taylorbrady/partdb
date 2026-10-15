@@ -6,8 +6,15 @@ import io.partdb.raft.RaftOptions;
 import java.time.Duration;
 import java.util.Objects;
 
-public record RaftConfig(String nodeId, RaftMembership initialMembership, Duration tickInterval, RaftOptions options) {
+public record RaftConfig(
+    String nodeId,
+    RaftMembership initialMembership,
+    Duration tickInterval,
+    RaftOptions options,
+    long snapshotThreshold
+) {
     public static final Duration DEFAULT_TICK_INTERVAL = Duration.ofMillis(10);
+    public static final long DEFAULT_SNAPSHOT_THRESHOLD = 10_000;
 
     public RaftConfig {
         Objects.requireNonNull(nodeId, "nodeId must not be null");
@@ -23,9 +30,16 @@ public record RaftConfig(String nodeId, RaftMembership initialMembership, Durati
         if (!tickInterval.isPositive()) {
             throw new IllegalArgumentException("tickInterval must be positive");
         }
+        if (snapshotThreshold <= 0) {
+            throw new IllegalArgumentException("snapshotThreshold must be positive");
+        }
     }
 
     public RaftConfig(String nodeId, RaftMembership initialMembership) {
-        this(nodeId, initialMembership, DEFAULT_TICK_INTERVAL, RaftOptions.defaults());
+        this(nodeId, initialMembership, DEFAULT_TICK_INTERVAL, RaftOptions.defaults(), DEFAULT_SNAPSHOT_THRESHOLD);
+    }
+
+    public RaftConfig withSnapshotThreshold(long threshold) {
+        return new RaftConfig(nodeId, initialMembership, tickInterval, options, threshold);
     }
 }

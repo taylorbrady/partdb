@@ -11,6 +11,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -48,8 +49,10 @@ class RaftRuntimeTest {
         runtimes.values().forEach(RaftRuntime::close);
     }
 
-    private static RaftConfig config(String id, RaftMembership membership) {
-        return new RaftConfig(id, membership, Duration.ofMillis(5), RaftOptions.defaults());
+    private long snapshotThreshold = RaftConfig.DEFAULT_SNAPSHOT_THRESHOLD;
+
+    private RaftConfig config(String id, RaftMembership membership) {
+        return new RaftConfig(id, membership, Duration.ofMillis(5), RaftOptions.defaults(), snapshotThreshold);
     }
 
     private RaftRuntime start(String id, RaftMembership membership) {
@@ -57,6 +60,12 @@ class RaftRuntimeTest {
         var runtime = RaftRuntime.open(directory.resolve(id), config(id, membership), network.transport(id), machine);
         runtimes.put(id, runtime);
         return runtime;
+    }
+
+    private void restart(String id, RaftMembership membership) {
+        runtimes.remove(id).close();
+        machines.remove(id);
+        start(id, membership);
     }
 
     private void startAll(RaftMembership membership) {
@@ -246,6 +255,60 @@ class RaftRuntimeTest {
         await(() -> machines.get(oldId).commands.contains("during-partition"));
     }
 
+    @Test
+    void compactsTheLogOnceTheThresholdIsReached() throws Exception {
+        snapshotThreshold = 20;
+        startAll(THREE);
+        var leader = leader();
+
+        for (int i = 0; i < 100; i++) {
+            join(leader.propose(Bytes.utf8("c" + i)));
+        }
+
+        await(() -> runtimes.values().stream().allMatch(runtime -> runtime.status().snapshotIndex() >= 80));
+        var expected = machines.get(leader.status().nodeId()).commands;
+        await(() -> machines.values().stream().allMatch(machine -> machine.commands.equals(expected)));
+    }
+
+    @Test
+    void followerBehindCompactionCatchesUpFromLeaderSnapshot() throws Exception {
+        snapshotThreshold = 10;
+        startAll(THREE);
+        var leader = leader();
+        join(leader.propose(Bytes.utf8("first")));
+        String lagging = follower().status().nodeId();
+        network.isolate(lagging);
+
+        for (int i = 0; i < 50; i++) {
+            join(leader.propose(Bytes.utf8("c" + i)));
+        }
+        await(() -> leader.status().snapshotIndex() > 20);
+        network.heal(lagging);
+
+        var expected = machines.get(leader.status().nodeId()).commands;
+        await(() -> machines.get(lagging).commands.equals(expected));
+        assertTrue(machines.get(lagging).restored != null);
+    }
+
+    @Test
+    void restartRestoresFromSnapshotAndReplaysTheTail() throws Exception {
+        snapshotThreshold = 5;
+        var single = RaftMembership.voters("n1");
+        var runtime = start("n1", single);
+        await(() -> runtime.status().role() == RaftRole.LEADER);
+        var expected = new ArrayList<String>();
+        for (int i = 0; i < 23; i++) {
+            join(runtime.propose(Bytes.utf8("c" + i)));
+            expected.add("c" + i);
+        }
+        await(() -> runtime.status().snapshotIndex() > 0);
+
+        restart("n1", single);
+
+        assertEquals(expected, machines.get("n1").commands);
+        assertTrue(machines.get("n1").restored != null);
+    }
+
     private static final class RecordingStateMachine implements StateMachine {
         private final List<String> commands = new CopyOnWriteArrayList<>();
         private volatile long applied;
@@ -264,16 +327,25 @@ class RaftRuntimeTest {
         }
 
         @Override
-        public Bytes apply(long index, Bytes command) {
+        public synchronized Bytes apply(long index, Bytes command) {
             commands.add(command.utf8());
             applied = index;
             return command;
         }
 
         @Override
-        public void restore(long index, InputStream snapshot) throws IOException {
+        public synchronized long snapshot(OutputStream target) throws IOException {
+            target.write(String.join("\n", commands).getBytes(StandardCharsets.UTF_8));
+            return applied;
+        }
+
+        @Override
+        public synchronized void restore(long index, InputStream snapshot) throws IOException {
             restored = new String(snapshot.readAllBytes(), StandardCharsets.UTF_8);
             commands.clear();
+            if (!restored.isEmpty()) {
+                commands.addAll(List.of(restored.split("\n")));
+            }
             applied = index;
         }
     }

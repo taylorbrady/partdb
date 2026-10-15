@@ -22,12 +22,17 @@ public record PartDbNodeConfig(Path dataDirectory, RaftConfig raft) {
         return raft.nodeId();
     }
 
+    public PartDbNodeConfig withSnapshotThreshold(long threshold) {
+        return new PartDbNodeConfig(dataDirectory, raft.withSnapshotThreshold(threshold));
+    }
+
     public static final class Builder {
         private final String nodeId;
         private final Path dataDirectory;
         private RaftMembership membership;
         private Duration tickInterval = RaftConfig.DEFAULT_TICK_INTERVAL;
         private RaftOptions raftOptions = RaftOptions.defaults();
+        private long snapshotThreshold = RaftConfig.DEFAULT_SNAPSHOT_THRESHOLD;
 
         private Builder(String nodeId, Path dataDirectory) {
             this.nodeId = Objects.requireNonNull(nodeId, "nodeId must not be null");
@@ -54,8 +59,13 @@ public record PartDbNodeConfig(Path dataDirectory, RaftConfig raft) {
             return this;
         }
 
+        public Builder snapshotThreshold(long snapshotThreshold) {
+            this.snapshotThreshold = snapshotThreshold;
+            return this;
+        }
+
         public PartDbNodeConfig build() {
-            return new PartDbNodeConfig(dataDirectory, new RaftConfig(nodeId, membership, tickInterval, raftOptions));
+            return new PartDbNodeConfig(dataDirectory, new RaftConfig(nodeId, membership, tickInterval, raftOptions, snapshotThreshold));
         }
     }
 }
