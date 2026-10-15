@@ -146,38 +146,23 @@ final class SegmentedRaftLog implements AutoCloseable {
         active.sync();
     }
 
-    public void recordSnapshotMarker(long idx, long term) {
-        active.append(new LogRecord.SnapshotMarker(idx, term));
-    }
-
-    public void truncateBefore(long idx) {
-        List<SealedSegment> toRemove = new ArrayList<>();
+    public void reset(long snapshotIndex) {
+        ActiveSegment next = ActiveSegment.create(directory, nextSequence++, snapshotIndex + 1);
+        next.append(new LogRecord.State(hardState));
+        next.sync();
 
         for (SealedSegment segment : sealed) {
-            if (segment.lastIndex() < idx) {
-                toRemove.add(segment);
-            }
+            segment.close();
+            deleteFile(segment.path());
         }
+        sealed.clear();
+        active.close();
+        deleteFile(active.path());
 
-        for (SealedSegment segment : toRemove) {
-            sealed.remove(segment);
-            try {
-                segment.close();
-                Files.deleteIfExists(segment.path());
-            } catch (IOException e) {
-                throw new RaftStorageException.IO("Failed to delete WAL segment: " + segment.path(), e);
-            }
-
-            for (long i = segment.firstIndex(); i <= segment.lastIndex(); i++) {
-                index.remove(i);
-            }
-        }
-
-        if (!sealed.isEmpty()) {
-            firstIndex = sealed.getFirst().firstIndex();
-        } else {
-            firstIndex = idx;
-        }
+        index.clear();
+        active = next;
+        firstIndex = snapshotIndex + 1;
+        lastIndex = snapshotIndex;
     }
 
     @Override
@@ -207,6 +192,10 @@ final class SegmentedRaftLog implements AutoCloseable {
             LogSegment.SegmentInfo info = LogSegment.parseFileName(path.getFileName().toString());
             boolean isLast = (i == segmentFiles.size() - 1);
 
+            if (i > 0 && info.firstIndex() != lastIndex + 1) {
+                discardRecoveredSegments();
+            }
+
             if (isLast) {
                 recoverLastSegment(path, info);
             } else {
@@ -226,6 +215,15 @@ final class SegmentedRaftLog implements AutoCloseable {
         }
     }
 
+    private void discardRecoveredSegments() {
+        for (SealedSegment segment : sealed) {
+            segment.close();
+            deleteFile(segment.path());
+        }
+        sealed.clear();
+        index.clear();
+    }
+
     private void recoverSealedSegment(Path path, LogSegment.SegmentInfo info) {
         int segmentIndex = sealed.size();
         long[] lastIdx = {info.firstIndex() - 1};
@@ -238,7 +236,6 @@ final class SegmentedRaftLog implements AutoCloseable {
                     lastIndex = entry.index();
                 }
                 case LogRecord.State(RaftHardState state) -> hardState = state;
-                case LogRecord.SnapshotMarker _ -> {}
             }
         });
 
@@ -252,6 +249,7 @@ final class SegmentedRaftLog implements AutoCloseable {
 
         SealedSegment segment = SealedSegment.open(path, info.sequence(), info.firstIndex(), lastIdx[0]);
         sealed.add(segment);
+        lastIndex = lastIdx[0];
         nextSequence = Math.max(nextSequence, info.sequence() + 1);
     }
 
@@ -271,7 +269,6 @@ final class SegmentedRaftLog implements AutoCloseable {
                     hardState = state;
                     lastState[0] = state;
                 }
-                case LogRecord.SnapshotMarker _ -> {}
             }
         });
 

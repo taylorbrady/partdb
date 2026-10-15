@@ -87,11 +87,6 @@ final class SegmentScanner {
         return switch (type) {
             case LogRecord.TYPE_ENTRY -> new LogRecord.Entry(LogRecordCodec.readEntry(buf));
             case LogRecord.TYPE_STATE -> new LogRecord.State(LogRecordCodec.readHardState(buf));
-            case LogRecord.TYPE_SNAPSHOT_MARKER -> {
-                long index = buf.getLong();
-                long term = buf.getLong();
-                yield new LogRecord.SnapshotMarker(index, term);
-            }
             default -> throw new RaftStorageException.Corruption("Unknown record type: " + type);
         };
     }

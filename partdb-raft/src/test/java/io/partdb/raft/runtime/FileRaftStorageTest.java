@@ -111,13 +111,12 @@ class FileRaftStorageTest {
     }
 
     @Test
-    void openRecoversSnapshotCompactedPrefix() throws IOException {
-        var membership = RaftMembership.voters("n1", "n2");
+    void installSnapshotReplacesLog() throws IOException {
         var snapshotMembership = new RaftMembership(Set.of("n1", "n2"), Set.of("n3"));
-        var snapshot = new SnapshotMetadata(2, 1, snapshotMembership);
+        var snapshot = new SnapshotMetadata(2, 2, snapshotMembership);
 
         try (var store = FileRaftStorage.open(tempDir)) {
-            store.append(new RaftHardState(1, "n1", 2), List.of(
+            store.append(new RaftHardState(2, "n1", 1), List.of(
                 data(1, 1, "a"),
                 data(2, 1, "b"),
                 data(3, 1, "c")
@@ -125,19 +124,60 @@ class FileRaftStorageTest {
             Path staged = store.stagingFile();
             Files.writeString(staged, "snapshot-payload");
             store.installSnapshot(snapshot, staged);
+            store.append(null, List.of(data(3, 2, "d")));
+            store.sync();
         }
 
         try (var reopened = FileRaftStorage.open(tempDir)) {
+            assertEquals(new RaftHardState(2, "n1", 1), reopened.hardState());
             assertEquals(3, reopened.firstIndex());
             assertEquals(3, reopened.lastIndex());
-            assertEquals(1, reopened.term(2));
-            assertEquals(List.of(data(3, 1, "c")), reopened.entries(3, 4, Long.MAX_VALUE));
+            assertEquals(2, reopened.term(2));
+            assertEquals(List.of(data(3, 2, "d")), reopened.entries(3, 4, Long.MAX_VALUE));
             var installed = reopened.snapshot().orElseThrow();
             assertEquals(snapshot, installed.metadata());
             assertEquals("snapshot-payload", Files.readString(installed.payload()));
             assertEquals(snapshotMembership, reopened.membership().orElseThrow());
             assertThrows(RaftException.Compacted.class, () -> reopened.entries(2, 3, Long.MAX_VALUE));
         }
+    }
+
+    @Test
+    void openDiscardsLogThatDoesNotContinueSnapshot() throws IOException {
+        try (var store = FileRaftStorage.open(tempDir)) {
+            store.append(new RaftHardState(1, "n1", 1), List.of(data(1, 1, "a"), data(2, 1, "b"), data(3, 1, "c")));
+            store.sync();
+        }
+        installSnapshotWithoutResettingLog(new SnapshotMetadata(2, 2, RaftMembership.voters("n1", "n2")));
+
+        try (var reopened = FileRaftStorage.open(tempDir)) {
+            assertEquals(new RaftHardState(1, "n1", 1), reopened.hardState());
+            assertEquals(3, reopened.firstIndex());
+            assertEquals(2, reopened.lastIndex());
+            assertEquals(2, reopened.term(2));
+        }
+    }
+
+    @Test
+    void openKeepsLogThatContinuesSnapshot() throws IOException {
+        try (var store = FileRaftStorage.open(tempDir)) {
+            store.append(new RaftHardState(1, "n1", 2), List.of(data(1, 1, "a"), data(2, 1, "b"), data(3, 1, "c")));
+            store.sync();
+        }
+        installSnapshotWithoutResettingLog(new SnapshotMetadata(2, 1, RaftMembership.voters("n1", "n2")));
+
+        try (var reopened = FileRaftStorage.open(tempDir)) {
+            assertEquals(3, reopened.firstIndex());
+            assertEquals(3, reopened.lastIndex());
+            assertEquals(List.of(data(3, 1, "c")), reopened.entries(3, 4, Long.MAX_VALUE));
+        }
+    }
+
+    private void installSnapshotWithoutResettingLog(SnapshotMetadata metadata) throws IOException {
+        var snapshots = SnapshotStore.open(tempDir.resolve("snap"));
+        Path staged = snapshots.stagingFile();
+        Files.writeString(staged, "payload");
+        snapshots.install(metadata, staged);
     }
 
     private static RaftLogEntry.Data data(long index, long term, String value) {

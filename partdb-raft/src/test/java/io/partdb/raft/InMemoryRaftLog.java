@@ -86,13 +86,26 @@ final class InMemoryRaftLog implements RaftLogReader {
     public void sync() {
     }
 
+    public RaftHardState hardState() {
+        return hardState;
+    }
+
+    public List<RaftLogEntry> entries() {
+        return List.copyOf(entries);
+    }
+
     public Optional<SnapshotMetadata> snapshot() {
         return Optional.ofNullable(snapshot);
     }
 
-    public void saveSnapshot(SnapshotMetadata snapshot) {
+    public void compact(SnapshotMetadata snapshot) {
+        this.snapshot = snapshot;
+        entries.removeIf(e -> e.index() <= snapshot.index());
+    }
+
+    public void installSnapshot(SnapshotMetadata snapshot) {
         this.snapshot = snapshot;
         this.configuration = snapshot.membership();
-        entries.removeIf(e -> e.index() <= snapshot.index());
+        entries.clear();
     }
 }

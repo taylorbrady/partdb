@@ -79,7 +79,7 @@ public sealed interface RaftMessage {
         }
     }
 
-    record InstallSnapshotResponse(long term) implements Response {
+    record InstallSnapshotResponse(long term, long matchIndex) implements Response {
         public InstallSnapshotResponse {
             if (term < 0) {
                 throw new IllegalArgumentException("term must be non-negative");

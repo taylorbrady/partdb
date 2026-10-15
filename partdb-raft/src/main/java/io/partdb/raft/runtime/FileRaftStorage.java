@@ -26,7 +26,18 @@ final class FileRaftStorage implements RaftLogReader, AutoCloseable {
         this.snapshots = snapshots;
         this.snapshot = snapshot;
         this.membership = snapshot == null ? null : snapshot.metadata().membership();
+        if (snapshot != null && !walContinues(snapshot.metadata())) {
+            wal.reset(snapshot.metadata().index());
+        }
         recoverMembershipFromLog();
+    }
+
+    private boolean walContinues(SnapshotMetadata metadata) {
+        long index = metadata.index();
+        if (wal.firstIndex() == index + 1) {
+            return true;
+        }
+        return wal.firstIndex() <= index && index <= wal.lastIndex() && wal.term(index) == metadata.term();
     }
 
     static FileRaftStorage open(Path directory) {
@@ -114,11 +125,7 @@ final class FileRaftStorage implements RaftLogReader, AutoCloseable {
     public long lastIndex() {
         lock.readLock().lock();
         try {
-            long walLast = wal.lastIndex();
-            if (walLast > 0) {
-                return walLast;
-            }
-            return snapshot != null ? snapshot.metadata().index() : 0;
+            return Math.max(wal.lastIndex(), snapshot != null ? snapshot.metadata().index() : 0);
         } finally {
             lock.readLock().unlock();
         }
@@ -155,9 +162,7 @@ final class FileRaftStorage implements RaftLogReader, AutoCloseable {
         lock.writeLock().lock();
         try {
             SnapshotStore.SnapshotFile installed = snapshots.install(metadata, stagedPayload);
-            wal.recordSnapshotMarker(metadata.index(), metadata.term());
-            wal.sync();
-            wal.truncateBefore(metadata.index());
+            wal.reset(metadata.index());
             snapshot = installed;
             membership = metadata.membership();
         } finally {

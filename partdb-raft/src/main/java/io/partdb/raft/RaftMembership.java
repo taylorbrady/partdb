@@ -1,8 +1,10 @@
 package io.partdb.raft;
 
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 
 public record RaftMembership(Set<String> voters, Set<String> learners) {
     public RaftMembership {
@@ -38,24 +40,23 @@ public record RaftMembership(Set<String> voters, Set<String> learners) {
     }
 
     public Set<String> memberIds() {
-        var members = new LinkedHashSet<String>();
-        members.addAll(voters);
+        var members = new TreeSet<>(voters);
         members.addAll(learners);
-        return Set.copyOf(members);
+        return Collections.unmodifiableSortedSet(members);
     }
 
     public Set<String> peerIdsExcluding(String nodeId) {
         requireNonBlank(nodeId, "nodeId");
-        var peers = new LinkedHashSet<>(memberIds());
+        var peers = new TreeSet<>(memberIds());
         peers.remove(nodeId);
-        return Set.copyOf(peers);
+        return Collections.unmodifiableSortedSet(peers);
     }
 
     public Set<String> votingPeerIdsExcluding(String nodeId) {
         requireNonBlank(nodeId, "nodeId");
-        var peers = new LinkedHashSet<>(voters);
+        var peers = new TreeSet<>(voters);
         peers.remove(nodeId);
-        return Set.copyOf(peers);
+        return Collections.unmodifiableSortedSet(peers);
     }
 
     public RaftMembership apply(MembershipChange change) {
@@ -122,11 +123,11 @@ public record RaftMembership(Set<String> voters, Set<String> learners) {
 
     private static Set<String> normalizeIds(Set<String> ids, String name) {
         Objects.requireNonNull(ids, name + " must not be null");
-        var normalized = new LinkedHashSet<String>();
+        var normalized = new TreeSet<String>();
         for (String id : ids) {
             normalized.add(requireNonBlank(id, "memberId"));
         }
-        return Set.copyOf(normalized);
+        return Collections.unmodifiableSortedSet(normalized);
     }
 
     private static boolean disjoint(Set<String> left, Set<String> right) {

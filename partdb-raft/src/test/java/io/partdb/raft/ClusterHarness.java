@@ -135,7 +135,7 @@ final class ClusterHarness {
             throw new IllegalArgumentException("Unknown node: " + nodeId);
         }
         long term = node.storage().term(index);
-        node.storage().saveSnapshot(new SnapshotMetadata(index, term, node.raft().membership()));
+        node.storage().compact(new SnapshotMetadata(index, term, node.raft().membership()));
     }
 
     List<RaftNode> allNodes() {
@@ -217,7 +217,7 @@ final class ClusterHarness {
         var persistence = ready.persistence();
         if (persistence.hasWork()) {
             node.storage().append(persistence.hardState().orElse(null), persistence.entries());
-            persistence.incomingSnapshot().ifPresent(node.storage()::saveSnapshot);
+            persistence.incomingSnapshot().ifPresent(node.storage()::installSnapshot);
             node.storage().sync();
             if (!persistence.entries().isEmpty()) {
                 var lastPersisted = persistence.entries().getLast();

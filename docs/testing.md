@@ -44,6 +44,16 @@ Keep focused suites by protocol concern:
 - `RaftNodeSnapshotTest` and `RaftNodeRecoveryTest`: protocol-level snapshots
   and recovery.
 - `Cluster*Test`: deterministic multi-node simulation scenarios.
+- `SimulationTest`: randomized, seeded cluster histories. Each seed drives
+  three or five cores through message loss, delay, duplication, reordering,
+  partitions, crashes, and log compaction while clients issue reads and
+  writes. Every run checks election safety, state machine safety, commit
+  monotonicity, log matching, convergence after faults heal, and
+  linearizability of the client history (`LinearizabilityChecker`, a WGL
+  search over per-key register histories). `test` runs 200 seeds;
+  `./gradlew :partdb-raft:simulationTest` runs 5000, and
+  `-Pseeds=N -PfirstSeed=S` selects a range. Replay a failing seed with
+  `new Simulation(seed, Simulation.Settings.forSeed(seed)).trace(System.out).run()`.
 - `UnstableTest` and `RaftCorePurityTest`: helper and purity coverage. The
   purity test keeps the core package free of JDK IO, time, threading, and
   runtime imports, which a package boundary inside one module cannot enforce.

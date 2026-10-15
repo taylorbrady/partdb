@@ -16,6 +16,9 @@ final class UnstableLog {
         long idx = entry.index();
 
         if (idx < offset) {
+            entries.clear();
+            offset = idx;
+            entries.add(entry);
             return;
         }
 
@@ -25,8 +28,10 @@ final class UnstableLog {
                 entries.subList(arrayIdx, entries.size()).clear();
                 entries.add(entry);
             }
-        } else {
+        } else if (arrayIdx == entries.size()) {
             entries.add(entry);
+        } else {
+            throw new IllegalStateException("Unstable log gap: expected index " + (offset + entries.size()) + " but got " + idx);
         }
     }
 

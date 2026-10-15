@@ -4,6 +4,7 @@ import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -41,13 +42,22 @@ class UnstableTest {
         }
 
         @Test
-        void ignoresEntriesBelowOffset() {
+        void replacesStableSuffixWhenAppendingBelowOffset() {
             var unstable = new UnstableLog(5);
 
-            unstable.append(entry(3, 1));
-            unstable.append(entry(4, 1));
+            unstable.append(entry(3, 2));
+            unstable.append(entry(4, 2));
 
-            assertTrue(unstable.entries().isEmpty());
+            assertEquals(List.of(entry(3, 2), entry(4, 2)), unstable.entries());
+            assertEquals(3, unstable.offset());
+            assertEquals(4, unstable.lastIndex());
+        }
+
+        @Test
+        void rejectsGaps() {
+            var unstable = new UnstableLog(1);
+
+            assertThrows(IllegalStateException.class, () -> unstable.append(entry(3, 1)));
         }
 
         @Test

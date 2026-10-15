@@ -137,14 +137,14 @@ public final class RaftNode {
     }
 
     private long lastIndex() {
-        if (unstable.hasEntries()) {
+        if (unstable.hasEntries() || unstable.hasSnapshot()) {
             return unstable.lastIndex();
         }
         return log.lastIndex();
     }
 
     private long lastTerm() {
-        if (unstable.hasEntries()) {
+        if (unstable.hasEntries() || unstable.hasSnapshot()) {
             return unstable.lastTerm();
         }
         long last = log.lastIndex();
@@ -581,7 +581,7 @@ public final class RaftNode {
 
     private void handleInstallSnapshot(String from, RaftMessage.InstallSnapshot is, RaftEffectAccumulator accumulator) {
         if (is.term() < term) {
-            accumulator.send(from, new RaftMessage.InstallSnapshotResponse(term));
+            accumulator.send(from, new RaftMessage.InstallSnapshotResponse(term, 0));
             return;
         }
 
@@ -590,7 +590,14 @@ public final class RaftNode {
 
         var snapshot = is.snapshot();
         if (snapshot.index() <= commitIndex) {
-            accumulator.send(from, new RaftMessage.InstallSnapshotResponse(term));
+            accumulator.send(from, new RaftMessage.InstallSnapshotResponse(term, commitIndex));
+            return;
+        }
+
+        if (hasEntryMatching(snapshot.index(), snapshot.term())) {
+            commitIndex = snapshot.index();
+            persistHardState(accumulator);
+            accumulator.send(from, new RaftMessage.InstallSnapshotResponse(term, commitIndex));
             return;
         }
 
@@ -602,7 +609,7 @@ public final class RaftNode {
         replaceConfiguration(snapshot.membership());
 
         accumulator.setIncomingSnapshot(snapshot);
-        accumulator.send(from, new RaftMessage.InstallSnapshotResponse(term));
+        accumulator.send(from, new RaftMessage.InstallSnapshotResponse(term, snapshot.index()));
     }
 
     private void handleInstallSnapshotResponse(String from, RaftMessage.InstallSnapshotResponse isr) {
@@ -610,8 +617,10 @@ public final class RaftNode {
             return;
         }
         lastHeardFrom.put(from, tickCount);
-        nextIndex.put(from, lastIncludedIndex() + 1);
-        matchIndex.put(from, lastIncludedIndex());
+        if (isr.matchIndex() > matchIndex.getOrDefault(from, 0L)) {
+            matchIndex.put(from, isr.matchIndex());
+        }
+        nextIndex.put(from, matchIndex.get(from) + 1);
     }
 
     private void handleReadIndexEvent(long context, RaftEffectAccumulator accumulator) {

@@ -119,11 +119,11 @@ final class RaftProtoMapper {
     }
 
     static RaftProto.InstallSnapshotResponse toProto(RaftMessage.InstallSnapshotResponse message) {
-        return RaftProto.InstallSnapshotResponse.newBuilder().setTerm(message.term()).build();
+        return RaftProto.InstallSnapshotResponse.newBuilder().setTerm(message.term()).setMatchIndex(message.matchIndex()).build();
     }
 
     static RaftMessage.InstallSnapshotResponse fromProto(RaftProto.InstallSnapshotResponse proto) {
-        return new RaftMessage.InstallSnapshotResponse(proto.getTerm());
+        return new RaftMessage.InstallSnapshotResponse(proto.getTerm(), proto.getMatchIndex());
     }
 
     static RaftProto.ReadIndexRequest toProto(RaftMessage.ReadIndexRequested message) {

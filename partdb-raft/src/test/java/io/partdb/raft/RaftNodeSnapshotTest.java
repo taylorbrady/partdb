@@ -57,7 +57,7 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
             var raft = createRaftWithCompactedSnapshot("n1", 5, 1, "n1", "n2", "n3");
             becomeLeader(raft, List.of("n2", "n3"));
 
-            var response = new RaftMessage.InstallSnapshotResponse(raft.term());
+            var response = new RaftMessage.InstallSnapshotResponse(raft.term(), 5);
             raft.step(new RaftInput.MessageReceived("n2", response));
 
             var ready = tickHeartbeat(raft);
@@ -82,7 +82,7 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
             assertNotNull(snapshotReady.snapshotNeeded().orElse(null));
             assertEquals("n2", snapshotReady.snapshotNeeded().orElse(null).peer());
 
-            var oldTermResponse = new RaftMessage.InstallSnapshotResponse(0);
+            var oldTermResponse = new RaftMessage.InstallSnapshotResponse(0, 5);
             raft.step(new RaftInput.MessageReceived("n2", oldTermResponse));
 
             var ready = tickHeartbeat(raft);
@@ -101,10 +101,66 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
             raft.step(new RaftInput.MessageReceived("n3", higherTermMsg));
             assertEquals(RaftRole.FOLLOWER, raft.role());
 
-            var response = new RaftMessage.InstallSnapshotResponse(1);
+            var response = new RaftMessage.InstallSnapshotResponse(1, 5);
             var ready = raft.step(new RaftInput.MessageReceived("n2", response));
 
             assertTrue(ready.messages().isEmpty());
+        }
+
+        @Test
+        void followerDiscardsLogWhenInstallingSnapshot() {
+            var raft = createRaft("n1", "n1", "n2", "n3");
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntries(
+                1, "n2", 0, 0,
+                List.of(new RaftLogEntry.Data(1, 1, bytes("a")), new RaftLogEntry.Data(2, 1, bytes("b"))),
+                0, 0
+            )));
+
+            var snapshot = new RaftMessage.InstallSnapshot(2, "n3", new SnapshotMetadata(1, 2, RaftMembership.voters("n1", "n2", "n3")));
+            var ready = raft.step(new RaftInput.MessageReceived("n3", snapshot));
+
+            assertEquals(1, ready.persistence().incomingSnapshot().orElseThrow().index());
+            assertEquals(1, findResponse(ready, RaftMessage.InstallSnapshotResponse.class).orElseThrow().matchIndex());
+
+            var append = raft.step(new RaftInput.MessageReceived("n3", new RaftMessage.AppendEntries(
+                2, "n3", 1, 2, List.of(new RaftLogEntry.Data(2, 2, bytes("c"))), 2, 0
+            )));
+            assertEquals(List.of(new RaftLogEntry.Data(2, 2, bytes("c"))), append.persistence().entries());
+            assertTrue(findResponse(append, RaftMessage.AppendEntriesResponse.class).orElseThrow().success());
+        }
+
+        @Test
+        void followerWithMatchingEntryAdvancesCommitInsteadOfInstalling() {
+            var raft = createRaft("n1", "n1", "n2", "n3");
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.AppendEntries(
+                1, "n2", 0, 0,
+                List.of(new RaftLogEntry.Data(1, 1, bytes("a")), new RaftLogEntry.Data(2, 1, bytes("b"))),
+                0, 0
+            )));
+
+            var snapshot = new RaftMessage.InstallSnapshot(1, "n2", new SnapshotMetadata(2, 1, RaftMembership.voters("n1", "n2", "n3")));
+            var ready = raft.step(new RaftInput.MessageReceived("n2", snapshot));
+
+            assertTrue(ready.persistence().incomingSnapshot().isEmpty());
+            assertEquals(2, raft.commitIndex());
+            assertEquals(2, findResponse(ready, RaftMessage.InstallSnapshotResponse.class).orElseThrow().matchIndex());
+        }
+
+        @Test
+        void leaderUsesFollowerMatchIndexFromSnapshotResponse() {
+            var raft = createRaftWithCompactedSnapshot("n1", 5, 1, "n1", "n2", "n3");
+            becomeLeader(raft, List.of("n2", "n3"));
+
+            raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.InstallSnapshotResponse(raft.term(), 3)));
+            var ready = tickHeartbeat(raft);
+
+            var append = ready.messages().stream()
+                .filter(m -> m.to().equals("n2"))
+                .map(RaftEffects.Outbound::message)
+                .filter(RaftMessage.AppendEntries.class::isInstance)
+                .findFirst();
+            assertTrue(append.isEmpty());
+            assertEquals("n2", ready.snapshotNeeded().orElseThrow().peer());
         }
 
         @Test

@@ -117,7 +117,7 @@ final class ActiveSegment implements LogSegment {
 
         switch (record) {
             case LogRecord.Entry(RaftLogEntry entry) -> lastIndex = entry.index();
-            case LogRecord.State _, LogRecord.SnapshotMarker _ -> {}
+            case LogRecord.State _ -> {}
         }
     }
 
@@ -164,12 +164,6 @@ final class ActiveSegment implements LogSegment {
                 LogRecordCodec.writeHardState(buf, state);
                 yield buf.array();
             }
-            case LogRecord.SnapshotMarker(long index, long term) -> {
-                ByteBuffer buf = ByteBuffer.allocate(16).order(BYTE_ORDER);
-                buf.putLong(index);
-                buf.putLong(term);
-                yield buf.array();
-            }
         };
     }
 
@@ -177,7 +171,6 @@ final class ActiveSegment implements LogSegment {
         return switch (record) {
             case LogRecord.Entry _ -> LogRecord.TYPE_ENTRY;
             case LogRecord.State _ -> LogRecord.TYPE_STATE;
-            case LogRecord.SnapshotMarker _ -> LogRecord.TYPE_SNAPSHOT_MARKER;
         };
     }
 

@@ -85,6 +85,7 @@ message SnapshotHeader {
 
 message InstallSnapshotResponse {
   int64 term = 1;
+  int64 match_index = 2;
 }
 
 message ReadIndexRequest {
