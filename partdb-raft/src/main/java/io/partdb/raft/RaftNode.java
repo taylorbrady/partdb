@@ -14,7 +14,7 @@ import java.util.function.IntUnaryOperator;
 
 public final class RaftNode {
 
-    private record PendingRead(long index, Bytes context, String requester, Set<String> acks) {}
+    private record PendingRead(long index, long context, String requester, Set<String> acks) {}
 
     private final String id;
     private RaftMembership membership;
@@ -185,7 +185,7 @@ public final class RaftNode {
         if (index == 0) {
             return true;
         }
-        return term(index) == prevTerm;
+        return index <= lastIndex() && term(index) == prevTerm;
     }
 
     private long lastIncludedIndex() {
@@ -464,7 +464,7 @@ public final class RaftNode {
             }
         }
 
-        accumulator.send(from, new RaftMessage.PreVoteResponse(term, voteGranted));
+        accumulator.send(from, new RaftMessage.PreVoteResponse(voteGranted ? pv.term() : term, voteGranted));
     }
 
     private void handlePreVoteResponse(String from, RaftMessage.PreVoteResponse pvr, RaftEffectAccumulator accumulator) {
@@ -571,23 +571,18 @@ public final class RaftNode {
         leaderContactTicks = 0;
         becomeFollower(is.term(), is.leaderId(), accumulator);
 
-        if (is.lastIncludedIndex() <= commitIndex) {
+        var snapshot = is.snapshot();
+        if (snapshot.index() <= commitIndex) {
             accumulator.send(from, new RaftMessage.InstallSnapshotResponse(term));
             return;
         }
 
-        var snapshot = new RaftSnapshot(
-            is.lastIncludedIndex(),
-            is.lastIncludedTerm(),
-            is.membership(),
-            is.data()
-        );
         unstable.acceptSnapshot(snapshot);
-        commitIndex = is.lastIncludedIndex();
-        lastApplied = is.lastIncludedIndex();
+        commitIndex = snapshot.index();
+        lastApplied = snapshot.index();
         persistHardState(accumulator);
 
-        replaceConfiguration(is.membership());
+        replaceConfiguration(snapshot.membership());
 
         accumulator.setIncomingSnapshot(snapshot);
         accumulator.send(from, new RaftMessage.InstallSnapshotResponse(term));
@@ -602,7 +597,7 @@ public final class RaftNode {
         matchIndex.put(from, lastIncludedIndex());
     }
 
-    private void handleReadIndexEvent(Bytes context, RaftEffectAccumulator accumulator) {
+    private void handleReadIndexEvent(long context, RaftEffectAccumulator accumulator) {
         if (role == RaftRole.LEADER) {
             startReadIndexConfirmation(null, context, accumulator);
         } else if (leaderId != null) {
@@ -633,7 +628,7 @@ public final class RaftNode {
         }
     }
 
-    private void startReadIndexConfirmation(String requester, Bytes context, RaftEffectAccumulator accumulator) {
+    private void startReadIndexConfirmation(String requester, long context, RaftEffectAccumulator accumulator) {
         if (role != RaftRole.LEADER) {
             return;
         }

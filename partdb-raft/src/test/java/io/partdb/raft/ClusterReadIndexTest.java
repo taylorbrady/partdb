@@ -1,15 +1,8 @@
 package io.partdb.raft;
 
-import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -26,7 +19,7 @@ class ClusterReadIndexTest extends ClusterTestSupport {
             var leader = network.node(leaderId);
             long commitBefore = leader.commitIndex();
 
-            byte[] context = "read-1".getBytes();
+            long context = 1L;
             network.readIndex(leaderId, context);
 
             for (int i = 0; i < 10; i++) {
@@ -40,7 +33,7 @@ class ClusterReadIndexTest extends ClusterTestSupport {
             var readState = readStates.getFirst();
             assertEquals(leaderId, readState.nodeId());
             assertTrue(readState.index() >= commitBefore);
-            assertArrayEquals(context, readState.context());
+            assertEquals(context, readState.context());
         }
 
         @Test
@@ -51,7 +44,7 @@ class ClusterReadIndexTest extends ClusterTestSupport {
             var leaderId = network.leader().orElseThrow();
             String followerId = ClusterHarness.nodeId(0).equals(leaderId) ? ClusterHarness.nodeId(1) : ClusterHarness.nodeId(0);
 
-            byte[] context = "follower-read".getBytes();
+            long context = 2L;
             network.readIndex(followerId, context);
 
             for (int i = 0; i < 20; i++) {
@@ -64,7 +57,7 @@ class ClusterReadIndexTest extends ClusterTestSupport {
 
             var readState = readStates.getFirst();
             assertEquals(followerId, readState.nodeId());
-            assertArrayEquals(context, readState.context());
+            assertEquals(context, readState.context());
         }
 
         @Test
@@ -87,7 +80,7 @@ class ClusterReadIndexTest extends ClusterTestSupport {
 
             var newLeaderId = newLeader.get().leaderId().orElseThrow();
 
-            byte[] context = "new-leader-read".getBytes();
+            long context = 3L;
             network.readIndex(newLeaderId, context);
 
             for (int i = 0; i < 20; i++) {
@@ -108,7 +101,7 @@ class ClusterReadIndexTest extends ClusterTestSupport {
             String followerId = ClusterHarness.nodeId(2);
             network.isolate(followerId);
 
-            byte[] context = "partitioned-read".getBytes();
+            long context = 4L;
             network.readIndex(followerId, context);
 
             for (int i = 0; i < 10; i++) {
@@ -126,9 +119,9 @@ class ClusterReadIndexTest extends ClusterTestSupport {
 
             var leaderId = network.leader().orElseThrow();
 
-            byte[] ctx1 = "read-from-leader".getBytes();
-            byte[] ctx2 = "read-from-follower-1".getBytes();
-            byte[] ctx3 = "read-from-follower-2".getBytes();
+            long ctx1 = 5L;
+            long ctx2 = 6L;
+            long ctx3 = 7L;
 
             network.readIndex(leaderId, ctx1);
             network.readIndex(ClusterHarness.nodeId(1), ctx2);

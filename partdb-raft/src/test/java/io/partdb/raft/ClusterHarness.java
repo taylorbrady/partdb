@@ -24,16 +24,7 @@ final class ClusterHarness {
 
     private record Envelope(String from, String to, RaftMessage message) {}
 
-    record ReadState(String nodeId, long index, byte[] context) {
-        ReadState {
-            context = context.clone();
-        }
-
-        @Override
-        public byte[] context() {
-            return context.clone();
-        }
-    }
+    record ReadState(String nodeId, long index, long context) {}
 
     record MembershipChangeEvent(String nodeId, long index, RaftMembership previous, RaftMembership current) {}
 
@@ -133,18 +124,18 @@ final class ClusterHarness {
         return node(nodeId(index));
     }
 
-    Optional<RaftSnapshot> snapshot(String nodeId) {
+    Optional<SnapshotMetadata> snapshot(String nodeId) {
         var node = nodes.get(nodeId);
         return node != null ? node.storage().snapshot() : Optional.empty();
     }
 
-    void compactWithSnapshot(String nodeId, long index, Bytes data) {
+    void compactWithSnapshot(String nodeId, long index) {
         var node = nodes.get(nodeId);
         if (node == null) {
             throw new IllegalArgumentException("Unknown node: " + nodeId);
         }
         long term = node.storage().term(index);
-        node.storage().saveSnapshot(new RaftSnapshot(index, term, node.raft().membership(), data));
+        node.storage().saveSnapshot(new SnapshotMetadata(index, term, node.raft().membership()));
     }
 
     List<RaftNode> allNodes() {
@@ -175,10 +166,10 @@ final class ClusterHarness {
         }
     }
 
-    void readIndex(String nodeId, byte[] context) {
+    void readIndex(String nodeId, long context) {
         var node = nodes.get(nodeId);
         if (node != null) {
-            var ready = node.raft().step(new RaftInput.ReadIndexRequested(Bytes.copyOf(context)));
+            var ready = node.raft().step(new RaftInput.ReadIndexRequested(context));
             processReady(nodeId, ready);
         }
     }
@@ -223,8 +214,6 @@ final class ClusterHarness {
         if (node == null) {
             return;
         }
-
-        // Mirror the node runtime contract: persist first, then send, then apply.
         var persistence = ready.persistence();
         if (persistence.hasWork()) {
             node.storage().append(persistence.hardState().orElse(null), persistence.entries());
@@ -260,21 +249,14 @@ final class ClusterHarness {
         }
 
         for (var readState : ready.application().readStates()) {
-            readStates.add(new ReadState(from, readState.index(), readState.context().toByteArray()));
+            readStates.add(new ReadState(from, readState.index(), readState.context()));
         }
 
         var snapshot = ready.snapshotNeeded().orElse(null);
         if (snapshot != null) {
             var outgoingSnapshot = node.storage().snapshot()
-                .orElseGet(() -> new RaftSnapshot(snapshot.index(), snapshot.term(), node.raft().membership(), Bytes.EMPTY));
-            var msg = new RaftMessage.InstallSnapshot(
-                node.raft().term(),
-                from,
-                outgoingSnapshot.index(),
-                outgoingSnapshot.term(),
-                outgoingSnapshot.membership(),
-                outgoingSnapshot.data()
-            );
+                .orElseGet(() -> new SnapshotMetadata(snapshot.index(), snapshot.term(), node.raft().membership()));
+            var msg = new RaftMessage.InstallSnapshot(node.raft().term(), from, outgoingSnapshot);
             inFlight.addLast(new Envelope(from, snapshot.peer(), msg));
         }
     }

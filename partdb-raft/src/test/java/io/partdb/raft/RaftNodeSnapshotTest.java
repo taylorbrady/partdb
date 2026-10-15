@@ -1,13 +1,9 @@
 package io.partdb.raft;
 
-import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -19,9 +15,7 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
         void followerInstallsSnapshotFromLeader() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 
-            var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 10, 1, RaftMembership.voters("n1", "n2", "n3"), bytes("snapshot-data")
-            );
+            var snapshot = new RaftMessage.InstallSnapshot(1, "n2", new SnapshotMetadata(10, 1, RaftMembership.voters("n1", "n2", "n3")));
             var ready = raft.step(new RaftInput.MessageReceived("n2", snapshot));
 
             assertNotNull(ready.persistence().incomingSnapshot().orElse(null));
@@ -40,9 +34,7 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
             raft.step(new RaftInput.MessageReceived("n2", entries));
             assertEquals(1, raft.commitIndex());
 
-            var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 1, 1, RaftMembership.voters("n1", "n2", "n3"), bytes("snapshot-data")
-            );
+            var snapshot = new RaftMessage.InstallSnapshot(1, "n2", new SnapshotMetadata(1, 1, RaftMembership.voters("n1", "n2", "n3")));
             var ready = raft.step(new RaftInput.MessageReceived("n2", snapshot));
 
             assertNull(ready.persistence().incomingSnapshot().orElse(null));
@@ -123,9 +115,7 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
             raft.step(new RaftInput.MessageReceived("n2", higherTermMsg));
             assertEquals(5, raft.term());
 
-            var snapshot = new RaftMessage.InstallSnapshot(
-                3, "n3", 10, 3, RaftMembership.voters("n1", "n2", "n3"), bytes("snapshot-data")
-            );
+            var snapshot = new RaftMessage.InstallSnapshot(3, "n3", new SnapshotMetadata(10, 3, RaftMembership.voters("n1", "n2", "n3")));
             var ready = raft.step(new RaftInput.MessageReceived("n3", snapshot));
 
             assertNull(ready.persistence().incomingSnapshot().orElse(null));
@@ -142,9 +132,7 @@ class RaftNodeSnapshotTest extends RaftNodeTestSupport {
                 raft.step(new RaftInput.Tick());
             }
 
-            var snapshot = new RaftMessage.InstallSnapshot(
-                1, "n2", 10, 1, RaftMembership.voters("n1", "n2", "n3"), bytes("snapshot-data")
-            );
+            var snapshot = new RaftMessage.InstallSnapshot(1, "n2", new SnapshotMetadata(10, 1, RaftMembership.voters("n1", "n2", "n3")));
             raft.step(new RaftInput.MessageReceived("n2", snapshot));
 
             var preVote = new RaftMessage.PreVote(2, "n3", 10, 1);

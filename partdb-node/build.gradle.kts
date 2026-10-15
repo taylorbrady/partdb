@@ -5,6 +5,6 @@ plugins {
 
 dependencies {
     api(project(":partdb-bytes"))
-    api(project(":partdb-consensus"))
+    api(project(":partdb-raft"))
     implementation(project(":partdb-storage"))
 }

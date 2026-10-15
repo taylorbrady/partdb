@@ -62,9 +62,9 @@ record SSTableMetadata(
         buffer.putLong(id);
         buffer.putInt(level);
         buffer.putInt(smallestKey.length());
-        buffer.put(smallestKey.toByteArray());
+        buffer.put(smallestKey.segment().asByteBuffer());
         buffer.putInt(largestKey.length());
-        buffer.put(largestKey.toByteArray());
+        buffer.put(largestKey.segment().asByteBuffer());
         buffer.putLong(smallestRevision);
         buffer.putLong(largestRevision);
         buffer.putLong(fileSizeBytes);

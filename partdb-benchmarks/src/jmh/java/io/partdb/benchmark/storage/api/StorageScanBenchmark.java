@@ -111,7 +111,7 @@ public class StorageScanBenchmark {
                 BenchmarkValues.fixedValue(valueSize, 0x7eedL),
                 1
             );
-            store().checkpoint();
+            store().flush();
             if (reopenAfterLoad) {
                 reopenStore(StorageFixtures.defaultOptions());
             }

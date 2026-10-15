@@ -5,7 +5,6 @@ import io.partdb.storage.*;
 import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -88,7 +87,7 @@ abstract class StorageEngineInternalTestSupport {
     }
 
     protected static void drainToDurableState(StorageEngine store) {
-        store.checkpoint();
+        store.flush();
     }
 
     protected static void awaitCompaction(StorageEngine store) {

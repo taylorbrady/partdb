@@ -70,7 +70,7 @@ class StorageEngineInvariantTest {
                     holder.reopen();
                     operations.add("reopen step=%d".formatted(step));
                 } else {
-                    StorageCheckpoint checkpoint = holder.store.checkpoint();
+                    byte[] checkpoint = Checkpoints.capture(holder.store);
                     Path restoredDir = tempDir.resolve("store-" + nextStoreId++);
                     holder.replaceWith(restoredDir, checkpoint);
                     operations.add("restore step=%d dir=%s".formatted(step, restoredDir.getFileName()));
@@ -115,7 +115,7 @@ class StorageEngineInvariantTest {
                 operations.add("seed-delete key=%d rev=%d".formatted(key, revision));
             }
 
-            StorageCheckpoint checkpoint = holder.store.checkpoint();
+            byte[] checkpoint = Checkpoints.capture(holder.store);
             NavigableMap<Integer, ModelValue> snapshotState = new TreeMap<>(expected);
             operations.add("snapshot");
 
@@ -165,7 +165,7 @@ class StorageEngineInvariantTest {
         long revision = 0;
 
         try (StoreHolder holder = StoreHolder.open(tempDir.resolve("mixed-store-0"), config)) {
-            snapshots.add(new SnapshotState(holder.store.checkpoint(), copyState(expected)));
+            snapshots.add(new SnapshotState(Checkpoints.capture(holder.store), copyState(expected)));
             operations.add("snapshot-initial");
 
             for (int step = 0; step < 350; step++) {
@@ -193,7 +193,7 @@ class StorageEngineInvariantTest {
                     operations.add("scan step=%d start=%d end=%d".formatted(step, start, end));
                     assertScanMatches(expected, holder.store, start, end, operations);
                 } else if (op < 88) {
-                    snapshots.add(new SnapshotState(holder.store.checkpoint(), copyState(expected)));
+                    snapshots.add(new SnapshotState(Checkpoints.capture(holder.store), copyState(expected)));
                     operations.add("snapshot step=%d count=%d".formatted(step, snapshots.size()));
                 } else if (op < 92) {
                     holder.reopen();
@@ -263,7 +263,7 @@ class StorageEngineInvariantTest {
             "expectedKeys=%s actualKeys=%s appliedThrough=%s%n%s".formatted(
                 expectedRange.keySet(),
                 actualEntries.stream().map(entry -> Byte.toUnsignedInt(entry.key().byteAt(0))).toList(),
-                store.metadata().appliedThrough().value(),
+                store.appliedThrough().value(),
                 String.join("\n", operations)
             )
         );
@@ -293,7 +293,7 @@ class StorageEngineInvariantTest {
 
     private record ModelValue(Bytes value, long revision) {}
 
-    private record SnapshotState(StorageCheckpoint snapshot, NavigableMap<Integer, ModelValue> visibleState) {}
+    private record SnapshotState(byte[] snapshot, NavigableMap<Integer, ModelValue> visibleState) {}
 
     private static final class StoreHolder implements AutoCloseable {
         private final StorageOptions options;
@@ -315,15 +315,15 @@ class StorageEngineInvariantTest {
             store = StorageEngine.open(directory, options);
         }
 
-        void replaceWith(Path directory, StorageCheckpoint checkpoint) {
+        void replaceWith(Path directory, byte[] checkpoint) {
             store.close();
             this.directory = directory;
             this.store = StorageEngine.open(directory, options);
-            this.store.restore(checkpoint);
+            Checkpoints.restore(this.store, checkpoint);
         }
 
-        void restore(StorageCheckpoint checkpoint) {
-            store.restore(checkpoint);
+        void restore(byte[] checkpoint) {
+            Checkpoints.restore(store, checkpoint);
         }
 
         @Override

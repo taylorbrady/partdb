@@ -41,6 +41,18 @@ class RaftNodeReplicationTest extends RaftNodeTestSupport {
         }
 
         @Test
+        void followerRejectsPrevLogIndexBeyondItsLog() {
+            var raft = createRaft("n1", "n1", "n2", "n3");
+
+            var append = new RaftMessage.AppendEntries(1, "n2", 5, 0, List.of(new RaftLogEntry.NoOp(6, 1)), 6);
+            var ready = raft.step(new RaftInput.MessageReceived("n2", append));
+
+            var response = findResponse(ready, RaftMessage.AppendEntriesResponse.class).orElseThrow();
+            assertFalse(response.success());
+            assertEquals(0, raft.commitIndex());
+        }
+
+        @Test
         void followerAdvancesCommitIndex() {
             var raft = createRaft("n1", "n1", "n2", "n3");
 

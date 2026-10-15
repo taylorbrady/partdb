@@ -1,10 +1,7 @@
 package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.admin.BackupRestorer;
-import io.partdb.node.admin.PartDbBackup;
-import io.partdb.node.admin.RestoreResult;
-import io.partdb.node.cluster.NodeRole;
+import io.partdb.raft.RaftRole;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -26,7 +23,8 @@ class PartDbBootstrapTest {
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        PartDbBackup backup;
+        Path backup = tempDir.resolve("backup");
+        long backupRevision;
         try (var node = PartDbNode.open(sourceConfig)) {
             awaitLeader(node);
 
@@ -34,16 +32,16 @@ class PartDbBootstrapTest {
                 .toCompletableFuture()
                 .get(5, TimeUnit.SECONDS);
 
-            backup = node.admin().createBackup().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            backupRevision = node.admin().backup(backup).toCompletableFuture().get(5, TimeUnit.SECONDS);
         }
 
         var recoveredConfig = PartDbNodeConfig.builder("node-1", tempDir.resolve("recovered"))
             .tickInterval(Duration.ofMillis(1))
             .build();
 
-        RestoreResult result = BackupRestorer.restore(recoveredConfig, backup);
+        long restoredRevision = PartDbNode.restore(recoveredConfig, backup);
 
-        assertTrue(result.revision() >= backup.appliedIndex());
+        assertEquals(backupRevision, restoredRevision);
 
         try (var recovered = PartDbNode.open(recoveredConfig)) {
             awaitLeader(recovered);
@@ -59,14 +57,14 @@ class PartDbBootstrapTest {
                 .toCompletableFuture()
                 .get(5, TimeUnit.SECONDS)
                 .revision();
-            assertTrue(nextWriteRevision > backup.appliedIndex());
+            assertTrue(nextWriteRevision > backupRevision);
         }
     }
 
     private static void awaitLeader(PartDbNode node) throws Exception {
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadlineNanos) {
-            if (node.cluster().status().role() == NodeRole.LEADER) {
+            if (node.cluster().status().role() == RaftRole.LEADER) {
                 return;
             }
             Thread.sleep(5);

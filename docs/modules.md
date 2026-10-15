@@ -1,15 +1,21 @@
 # Module Boundaries
 
-PartDB uses Gradle modules to separate domain concepts, technology adapters, and
-process assembly. A module should exist only when it owns a stable concept,
-isolates an external technology, or assembles a runnable process.
+PartDB uses Gradle modules only where a boundary pays for itself. A module
+should exist when it is one of:
 
-Small modules are acceptable when they protect an important boundary. Thin
-modules are suspect when they only forward calls without owning a responsibility.
+- an engine that can be tested and reused without knowing it is PartDB
+  (`partdb-storage`, `partdb-raft`);
+- a contract shared by two sides that must not depend on each other
+  (`partdb-bytes`, `partdb-grpc`);
+- a deployable or published artifact (`partdb-client`, `partdb-app`);
+- a layer whose boundary stops a mistake that is otherwise easy to make
+  (`partdb-node` keeps gRPC and protobuf out of KV semantics).
+
+Everything else is a package inside one of these modules. When a guarantee
+cannot be expressed by a module boundary, write a test for it, as
+`RaftCorePurityTest` does for the pure Raft core.
 
 ## Dependency Direction
-
-The intended dependency direction is:
 
 ```text
 partdb-app
@@ -18,44 +24,32 @@ partdb-app
 
 partdb-server
   -> partdb-node
-  -> partdb-consensus
-  -> partdb-transport-grpc
-
-partdb-transport-grpc
-  -> partdb-node
-  -> partdb-consensus
   -> partdb-grpc
-  -> partdb-raft
 
 partdb-client
   -> partdb-grpc
   -> partdb-bytes
 
 partdb-node
-  -> partdb-consensus
-  -> partdb-storage
-  -> partdb-bytes
-
-partdb-consensus
   -> partdb-raft
+  -> partdb-storage
+
+partdb-raft
   -> partdb-bytes
 
 partdb-storage
-  -> partdb-bytes
-
-partdb-raft
   -> partdb-bytes
 ```
 
 Rules:
 
-- Core modules must not depend on gRPC, CLI, process lifecycle, logging
-  configuration, or generated protobuf classes.
+- `partdb-raft`, `partdb-storage`, and `partdb-node` must not depend on gRPC,
+  CLI code, process lifecycle, logging configuration, or generated protobuf
+  classes.
 - `partdb-grpc` must not depend on runtime modules.
-- `partdb-client` must not depend on `partdb-node`, `partdb-server`, or
-  consensus internals.
+- `partdb-client` must not depend on `partdb-node`, `partdb-server`, or Raft.
 - `partdb-storage` and `partdb-raft` must remain independently testable.
-- `partdb-app` is allowed to depend on client and server modules because it is a
+- `partdb-app` may depend on client and server modules because it is the
   command-line assembly point.
 
 ## Module Charters
@@ -64,59 +58,47 @@ Rules:
 
 Role: shared immutable byte value type.
 
-Decision: keep.
-
-This module is intentionally small. It prevents `byte[]` mutability and ad hoc
-encoding helpers from leaking through the system.
+`Bytes` is part of the client's public API, so it must be an artifact the
+client can depend on without pulling in storage or Raft. It prevents `byte[]`
+mutability and ad hoc encoding helpers from leaking through the system.
+Adapters convert with one copy in (`Bytes.copyOf(ByteBuffer)` or
+`Bytes.copyOf(MemorySegment)`) and zero copies out
+(`asReadOnlyByteBuffer()`, wrapped with `UnsafeByteOperations` for protobuf).
 
 Allowed dependencies: Java standard library only.
 
 Must not own: keys, values, storage records, protocol messages, or database
-semantics.
+semantics. Bulk data such as snapshots and checkpoints never travels as
+`Bytes`; it is streamed through files.
 
 ### `partdb-raft`
 
-Role: pure Raft algorithm and Raft domain types.
+Role: Raft consensus, from the pure algorithm to the durable runtime.
 
-Decision: keep.
+The module has two packages:
 
-This is a core module. It owns the Raft protocol state machine: one explicit
-`RaftInput` in, one `RaftEffects` description out. It should stay deterministic
-and side-effect-free. Persistence, IO, clocks, threads, application execution,
-and network transport belong outside this module.
+- `io.partdb.raft` is the pure core: one `RaftInput` in, one `RaftEffects`
+  out. It is deterministic and side-effect free. `RaftCorePurityTest` keeps
+  JDK IO, clocks, threads, and runtime imports out of it.
+- `io.partdb.raft.runtime` adapts the core to a segmented write-ahead log,
+  file-based snapshots, a transport SPI with streamed snapshot transfer, read
+  barriers, proposal tracking, and state-machine application. It is generic
+  over a `StateMachine`.
 
-Allowed dependencies: `partdb-bytes`.
+Membership, role, and status are modeled once (`RaftMembership`, `RaftRole`,
+`RaftStatus`) and used as-is by the node API.
 
-Must not own: files, sockets, gRPC, thread pools, PartDB KV commands, storage
-engine details, or process lifecycle.
+Allowed dependencies: `partdb-bytes`, SLF4J.
 
-### `partdb-consensus`
-
-Role: durable, effectful Raft runtime and consensus membership model.
-
-Decision: keep.
-
-This module adapts the pure Raft core to persistence, transport, snapshots,
-read barriers, proposal tracking, and state-machine application. Membership is
-expressed with `RaftMembership` from `partdb-raft`; consensus does not re-model
-it. It is generic over a `ReplicatedStateMachine`.
-
-Allowed dependencies: `partdb-raft`, `partdb-bytes`.
-
-Must not own: PartDB KV semantics, public gRPC schemas, CLI behavior, or storage
-engine internals.
-
-Watch point: do not let PartDB-specific command/result handling move into this
-module.
+Must not own: gRPC, sockets, PartDB KV commands, storage engine details, or
+process lifecycle.
 
 ### `partdb-storage`
 
 Role: local durable versioned state store.
 
-Decision: keep.
-
 This module owns the LSM engine, memtables, SSTables, manifests, compaction,
-block cache, checkpoints, and storage-level tests/benchmarks.
+block cache, streamed checkpoints, and storage-level tests/benchmarks.
 
 Allowed dependencies: `partdb-bytes`.
 
@@ -127,13 +109,13 @@ encoding.
 
 Role: replicated PartDB node domain.
 
-Decision: keep.
-
-This module composes the consensus runtime with the PartDB KV state machine. It
+This module composes the Raft runtime with the PartDB KV state machine. It
 owns node-facing domain APIs: KV operations, cluster status, backup, and
-recovery.
+restore. Packages: `io.partdb.node` (node, config, admin and cluster views),
+`io.partdb.node.kv` (KV API types), and `io.partdb.node.state` (state machine
+and command codecs).
 
-Allowed dependencies: `partdb-consensus`, `partdb-storage`, `partdb-bytes`.
+Allowed dependencies: `partdb-raft`, `partdb-storage`, `partdb-bytes`.
 
 Must not own: gRPC service implementations, CLI parsing, process ports, JMX
 registration, or transport endpoint parsing.
@@ -142,93 +124,60 @@ registration, or transport endpoint parsing.
 
 Role: public protobuf schemas and generated gRPC classes.
 
-Decision: keep.
-
-This module is a technology boundary. It provides generated classes to clients
-and server-side adapters without depending on the runtime.
+This is the wire contract shared by the client and the server. It does not
+depend on the runtime.
 
 Allowed dependencies: gRPC/protobuf libraries only.
 
-Must not own: Java client behavior, node logic, storage logic, or Raft runtime
-logic.
-
-### `partdb-transport-grpc`
-
-Role: gRPC adapters for public APIs and Raft peer transport.
-
-Decision: keep for now, split later only if it becomes confusing.
-
-This module currently contains two gRPC adapters:
-
-- public KV/cluster service adapters
-- internal Raft peer transport adapter
-
-That is acceptable while both are small and share gRPC infrastructure. If either
-side grows substantially, split into public API transport and Raft transport
-modules.
-
-Allowed dependencies: `partdb-grpc`, `partdb-node`, `partdb-consensus`,
-`partdb-raft`.
-
-Must not own: process assembly, CLI behavior, storage internals, or consensus
-runtime policy.
-
-Watch point: `GrpcServer` is public API transport; `GrpcRaftTransport` is
-internal replication transport. Keep their responsibilities separate even while
-they live in one module.
+Must not own: Java client behavior, node logic, storage logic, Raft peer
+protocol, or Raft runtime logic.
 
 ### `partdb-client`
 
 Role: Java client API.
 
-Decision: keep.
-
-This module exposes typed Java APIs over the public gRPC protocol.
+This module exposes typed Java APIs over the public gRPC protocol. Its test
+fixtures hold `TestCluster`, the shared driver for both cluster test suites.
 
 Allowed dependencies: `partdb-grpc`, `partdb-bytes`, gRPC/protobuf libraries.
 
-Must not own: server/node implementation details, consensus concepts, storage
+Must not own: server/node implementation details, Raft concepts, storage
 concepts, Raft peer transport endpoints, or generated-code leakage in public
 APIs.
 
 ### `partdb-server`
 
-Role: process runtime assembly.
+Role: the PartDB server process.
 
-Decision: keep, but hold it to this charter.
+This is the one place gRPC is implemented on the server side:
 
-This module is thin by design if it owns process composition: create a node,
-wire the Raft transport, start public gRPC, expose health endpoints, register
-observability, and shut everything down in order.
+- `io.partdb.server` assembles the process: create a node, wire the Raft
+  transport, start public gRPC, expose health endpoints, register JMX, and
+  shut everything down in order.
+- `io.partdb.server.grpc` implements the public KV and cluster services.
+- `io.partdb.server.peer` implements `RaftTransport` over a private gRPC
+  protocol (`raft.proto`), including chunked snapshot streaming with flow
+  control.
 
-Allowed dependencies: `partdb-node`, `partdb-consensus`,
-`partdb-transport-grpc`.
+Allowed dependencies: `partdb-node`, `partdb-grpc`, gRPC/protobuf libraries.
 
-Must not own: CLI parsing, client commands, storage internals, Raft algorithm
-logic, public Java client behavior, generated protobuf classes, or gRPC service
-implementations.
-
-Merge condition: if this module stops owning health/observability/lifecycle and
-only wraps `GrpcServer`, fold it into `partdb-app`.
+Must not own: CLI parsing, client commands, storage internals, or Raft
+algorithm logic.
 
 ### `partdb-app`
 
 Role: executable CLI.
 
-Decision: keep.
-
 This module parses commands, starts servers, and acts as an operational client.
 
 Allowed dependencies: `partdb-server`, `partdb-client`.
 
-Must not own: node internals, consensus internals, storage internals, or gRPC
+Must not own: node internals, Raft internals, storage internals, or gRPC
 service implementations.
 
 ### `partdb-benchmarks`
 
 Role: benchmark assembly.
-
-Decision: keep.
 
 This module should remain outside production runtime dependency paths.
 
@@ -236,22 +185,23 @@ Allowed dependencies: benchmark targets and JMH.
 
 Must not own: product code.
 
-## Current Keep/Merge/Split Decisions
+## Decisions
 
-- Keep `partdb-bytes` despite being small because it owns a foundational value
-  boundary.
-- Do not add a separate membership type per module; `RaftMembership` is the one
-  membership model from `partdb-raft` up to the node API.
-- Keep `partdb-server` only as the process runtime assembly module.
-- Keep `partdb-transport-grpc` as one module for now. Revisit a split when
-  public API transport or Raft peer transport grows.
+- `partdb-consensus` was merged into `partdb-raft`. Its separate module
+  guaranteed nothing the purity test does not, and its boundary kept producing
+  duplicate role, status, and membership types.
+- `partdb-transport-grpc` was merged into `partdb-server`. It mixed adapters
+  for two layers (public KV over node, peer traffic over Raft) and had no
+  consumer other than the server.
+- `partdb-node` stays separate from `partdb-server` so protocol types cannot
+  reach the KV state machine.
+- Do not add a type per layer for a concept another layer already models.
 - Do not introduce more modules until a responsibility cannot be expressed by a
   package boundary inside an existing module.
 
 ## Next Boundary Risks
 
-1. `partdb-consensus` should remain generic over replicated state machines.
+1. The Raft runtime should remain generic over state machines.
 2. `partdb-node` should stay protocol-independent.
-3. `partdb-server` should not become a second application layer.
-4. `partdb-transport-grpc` should not become a process assembly module.
-5. `partdb-grpc` should continue to expose only implemented v0 semantics.
+3. `partdb-server` should not grow a second application layer.
+4. `partdb-grpc` should continue to expose only implemented v0 semantics.

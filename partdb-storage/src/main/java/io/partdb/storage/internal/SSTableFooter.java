@@ -37,10 +37,10 @@ record SSTableFooter(
         buffer.putInt(blockCount);
 
         buffer.putInt(smallestKey.length());
-        buffer.put(smallestKey.toByteArray());
+        buffer.put(smallestKey.segment().asByteBuffer());
 
         buffer.putInt(largestKey.length());
-        buffer.put(largestKey.toByteArray());
+        buffer.put(largestKey.segment().asByteBuffer());
 
         buffer.putLong(smallestRevision);
         buffer.putLong(largestRevision);

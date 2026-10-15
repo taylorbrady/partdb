@@ -7,6 +7,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -168,11 +171,12 @@ public final class LsmStorageEngine implements AutoCloseable {
         return openReadView().scan(bounds);
     }
 
-    public StorageCheckpoint checkpoint() {
-        return new StorageCheckpoint(Bytes.copyOf(checkpointBytes()));
+    public void flush() {
+        drainToDurableState();
     }
 
-    private byte[] checkpointBytes() {
+    public Revision checkpoint(OutputStream target) {
+        Objects.requireNonNull(target, "target must not be null");
         StorageCheckpointEvent event = new StorageCheckpointEvent();
         event.phase = "checkpoint";
         event.begin();
@@ -180,14 +184,16 @@ public final class LsmStorageEngine implements AutoCloseable {
         long startNanos = System.nanoTime();
         try {
             drainToDurableState();
-            byte[] checkpoint;
             try (VersionLease snapshot = versionSet.acquire(revisionState.durableThroughRevision())) {
-                checkpoint = VersionCheckpoint.capture(snapshot).toBytes();
+                event.bytes = VersionCheckpoint.write(snapshot, target);
+                runtimeStats.checkpointFinished((System.nanoTime() - startNanos) / 1_000_000);
+                event.success = true;
+                return new Revision(snapshot.manifest().durableThroughRevision());
             }
-            runtimeStats.checkpointFinished((System.nanoTime() - startNanos) / 1_000_000);
-            event.bytes = checkpoint.length;
-            event.success = true;
-            return checkpoint;
+        } catch (IOException e) {
+            event.success = false;
+            event.error = e.getClass().getSimpleName();
+            throw new StorageException.IO("Failed to write checkpoint", e);
         } catch (RuntimeException e) {
             event.success = false;
             event.error = e.getClass().getSimpleName();
@@ -197,24 +203,28 @@ public final class LsmStorageEngine implements AutoCloseable {
         }
     }
 
-    public void restore(StorageCheckpoint checkpoint) {
-        replaceWithCheckpoint(Objects.requireNonNull(checkpoint, "checkpoint must not be null").bytes().toByteArray());
-    }
-
-    private void replaceWithCheckpoint(byte[] data) {
-        VersionCheckpoint checkpoint = VersionCheckpoint.fromBytes(data);
-
+    public void restore(InputStream source) {
+        Objects.requireNonNull(source, "source must not be null");
         StorageCheckpointEvent event = new StorageCheckpointEvent();
         event.phase = "restore";
-        event.bytes = data.length;
         event.begin();
 
         long startNanos = System.nanoTime();
-        rotationLock.lock();
         try {
-            memtableFlusher.awaitIdle();
-            restoreCheckpoint(checkpoint);
-            resetMemtables();
+            VersionCheckpoint checkpoint;
+            try {
+                checkpoint = checkpointInstaller.stage(source);
+            } catch (IOException e) {
+                throw new StorageException.IO("Failed to stage checkpoint", e);
+            }
+            rotationLock.lock();
+            try {
+                memtableFlusher.awaitIdle();
+                restoreCheckpoint(checkpoint);
+                resetMemtables();
+            } finally {
+                rotationLock.unlock();
+            }
             runtimeStats.restoreFinished((System.nanoTime() - startNanos) / 1_000_000);
             event.success = true;
         } catch (RuntimeException e) {
@@ -222,13 +232,12 @@ public final class LsmStorageEngine implements AutoCloseable {
             event.error = e.getClass().getSimpleName();
             throw e;
         } finally {
-            rotationLock.unlock();
             event.commit();
         }
     }
 
-    public StorageMetadata metadata() {
-        return new StorageMetadata(new Revision(revisionState.appliedThroughRevision()));
+    public Revision appliedThrough() {
+        return new Revision(revisionState.appliedThroughRevision());
     }
 
     public StorageStats stats() {
@@ -348,12 +357,6 @@ public final class LsmStorageEngine implements AutoCloseable {
         boolean backedUpCurrentState = false;
 
         try {
-            try {
-                checkpointInstaller.stageAndValidate(checkpoint);
-            } catch (IOException e) {
-                throw new StorageException.IO("Failed to stage checkpoint files", e);
-            }
-
             try (CompactionScheduler.Pause ignored = compactionScheduler.pauseAndAwaitIdle(Duration.ofSeconds(30))) {
                 SSTableManifest previousManifest = versionSet.manifest();
                 StoreVersion previousVersion = versionSet.retireCurrent();
@@ -459,7 +462,7 @@ public final class LsmStorageEngine implements AutoCloseable {
     }
 
     private static Slice copy(Bytes bytes) {
-        return Slice.copyOf(bytes.toByteArray());
+        return Slice.wrap(MemorySegment.ofBuffer(bytes.asReadOnlyByteBuffer()));
     }
 
     private static StoredEntry toStoredEntry(Revision revision, Mutation mutation) {
@@ -508,15 +511,15 @@ public final class LsmStorageEngine implements AutoCloseable {
 
     private static EntryRecord toEntryRecord(StoredEntry.Value entry) {
         return new EntryRecord(
-            Bytes.copyOf(entry.key().toByteArray()),
-            Bytes.copyOf(entry.value().toByteArray()),
+            Bytes.copyOf(entry.key().segment()),
+            Bytes.copyOf(entry.value().segment()),
             new Revision(entry.revision())
         );
     }
 
     private static ValueRecord toValueRecord(StoredEntry.Value entry) {
         return new ValueRecord(
-            Bytes.copyOf(entry.value().toByteArray()),
+            Bytes.copyOf(entry.value().segment()),
             new Revision(entry.revision())
         );
     }

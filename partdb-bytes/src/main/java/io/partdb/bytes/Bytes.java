@@ -1,5 +1,7 @@
 package io.partdb.bytes;
 
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -34,6 +36,24 @@ public final class Bytes implements Comparable<Bytes> {
             return EMPTY;
         }
         return new Bytes(Arrays.copyOfRange(data, offset, offset + length));
+    }
+
+    public static Bytes copyOf(ByteBuffer source) {
+        Objects.requireNonNull(source, "source must not be null");
+        if (!source.hasRemaining()) {
+            return EMPTY;
+        }
+        byte[] data = new byte[source.remaining()];
+        source.get(source.position(), data);
+        return new Bytes(data);
+    }
+
+    public static Bytes copyOf(MemorySegment source) {
+        Objects.requireNonNull(source, "source must not be null");
+        if (source.byteSize() == 0) {
+            return EMPTY;
+        }
+        return new Bytes(source.toArray(ValueLayout.JAVA_BYTE));
     }
 
     public static Bytes utf8(String value) {

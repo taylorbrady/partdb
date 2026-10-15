@@ -6,13 +6,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/**
- * Side-effect description returned by one {@link RaftNode#step(RaftInput)} call.
- *
- * <p>The runtime must make persistence effects durable before it treats
- * dependent messages, application effects, or acknowledgements from this step
- * as complete.</p>
- */
 public record RaftEffects(
     Persistence persistence,
     List<Outbound> messages,
@@ -33,7 +26,7 @@ public record RaftEffects(
     public record Persistence(
         Optional<RaftHardState> hardState,
         List<RaftLogEntry> entries,
-        Optional<RaftSnapshot> incomingSnapshot
+        Optional<SnapshotMetadata> incomingSnapshot
     ) {
         public Persistence {
             hardState = Objects.requireNonNull(hardState, "hardState must not be null");
@@ -76,11 +69,7 @@ public record RaftEffects(
 
     public record SnapshotNeeded(String peer, long index, long term) {}
 
-    public record ReadState(long index, Bytes context) {
-        public ReadState {
-            context = Objects.requireNonNull(context, "context must not be null");
-        }
-    }
+    public record ReadState(long index, long context) {}
 
     public record MembershipTransition(long index, RaftMembership previous, RaftMembership current) {}
 }

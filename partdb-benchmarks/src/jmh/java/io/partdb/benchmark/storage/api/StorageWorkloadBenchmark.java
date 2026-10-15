@@ -81,7 +81,7 @@ public class StorageWorkloadBenchmark {
             Bytes[] missingKeys = BenchmarkKeys.missingKeys(initialKeyCount);
 
             long nextRevision = StorageFixtures.populate(store(), existingKeys, valueTemplate, 1);
-            store().checkpoint();
+            store().flush();
 
             operations = StorageWorkloadScript.mixed(
                 existingKeys,

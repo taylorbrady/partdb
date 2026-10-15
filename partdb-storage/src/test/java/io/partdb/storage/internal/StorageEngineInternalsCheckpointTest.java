@@ -22,8 +22,8 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
             put(tree, key(2), value(20), nextRevision());
             drainToDurableState(tree);
 
-            StorageCheckpoint checkpoint = tree.checkpoint();
-            tree.restore(checkpoint);
+            byte[] checkpoint = Checkpoints.capture(tree);
+            Checkpoints.restore(tree, checkpoint);
 
             assertTrue(get(tree, key(1)).isPresent());
             assertEquals(bytes(value(10)), get(tree, key(1)).orElseThrow().value());
@@ -37,16 +37,16 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
         Path sourceDir = tempDir.resolve("source");
         Path restoredDir = tempDir.resolve("restored");
 
-        StorageCheckpoint checkpoint;
+        byte[] checkpoint;
         try (StorageEngine source = StorageEngine.open(sourceDir, StorageOptions.defaults())) {
             put(source, key(1), value(10), nextRevision());
             put(source, key(2), value(20), nextRevision());
             drainToDurableState(source);
-            checkpoint = source.checkpoint();
+            checkpoint = Checkpoints.capture(source);
         }
 
         try (StorageEngine restored = StorageEngine.open(restoredDir, StorageOptions.defaults())) {
-            restored.restore(checkpoint);
+            Checkpoints.restore(restored, checkpoint);
             assertTrue(get(restored, key(1)).isPresent());
             assertEquals(bytes(value(10)), get(restored, key(1)).orElseThrow().value());
             assertTrue(get(restored, key(2)).isPresent());
@@ -60,7 +60,7 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
             put(tree, key(1), value(10), nextRevision());
             drainToDurableState(tree);
 
-            StorageCheckpoint checkpoint = tree.checkpoint();
+            byte[] checkpoint = Checkpoints.capture(tree);
 
             put(tree, key(2), value(20), nextRevision());
             put(tree, key(3), value(30), nextRevision());
@@ -69,7 +69,7 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
             assertTrue(get(tree, key(2)).isPresent());
             assertTrue(get(tree, key(3)).isPresent());
 
-            tree.restore(checkpoint);
+            Checkpoints.restore(tree, checkpoint);
 
             assertTrue(get(tree, key(1)).isPresent());
             assertEquals(bytes(value(10)), get(tree, key(1)).orElseThrow().value());
@@ -87,13 +87,13 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
             put(tree, key(2), value(20), nextRevision());
             drainToDurableState(tree);
 
-            StorageCheckpoint checkpoint = tree.checkpoint();
+            byte[] checkpoint = Checkpoints.capture(tree);
             assertEquals(2, readManifest(tempDir).sstables().size());
 
             put(tree, key(3), value(30), nextRevision());
             drainToDurableState(tree);
 
-            tree.restore(checkpoint);
+            Checkpoints.restore(tree, checkpoint);
 
             assertTrue(get(tree, key(1)).isPresent());
             assertTrue(get(tree, key(2)).isPresent());
@@ -108,13 +108,13 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
             put(tree, key(1), value(10), nextRevision());
             drainToDurableState(tree);
 
-            StorageCheckpoint checkpoint = tree.checkpoint();
+            byte[] checkpoint = Checkpoints.capture(tree);
 
             put(tree, key(2), value(20), nextRevision());
 
             assertTrue(get(tree, key(2)).isPresent());
 
-            tree.restore(checkpoint);
+            Checkpoints.restore(tree, checkpoint);
 
             assertTrue(get(tree, key(1)).isPresent());
             assertTrue(get(tree, key(2)).isEmpty());
@@ -127,7 +127,7 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
             put(tree, key(1), value(10), nextRevision());
             drainToDurableState(tree);
 
-            StorageCheckpoint checkpoint = tree.checkpoint();
+            byte[] checkpoint = Checkpoints.capture(tree);
             SSTableManifest originalManifest = readManifest(tempDir);
             long originalNextId = originalManifest.nextSSTableId();
             int originalSstableCount = originalManifest.sstables().size();
@@ -137,7 +137,7 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
 
             assertTrue(readManifest(tempDir).nextSSTableId() > originalNextId);
 
-            tree.restore(checkpoint);
+            Checkpoints.restore(tree, checkpoint);
 
             SSTableManifest restoredManifest = readManifest(tempDir);
             assertEquals(originalNextId, restoredManifest.nextSSTableId());
@@ -150,21 +150,21 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
         try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             put(tree, key(1), value(10), nextRevision());
             drainToDurableState(tree);
-            StorageCheckpoint checkpoint1 = tree.checkpoint();
+            byte[] checkpoint1 = Checkpoints.capture(tree);
 
             put(tree, key(2), value(20), nextRevision());
             drainToDurableState(tree);
-            StorageCheckpoint checkpoint2 = tree.checkpoint();
+            byte[] checkpoint2 = Checkpoints.capture(tree);
 
             put(tree, key(3), value(30), nextRevision());
             drainToDurableState(tree);
 
-            tree.restore(checkpoint1);
+            Checkpoints.restore(tree, checkpoint1);
             assertTrue(get(tree, key(1)).isPresent());
             assertTrue(get(tree, key(2)).isEmpty());
             assertTrue(get(tree, key(3)).isEmpty());
 
-            tree.restore(checkpoint2);
+            Checkpoints.restore(tree, checkpoint2);
             assertTrue(get(tree, key(1)).isPresent());
             assertTrue(get(tree, key(2)).isPresent());
             assertTrue(get(tree, key(3)).isEmpty());
@@ -174,13 +174,13 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
     @Test
     void emptyTree() {
         try (StorageEngine tree = StorageEngine.open(tempDir, StorageOptions.defaults())) {
-            StorageCheckpoint checkpoint = tree.checkpoint();
+            byte[] checkpoint = Checkpoints.capture(tree);
 
             put(tree, key(1), value(10), nextRevision());
             drainToDurableState(tree);
             assertTrue(get(tree, key(1)).isPresent());
 
-            tree.restore(checkpoint);
+            Checkpoints.restore(tree, checkpoint);
 
             assertTrue(get(tree, key(1)).isEmpty());
             assertTrue(readManifest(tempDir).sstables().isEmpty());
@@ -203,30 +203,30 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
         Path dir1 = tempDir.resolve("mixed-store-1");
         Path dir2 = tempDir.resolve("mixed-store-2");
 
-        StorageCheckpoint empty;
-        StorageCheckpoint key23;
+        byte[] empty;
+        byte[] key23;
 
         try (StorageEngine store0 = StorageEngine.open(dir0, options)) {
-            empty = store0.checkpoint();
+            empty = Checkpoints.capture(store0);
             put(store0, key(7), value("v1"), 1);
-            store0.restore(empty);
-            store0.restore(empty);
+            Checkpoints.restore(store0, empty);
+            Checkpoints.restore(store0, empty);
             put(store0, key(23), value("v23"), 2);
-            key23 = store0.checkpoint();
+            key23 = Checkpoints.capture(store0);
             put(store0, key(15), value("v15"), 3);
             put(store0, key(10), value("v10"), 4);
             put(store0, key(14), value("v14"), 5);
         }
 
         try (StorageEngine store1 = StorageEngine.open(dir1, options)) {
-            store1.restore(key23);
+            Checkpoints.restore(store1, key23);
             delete(store1, key(20), 6);
         }
 
         try (StorageEngine store2 = StorageEngine.open(dir2, options)) {
-            store2.restore(empty);
+            Checkpoints.restore(store2, empty);
             put(store2, key(21), value("v21"), 7);
-            store2.checkpoint();
+            store2.flush();
             put(store2, key(13), value("v13"), 8);
             put(store2, key(20), value("v20-r9"), 9);
             put(store2, key(23), value("v23-r10"), 10);
@@ -236,11 +236,11 @@ class StorageEngineInternalsCheckpointTest extends StorageEngineInternalTestSupp
             delete(store2, key(15), 14);
             put(store2, key(12), value("v12"), 15);
 
-            store2.restore(key23);
+            Checkpoints.restore(store2, key23);
 
             SSTableManifest manifest = readManifest(dir2);
             assertEquals(List.of(1L), manifest.sstables().stream().map(SSTableMetadata::id).toList());
-            assertEquals(2, store2.metadata().appliedThrough().value());
+            assertEquals(2, store2.appliedThrough().value());
 
             Optional<ValueRecord> loaded = get(store2, key(23));
             assertTrue(loaded.isPresent());

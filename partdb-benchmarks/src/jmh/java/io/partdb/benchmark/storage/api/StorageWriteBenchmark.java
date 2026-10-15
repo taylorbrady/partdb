@@ -7,7 +7,6 @@ import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
 import io.partdb.storage.Mutation;
 import io.partdb.storage.Revision;
-import io.partdb.storage.StorageCheckpoint;
 import io.partdb.storage.StorageOptions;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -20,6 +19,8 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
@@ -140,7 +141,7 @@ public class StorageWriteBenchmark {
         Bytes[] appendKeys;
         int nextAppendKeyIndex;
         StorageOptions options;
-        StorageCheckpoint baselineCheckpoint;
+        byte[] baselineCheckpoint;
         long baselineRevision;
 
         @Setup(Level.Trial)
@@ -151,14 +152,16 @@ public class StorageWriteBenchmark {
             appendKeys = BenchmarkKeys.storageKeys(initialKeyCount, appendKeySpace);
             openStore("partdb-steady-write-baseline", options);
             baselineRevision = StorageFixtures.populate(store(), existingKeys, valueTemplate, 1) - 1;
-            baselineCheckpoint = store().checkpoint();
+            var checkpoint = new ByteArrayOutputStream();
+            store().checkpoint(checkpoint);
+            baselineCheckpoint = checkpoint.toByteArray();
             closeAndDelete();
         }
 
         @Setup(Level.Iteration)
         public void openIterationStore() throws IOException {
             openStore("partdb-steady-write", options);
-            store().restore(baselineCheckpoint);
+            store().restore(new ByteArrayInputStream(baselineCheckpoint));
             revisionCounter = baselineRevision;
             nextAppendKeyIndex = 0;
             randomIndex = 0;

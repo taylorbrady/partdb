@@ -1,12 +1,9 @@
 package io.partdb.raft;
 
-import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -381,6 +378,19 @@ class RaftNodeElectionTest extends RaftNodeTestSupport {
             var preVote = (RaftMessage.PreVote) ready.messages().get(0).message();
             assertEquals(1, preVote.term());
             assertEquals("n1", preVote.candidateId());
+        }
+
+        @Test
+        void grantedPreVoteEchoesCandidateTermFromLowerTermVoter() {
+            var raft = createRaft("n1", "n1", "n2", "n3");
+            tickUntilTimeout(raft);
+
+            var ready = raft.step(new RaftInput.MessageReceived("n2", new RaftMessage.PreVote(5, "n2", 10, 4)));
+
+            var response = findResponse(ready, RaftMessage.PreVoteResponse.class).orElseThrow();
+            assertTrue(response.voteGranted());
+            assertEquals(5, response.term());
+            assertEquals(0, raft.term());
         }
 
         @Test

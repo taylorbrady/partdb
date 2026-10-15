@@ -54,7 +54,7 @@ abstract class RaftNodeTestSupport {
         for (int i = 1; i <= snapIndex; i++) {
             storage.append(null, List.of(new RaftLogEntry.Data(i, snapTerm, Bytes.EMPTY)));
         }
-        storage.saveSnapshot(new RaftSnapshot(snapIndex, snapTerm, configuration, Bytes.EMPTY));
+        storage.saveSnapshot(new SnapshotMetadata(snapIndex, snapTerm, configuration));
         return RaftNode.builder(id, configuration, CONFIG, storage)
             .electionJitter(_ -> DETERMINISTIC_JITTER)
             .restoredFrom(RaftHardState.INITIAL, snapIndex)

@@ -1,7 +1,7 @@
 package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.cluster.NodeRole;
+import io.partdb.raft.RaftRole;
 import io.partdb.node.kv.Condition;
 import io.partdb.node.kv.Transaction;
 import io.partdb.node.kv.TransactionResult;
@@ -84,8 +84,7 @@ class PartDbNodeTest {
         try (var node = PartDbNode.open(config)) {
             awaitLeader(node);
             node.keyValues().put(bytes("key"), bytes("value-1")).toCompletableFuture().get(5, TimeUnit.SECONDS);
-            // A backup checkpoints storage, making revisions durable independently of the Raft log.
-            node.admin().createBackup().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            node.admin().backup(tempDir.resolve("backup")).toCompletableFuture().get(5, TimeUnit.SECONDS);
             node.keyValues().put(bytes("key"), bytes("value-2")).toCompletableFuture().get(5, TimeUnit.SECONDS);
         }
 
@@ -211,7 +210,7 @@ class PartDbNodeTest {
     private static void awaitLeader(PartDbNode node) throws Exception {
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadlineNanos) {
-            if (node.cluster().status().role() == NodeRole.LEADER) {
+            if (node.cluster().status().role() == RaftRole.LEADER) {
                 return;
             }
             Thread.sleep(5);

@@ -1,48 +1,36 @@
 package io.partdb.node;
 
-import io.partdb.consensus.ConsensusConfig;
 import io.partdb.raft.RaftMembership;
 import io.partdb.raft.RaftOptions;
+import io.partdb.raft.runtime.RaftConfig;
 
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Objects;
-import java.util.Set;
 
-public record PartDbNodeConfig(
-    String nodeId,
-    Path dataDirectory,
-    RaftMembership membership,
-    Duration tickInterval,
-    RaftOptions raftOptions
-) {
+public record PartDbNodeConfig(Path dataDirectory, RaftConfig raft) {
     public PartDbNodeConfig {
         Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
-        // ConsensusConfig validates nodeId, membership, tickInterval, and raftOptions.
-        new ConsensusConfig(nodeId, membership, tickInterval, raftOptions);
+        Objects.requireNonNull(raft, "raft must not be null");
     }
 
     public static Builder builder(String nodeId, Path dataDirectory) {
         return new Builder(nodeId, dataDirectory);
     }
 
-    public Set<String> memberIds() {
-        return membership.memberIds();
-    }
-
-    public ConsensusConfig toConsensusConfig() {
-        return new ConsensusConfig(nodeId, membership, tickInterval, raftOptions);
+    public String nodeId() {
+        return raft.nodeId();
     }
 
     public static final class Builder {
         private final String nodeId;
         private final Path dataDirectory;
         private RaftMembership membership;
-        private Duration tickInterval = ConsensusConfig.DEFAULT_TICK_INTERVAL;
+        private Duration tickInterval = RaftConfig.DEFAULT_TICK_INTERVAL;
         private RaftOptions raftOptions = RaftOptions.defaults();
 
         private Builder(String nodeId, Path dataDirectory) {
-            this.nodeId = nodeId;
+            this.nodeId = Objects.requireNonNull(nodeId, "nodeId must not be null");
             this.dataDirectory = dataDirectory;
             this.membership = RaftMembership.voters(nodeId);
         }
@@ -67,7 +55,7 @@ public record PartDbNodeConfig(
         }
 
         public PartDbNodeConfig build() {
-            return new PartDbNodeConfig(nodeId, dataDirectory, membership, tickInterval, raftOptions);
+            return new PartDbNodeConfig(dataDirectory, new RaftConfig(nodeId, membership, tickInterval, raftOptions));
         }
     }
 }

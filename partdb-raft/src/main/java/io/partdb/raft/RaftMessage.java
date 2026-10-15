@@ -1,7 +1,5 @@
 package io.partdb.raft;
 
-import io.partdb.bytes.Bytes;
-
 import java.util.List;
 import java.util.Objects;
 
@@ -68,18 +66,14 @@ public sealed interface RaftMessage {
     record InstallSnapshot(
         long term,
         String leaderId,
-        long lastIncludedIndex,
-        long lastIncludedTerm,
-        RaftMembership membership,
-        Bytes data
+        SnapshotMetadata snapshot
     ) implements Request {
         public InstallSnapshot {
             if (term < 0) {
                 throw new IllegalArgumentException("term must be non-negative");
             }
             Objects.requireNonNull(leaderId, "leaderId must not be null");
-            Objects.requireNonNull(membership, "membership must not be null");
-            data = Objects.requireNonNull(data, "data must not be null");
+            Objects.requireNonNull(snapshot, "snapshot must not be null");
         }
     }
 
@@ -118,26 +112,24 @@ public sealed interface RaftMessage {
 
     record ReadIndexRequested(
         long term,
-        Bytes context
+        long context
     ) implements Request {
         public ReadIndexRequested {
             if (term < 0) {
                 throw new IllegalArgumentException("term must be non-negative");
             }
-            context = Objects.requireNonNull(context, "context must not be null");
         }
     }
 
     record ReadIndexResponse(
         long term,
         long readIndex,
-        Bytes context
+        long context
     ) implements Response {
         public ReadIndexResponse {
             if (term < 0) {
                 throw new IllegalArgumentException("term must be non-negative");
             }
-            context = Objects.requireNonNull(context, "context must not be null");
         }
     }
 }

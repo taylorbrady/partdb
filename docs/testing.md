@@ -3,7 +3,7 @@
 PartDB's highest-value tests are the ones that exercise the whole stack:
 
 ```text
-client -> public gRPC -> server -> node -> consensus/Raft -> Raft peer gRPC -> storage
+client -> public gRPC -> server -> node -> Raft runtime -> Raft peer gRPC -> storage
 ```
 
 The test taxonomy keeps fast feedback, behavioral confidence, packaged-artifact
@@ -24,10 +24,16 @@ behavior.
 
 ### `partdb-raft`
 
-`partdb-raft` tests are deterministic protocol simulations. They must not use
-real files, sockets, clocks, threads, transports, WALs, or PartDB command
-semantics. Test behavior through `RaftInput`, `RaftEffects`, `RaftMessage`,
-`RaftLogEntry`, and in-memory `RaftLogReader` state.
+Tests of the pure core (`io.partdb.raft`) are deterministic protocol
+simulations. They must not use real files, sockets, clocks, threads,
+transports, WALs, or PartDB command semantics. Test behavior through
+`RaftInput`, `RaftEffects`, `RaftMessage`, `RaftLogEntry`, and in-memory
+`RaftLogReader` state.
+
+Tests of the runtime (`io.partdb.raft.runtime`) may use real files and
+threads. `FileRaftStorageTest` and `SegmentedRaftLogTest` cover durability;
+`RaftRuntimeSnapshotTest` runs two runtimes over an in-memory transport and
+forces a follower to catch up from a streamed snapshot.
 
 Keep focused suites by protocol concern:
 
@@ -38,9 +44,9 @@ Keep focused suites by protocol concern:
 - `RaftNodeSnapshotTest` and `RaftNodeRecoveryTest`: protocol-level snapshots
   and recovery.
 - `Cluster*Test`: deterministic multi-node simulation scenarios.
-- `UnstableTest` and `RaftModuleBoundaryTest`: helper and module-boundary
-  coverage. The boundary test only checks what Gradle cannot: no JDK IO, time,
-  or threading in the pure core.
+- `UnstableTest` and `RaftCorePurityTest`: helper and purity coverage. The
+  purity test keeps the core package free of JDK IO, time, threading, and
+  runtime imports, which a package boundary inside one module cannot enforce.
 
 ## Project Checks
 
@@ -152,15 +158,16 @@ checks, and must not be attached to `check` or `ci`. See
   rather than dropping or delaying Raft traffic.
 - Startup readiness is inferred through cluster status polling. There is no
   dedicated test that exercises `/livez` and `/readyz` for all lifecycle states.
-- Snapshot transfer is not forced in an end-to-end cluster test. Catch-up
-  currently relies on retained log replay.
+- Snapshot transfer is covered at the runtime level but not in an end-to-end
+  gRPC cluster test. The runtime does not compact its log on its own yet, so
+  in a live cluster snapshots only exist after a restore from backup.
 - Linearizable multi-key read views are not implemented yet, so there is no
   consistency proof for multi-key reads beyond scan behavior.
 
 ## Next Testing Goals
 
-1. Add a forced snapshot-transfer cluster test by creating enough log pressure to
-   require snapshot installation for a restarted peer.
+1. Add automatic log compaction, then a cluster test that forces a restarted
+   peer to install a snapshot over the gRPC peer transport.
 2. Add startup failure tests for occupied ports and invalid peer configuration.
 3. Add health endpoint lifecycle tests for starting, ready, leaderless, and
    shutting-down states.

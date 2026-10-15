@@ -51,14 +51,12 @@ PartDB should read like idiomatic modern Java:
 The short version:
 
 - `partdb-bytes`: shared immutable byte values
-- `partdb-raft`: pure Raft state machine and Raft domain types
-- `partdb-consensus`: durable, effectful Raft runtime and consensus membership model
+- `partdb-raft`: pure Raft core and the durable Raft runtime
 - `partdb-storage`: local LSM-backed state store
 - `partdb-node`: PartDB state machine and node API
 - `partdb-grpc`: public protobuf schemas
-- `partdb-transport-grpc`: gRPC server and Raft peer transport
 - `partdb-client`: Java client API
-- `partdb-server`: process-level server composition
+- `partdb-server`: gRPC services, Raft peer transport, and process composition
 - `partdb-app`: CLI and executable packaging
 - `partdb-benchmarks`: JMH benchmarks
 

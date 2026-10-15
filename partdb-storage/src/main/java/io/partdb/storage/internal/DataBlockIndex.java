@@ -105,7 +105,7 @@ final class DataBlockIndex {
         ByteBuffer buffer = ByteBuffer.allocate(totalSize).order(ByteOrder.nativeOrder());
         for (Entry entry : entries) {
             buffer.putInt(entry.firstKey().length());
-            buffer.put(entry.firstKey().toByteArray());
+            buffer.put(entry.firstKey().segment().asByteBuffer());
             buffer.putLong(entry.handle().offset());
             buffer.putInt(entry.handle().size());
         }

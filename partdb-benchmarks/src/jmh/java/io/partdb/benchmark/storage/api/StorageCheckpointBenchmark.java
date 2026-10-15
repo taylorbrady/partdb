@@ -18,6 +18,7 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.concurrent.TimeUnit;
 
 @BenchmarkMode(Mode.AverageTime)
@@ -26,7 +27,7 @@ public class StorageCheckpointBenchmark {
 
     @Benchmark
     public void checkpoint(CheckpointState state, Blackhole bh) {
-        bh.consume(state.store().checkpoint());
+        bh.consume(state.store().checkpoint(OutputStream.nullOutputStream()));
     }
 
     @State(Scope.Benchmark)

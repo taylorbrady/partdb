@@ -1,9 +1,8 @@
 package io.partdb.server;
 
-import io.partdb.consensus.RaftConsensusRuntimeFactory;
 import io.partdb.node.PartDbNode;
-import io.partdb.transport.grpc.GrpcRaftTransport;
-import io.partdb.transport.grpc.GrpcServer;
+import io.partdb.server.grpc.GrpcServer;
+import io.partdb.server.peer.GrpcRaftTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,10 +31,8 @@ public final class PartDbServer implements AutoCloseable {
             .addKeyValue("nodeId", config.nodeId())
             .log("Starting PartDB server");
         try {
-            var runtimeFactory = new RaftConsensusRuntimeFactory(
-                () -> new GrpcRaftTransport(config.nodeId(), config.raftPort(), config.raftPeerEndpoints())
-            );
-            PartDbNode node = PartDbNode.open(config.nodeConfig(), runtimeFactory);
+            var transport = new GrpcRaftTransport(config.nodeId(), config.raftPort(), config.raftPeerEndpoints());
+            PartDbNode node = PartDbNode.open(config.nodeConfig(), transport);
             started.push(node);
             var jmxRegistrations = new JmxRegistrations(node);
             started.push(jmxRegistrations);

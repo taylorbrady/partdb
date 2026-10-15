@@ -65,16 +65,16 @@ class StorageEngineTest {
     @Test
     void restoreInPlaceReplacesReusedSstableIdsForGetAndScan() {
         try (StorageEngine store = StorageEngine.open(tempDir, StorageOptions.defaults())) {
-            StorageCheckpoint empty = store.checkpoint();
+            byte[] empty = Checkpoints.capture(store);
 
             store.apply(new Revision(1), Mutation.put(bytes("b"), bytes("before")));
-            StorageCheckpoint before = store.checkpoint();
+            byte[] before = Checkpoints.capture(store);
 
-            store.restore(empty);
+            Checkpoints.restore(store, empty);
             store.apply(new Revision(2), Mutation.put(bytes("a"), bytes("after")));
-            store.checkpoint();
+            store.flush();
 
-            store.restore(before);
+            Checkpoints.restore(store, before);
 
             Optional<ValueRecord> restored = store.get(bytes("b"));
             assertTrue(restored.isPresent());
@@ -134,7 +134,7 @@ class StorageEngineTest {
             Bytes key = bytes("key");
             store.apply(new Revision(10), Mutation.put(key, bytes("value")));
             store.apply(new Revision(11), Mutation.delete(key));
-            store.checkpoint();
+            store.flush();
 
             StorageException.InvalidRevision error = assertThrows(
                 StorageException.InvalidRevision.class,
@@ -152,7 +152,7 @@ class StorageEngineTest {
 
         try (StorageEngine store = StorageEngine.open(storeDir, StorageOptions.defaults())) {
             store.apply(new Revision(1), Mutation.put(bytes("key"), bytes("value")));
-            store.checkpoint();
+            store.flush();
         }
 
         Files.delete(storeDir.resolve("MANIFEST"));
@@ -185,7 +185,7 @@ class StorageEngineTest {
 
         try (StorageEngine store = StorageEngine.open(storeDir, StorageOptions.defaults())) {
             store.apply(new Revision(1), Mutation.put(bytes("key"), bytes("value")));
-            store.checkpoint();
+            store.flush();
         }
 
         Path sstable = firstSstable(storeDir);
@@ -206,7 +206,7 @@ class StorageEngineTest {
 
         try (StorageEngine store = StorageEngine.open(storeDir, StorageOptions.defaults())) {
             store.apply(new Revision(1), Mutation.put(bytes("key"), bytes("value")));
-            store.checkpoint();
+            store.flush();
         }
 
         Path sstable = firstSstable(storeDir);
@@ -229,13 +229,13 @@ class StorageEngineTest {
         try (StorageEngine store = StorageEngine.open(tempDir, StorageOptions.defaults())) {
             Bytes key = bytes("key");
             store.apply(new Revision(1), Mutation.put(key, bytes("before")));
-            StorageCheckpoint checkpoint = store.checkpoint();
+            byte[] checkpoint = Checkpoints.capture(store);
 
             store.apply(new Revision(2), Mutation.put(key, bytes("after")));
 
             StorageException.Corruption error = assertThrows(
                 StorageException.Corruption.class,
-                () -> store.restore(corruptFirstSstableByte(checkpoint))
+                () -> Checkpoints.restore(store, corruptFirstSstableByte(checkpoint))
             );
 
             assertTrue(error.getMessage().contains("Checkpoint"));
@@ -251,22 +251,22 @@ class StorageEngineTest {
         Path storeDir = tempDir.resolve("metadata");
         Path restoredDir = tempDir.resolve("metadata-restored");
 
-        StorageCheckpoint checkpoint;
+        byte[] checkpoint;
         try (StorageEngine store = StorageEngine.open(storeDir, StorageOptions.defaults())) {
             store.apply(new Revision(4), Mutation.put(bytes("key"), bytes("value")));
             store.apply(new Revision(9), Mutation.delete(bytes("key")));
 
-            assertEquals(new Revision(9), store.metadata().appliedThrough());
-            checkpoint = store.checkpoint();
+            assertEquals(new Revision(9), store.appliedThrough());
+            checkpoint = Checkpoints.capture(store);
         }
 
         try (StorageEngine reopened = StorageEngine.open(storeDir, StorageOptions.defaults())) {
-            assertEquals(new Revision(9), reopened.metadata().appliedThrough());
+            assertEquals(new Revision(9), reopened.appliedThrough());
         }
 
         try (StorageEngine restored = StorageEngine.open(restoredDir, StorageOptions.defaults())) {
-            restored.restore(checkpoint);
-            assertEquals(new Revision(9), restored.metadata().appliedThrough());
+            Checkpoints.restore(restored, checkpoint);
+            assertEquals(new Revision(9), restored.appliedThrough());
         }
     }
 
@@ -274,24 +274,15 @@ class StorageEngineTest {
         return Bytes.utf8(value);
     }
 
-    private static StorageCheckpoint corruptFirstSstableByte(StorageCheckpoint checkpoint) {
-        byte[] bytes = checkpoint.bytes().toByteArray();
-        ByteBuffer buffer = ByteBuffer.wrap(bytes);
-        buffer.getInt();
-        buffer.getInt();
-        int manifestLength = buffer.getInt();
-        int sstableCount = buffer.getInt();
-        if (sstableCount <= 0) {
-            throw new IllegalArgumentException("snapshot does not contain any SSTables");
-        }
-
-        int payloadOffset = Integer.BYTES * 4 + manifestLength + Long.BYTES + Integer.BYTES;
+    private static byte[] corruptFirstSstableByte(byte[] checkpoint) {
+        byte[] bytes = checkpoint.clone();
+        int manifestLength = ByteBuffer.wrap(bytes).getInt(Integer.BYTES * 2);
+        int payloadOffset = Integer.BYTES * 3 + manifestLength + Long.BYTES * 2;
         if (payloadOffset >= bytes.length) {
-            throw new IllegalArgumentException("snapshot payload offset out of range");
+            throw new IllegalArgumentException("checkpoint does not contain any SSTables");
         }
-
         bytes[payloadOffset] ^= 0x01;
-        return new StorageCheckpoint(Bytes.copyOf(bytes));
+        return bytes;
     }
 
     private static Path firstSstable(Path directory) throws Exception {

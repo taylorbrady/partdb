@@ -1,13 +1,10 @@
 package io.partdb.raft;
 
-import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -91,7 +88,7 @@ class RaftNodeLearnerTest extends RaftNodeTestSupport {
             learner.step(new RaftInput.MessageReceived("n1", heartbeat));
             assertEquals("n1", learner.leaderId().orElseThrow());
 
-            var ready = learner.step(new RaftInput.ReadIndexRequested(bytes("req-1")));
+            var ready = learner.step(new RaftInput.ReadIndexRequested(1L));
 
             var readIndexMsg = ready.messages().stream()
                 .filter(m -> m.to().equals("n1"))
@@ -100,7 +97,7 @@ class RaftNodeLearnerTest extends RaftNodeTestSupport {
                 .findFirst();
 
             assertTrue(readIndexMsg.isPresent());
-            assertEquals(bytes("req-1"), readIndexMsg.get().context());
+            assertEquals(1L, readIndexMsg.get().context());
         }
 
         @Test
@@ -110,12 +107,12 @@ class RaftNodeLearnerTest extends RaftNodeTestSupport {
             var heartbeat = new RaftMessage.AppendEntries(1, "n1", 0, 0, List.of(), 0);
             learner.step(new RaftInput.MessageReceived("n1", heartbeat));
 
-            var response = new RaftMessage.ReadIndexResponse(1, 5, bytes("req-1"));
+            var response = new RaftMessage.ReadIndexResponse(1, 5, 1L);
             var ready = learner.step(new RaftInput.MessageReceived("n1", response));
 
             assertEquals(1, ready.application().readStates().size());
             assertEquals(5, ready.application().readStates().get(0).index());
-            assertEquals(bytes("req-1"), ready.application().readStates().get(0).context());
+            assertEquals(1L, ready.application().readStates().get(0).context());
         }
 
         @Test

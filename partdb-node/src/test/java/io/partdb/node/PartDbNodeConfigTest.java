@@ -2,6 +2,7 @@ package io.partdb.node;
 
 import io.partdb.raft.RaftMembership;
 import io.partdb.raft.RaftOptions;
+import io.partdb.raft.runtime.RaftConfig;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -17,10 +18,10 @@ class PartDbNodeConfigTest {
     void builderDefaultsToSingleVoterWithProductDefaults() {
         var config = PartDbNodeConfig.builder("node1", Path.of("data/node1")).build();
 
-        assertEquals(RaftMembership.voters("node1"), config.membership());
-        assertEquals(Set.of("node1"), config.memberIds());
-        assertEquals(RaftOptions.defaults(), config.raftOptions());
-        assertEquals("node1", config.toConsensusConfig().nodeId());
+        assertEquals(RaftMembership.voters("node1"), config.raft().membership());
+        assertEquals(RaftOptions.defaults(), config.raft().options());
+        assertEquals(RaftConfig.DEFAULT_TICK_INTERVAL, config.raft().tickInterval());
+        assertEquals("node1", config.nodeId());
     }
 
     @Test
@@ -32,9 +33,9 @@ class PartDbNodeConfigTest {
             .raftOptions(options)
             .build();
 
-        assertEquals(Set.of("node1", "node2"), config.memberIds());
-        assertEquals(Duration.ofMillis(25), config.tickInterval());
-        assertEquals(options, config.toConsensusConfig().raftOptions());
+        assertEquals(Set.of("node1", "node2"), config.raft().membership().memberIds());
+        assertEquals(Duration.ofMillis(25), config.raft().tickInterval());
+        assertEquals(options, config.raft().options());
     }
 
     @Test
@@ -53,6 +54,6 @@ class PartDbNodeConfigTest {
             .membership(RaftMembership.voters("node1", "node2").addLearner("node3"))
             .build();
 
-        assertEquals(Set.of("node1", "node2", "node3"), config.memberIds());
+        assertEquals(Set.of("node1", "node2", "node3"), config.raft().membership().memberIds());
     }
 }

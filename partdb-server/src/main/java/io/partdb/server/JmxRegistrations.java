@@ -109,7 +109,7 @@ final class JmxRegistrations implements AutoCloseable {
 
         @Override
         public long getLastLeaderChangeEpochMillis() {
-            return node.cluster().status().lastLeaderChangeTime()
+            return node.cluster().status().lastLeaderChange()
                 .map(java.time.Instant::toEpochMilli)
                 .orElse(0L);
         }

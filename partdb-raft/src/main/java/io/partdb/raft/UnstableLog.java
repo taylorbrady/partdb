@@ -6,7 +6,7 @@ import java.util.List;
 final class UnstableLog {
     private final List<RaftLogEntry> entries = new ArrayList<>();
     private long offset;
-    private RaftSnapshot snapshot;
+    private SnapshotMetadata snapshot;
 
     UnstableLog(long offset) {
         this.offset = offset;
@@ -30,7 +30,7 @@ final class UnstableLog {
         }
     }
 
-    void acceptSnapshot(RaftSnapshot snap) {
+    void acceptSnapshot(SnapshotMetadata snap) {
         this.snapshot = snap;
         this.entries.clear();
         this.offset = snap.index() + 1;
@@ -89,7 +89,7 @@ final class UnstableLog {
         return List.copyOf(entries);
     }
 
-    RaftSnapshot snapshot() {
+    SnapshotMetadata snapshot() {
         return snapshot;
     }
 

@@ -1,15 +1,8 @@
 package io.partdb.raft;
 
-import io.partdb.bytes.Bytes;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -39,8 +32,7 @@ class ClusterSnapshotTest extends ClusterTestSupport {
             long commitBeforeCompaction = leader.commitIndex();
             assertTrue(commitBeforeCompaction >= 5);
 
-            Bytes snapshotData = Bytes.utf8("snapshot-at-" + commitBeforeCompaction);
-            network.compactWithSnapshot(leaderId, commitBeforeCompaction, snapshotData);
+            network.compactWithSnapshot(leaderId, commitBeforeCompaction);
 
             network.heal(laggedFollowerId);
 
@@ -53,7 +45,6 @@ class ClusterSnapshotTest extends ClusterTestSupport {
             assertEquals(leader.commitIndex(), lagged.commitIndex());
             var installedSnapshot = network.snapshot(laggedFollowerId).orElseThrow();
             assertEquals(commitBeforeCompaction, installedSnapshot.index());
-            assertEquals(snapshotData, installedSnapshot.data());
         }
     }
 }

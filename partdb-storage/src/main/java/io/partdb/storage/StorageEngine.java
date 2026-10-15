@@ -3,6 +3,8 @@ package io.partdb.storage;
 import io.partdb.bytes.Bytes;
 import io.partdb.storage.internal.LsmStorageEngine;
 
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Optional;
@@ -39,16 +41,20 @@ public final class StorageEngine implements AutoCloseable {
         return core.readView();
     }
 
-    public StorageCheckpoint checkpoint() {
-        return core.checkpoint();
+    public void flush() {
+        core.flush();
     }
 
-    public void restore(StorageCheckpoint checkpoint) {
-        core.restore(checkpoint);
+    public Revision checkpoint(OutputStream target) {
+        return core.checkpoint(target);
     }
 
-    public StorageMetadata metadata() {
-        return core.metadata();
+    public void restore(InputStream source) {
+        core.restore(source);
+    }
+
+    public Revision appliedThrough() {
+        return core.appliedThrough();
     }
 
     public StorageStats stats() {

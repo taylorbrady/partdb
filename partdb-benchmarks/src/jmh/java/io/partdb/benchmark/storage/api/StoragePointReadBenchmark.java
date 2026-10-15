@@ -80,7 +80,7 @@ public class StoragePointReadBenchmark {
                 BenchmarkValues.fixedValue(valueSize, 0x5eedL),
                 1
             );
-            store().checkpoint();
+            store().flush();
             if (reopenAfterLoad) {
                 reopenStore(options);
             }

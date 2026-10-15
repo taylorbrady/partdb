@@ -5,10 +5,10 @@
 PartDB is a multi-project Gradle build. Production Java code lives in each
 module under `src/main/java`; resources live under `src/main/resources`.
 
-Core modules include `partdb-bytes`, `partdb-raft`, `partdb-storage`,
-`partdb-consensus`, and `partdb-node`. Transport and API
-modules include `partdb-grpc`, `partdb-transport-grpc`, and `partdb-client`.
-Runtime assembly lives in `partdb-server` and `partdb-app`. Benchmarks live in
+Core modules include `partdb-bytes`, `partdb-raft`, `partdb-storage`, and
+`partdb-node`. API modules include `partdb-grpc` and `partdb-client`. The
+gRPC services, Raft peer transport, and runtime assembly live in
+`partdb-server`; the CLI lives in `partdb-app`. Benchmarks live in
 `partdb-storage/src/jmh` and `partdb-benchmarks/src/jmh`.
 
 Keep module dependencies aligned with `docs/modules.md`. Core modules should not

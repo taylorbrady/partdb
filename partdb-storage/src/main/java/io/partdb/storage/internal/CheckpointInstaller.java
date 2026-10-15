@@ -1,6 +1,7 @@
 package io.partdb.storage.internal;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -23,9 +24,8 @@ final class CheckpointInstaller {
         this.sstableStore = sstableStore;
     }
 
-    void stageAndValidate(VersionCheckpoint checkpoint) throws IOException {
-        checkpoint.stage(directory);
-        checkpoint.validate(directory);
+    VersionCheckpoint stage(InputStream source) throws IOException {
+        return VersionCheckpoint.stage(source, directory);
     }
 
     LoadedStoreVersion activate(VersionCheckpoint checkpoint) throws IOException {

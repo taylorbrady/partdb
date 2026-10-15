@@ -1,126 +1,118 @@
 package io.partdb.storage.internal;
 
-import io.partdb.storage.*;
-
+import io.partdb.storage.StorageException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.IOException;
-import java.nio.BufferUnderflowException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.channels.WritableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 final class VersionCheckpoint {
 
     private static final Logger log = LoggerFactory.getLogger(VersionCheckpoint.class);
-    private static final int CHECKPOINT_MAGIC = 0x53544350;
-    private static final int CHECKPOINT_VERSION = 1;
-    private static final String RESTORE_SUFFIX = ".restore";
+    private static final int MAGIC = 0x53544350;
+    private static final int VERSION = 2;
+    private static final int COPY_BUFFER_SIZE = 64 * 1024;
+    private static final String STAGED_SUFFIX = ".restore";
 
     private final SSTableManifest manifest;
-    private final List<CheckpointSSTable> sstables;
 
-    private VersionCheckpoint(SSTableManifest manifest, List<CheckpointSSTable> sstables) {
+    private VersionCheckpoint(SSTableManifest manifest) {
         this.manifest = manifest;
-        this.sstables = List.copyOf(sstables);
     }
 
-    static VersionCheckpoint capture(VersionLease view) {
+    static long write(VersionLease view, OutputStream target) throws IOException {
         SSTableManifest manifest = view.manifest();
         var readersById = view.all().stream()
-            .collect(Collectors.toMap(SSTableReader::id, reader -> reader));
+            .collect(Collectors.toMap(SSTableReader::id, Function.identity()));
+        byte[] manifestBytes = manifest.toBytes();
 
-        List<CheckpointSSTable> sstables = new ArrayList<>(manifest.sstables().size());
+        var out = new DataOutputStream(target);
+        out.writeInt(MAGIC);
+        out.writeInt(VERSION);
+        out.writeInt(manifestBytes.length);
+        out.write(manifestBytes);
+        long written = 3L * Integer.BYTES + manifestBytes.length;
+
+        WritableByteChannel channel = Channels.newChannel(out);
         for (SSTableMetadata metadata : manifest.sstables()) {
             SSTableReader reader = readersById.get(metadata.id());
             if (reader == null) {
-                throw new StorageException.Corruption(
-                    "Missing SSTable reader for checkpoint: " + metadata.id()
-                );
+                throw new StorageException.Corruption("Missing SSTable reader for checkpoint: " + metadata.id());
             }
-            sstables.add(new CheckpointSSTable(metadata.id(), reader.fileBytes()));
+            ByteBuffer contents = reader.contents();
+            out.writeLong(metadata.id());
+            out.writeLong(contents.remaining());
+            written += 2L * Long.BYTES + contents.remaining();
+            while (contents.hasRemaining()) {
+                channel.write(contents);
+            }
         }
-
-        return new VersionCheckpoint(manifest, sstables);
+        out.flush();
+        return written;
     }
 
-    static VersionCheckpoint fromBytes(byte[] data) {
+    static VersionCheckpoint stage(InputStream source, Path directory) throws IOException {
+        var in = new DataInputStream(source);
+        List<Path> staged = new ArrayList<>();
         try {
-            ByteBuffer buffer = ByteBuffer.wrap(data);
-            if (buffer.remaining() < Integer.BYTES * 4) {
-                throw new StorageException.Corruption("Checkpoint too small");
+            if (in.readInt() != MAGIC) {
+                throw new StorageException.Corruption("Invalid checkpoint magic");
             }
-            int magic = buffer.getInt();
-            if (magic != CHECKPOINT_MAGIC) {
-                throw new StorageException.Corruption(
-                    "Invalid checkpoint magic: " + Integer.toHexString(magic)
-                );
-            }
-
-            int version = buffer.getInt();
-            if (version != CHECKPOINT_VERSION) {
+            int version = in.readInt();
+            if (version != VERSION) {
                 throw new StorageException.Corruption("Unsupported checkpoint version: " + version);
             }
-
-            int manifestLength = buffer.getInt();
+            int manifestLength = in.readInt();
             if (manifestLength < 0) {
                 throw new StorageException.Corruption("Negative checkpoint manifest length");
             }
+            SSTableManifest manifest = SSTableManifest.fromBytes(in.readNBytes(manifestLength));
 
-            int sstableCount = buffer.getInt();
-            if (sstableCount < 0) {
-                throw new StorageException.Corruption("Negative checkpoint SSTable count");
-            }
-            if (buffer.remaining() < manifestLength) {
-                throw new StorageException.Corruption("Truncated checkpoint manifest");
-            }
-
-            byte[] manifestBytes = new byte[manifestLength];
-            buffer.get(manifestBytes);
-            SSTableManifest manifest = SSTableManifest.fromBytes(manifestBytes);
-            if (manifest.sstables().size() != sstableCount) {
-                throw new StorageException.Corruption("Checkpoint SSTable count does not match manifest");
-            }
-
-            List<CheckpointSSTable> sstables = new ArrayList<>(sstableCount);
+            Files.createDirectories(directory);
+            byte[] buffer = new byte[COPY_BUFFER_SIZE];
             for (SSTableMetadata metadata : manifest.sstables()) {
-                if (buffer.remaining() < Long.BYTES + Integer.BYTES) {
-                    throw new StorageException.Corruption("Truncated checkpoint SSTable header");
-                }
-                long id = buffer.getLong();
+                long id = in.readLong();
                 if (id != metadata.id()) {
-                    throw new StorageException.Corruption(
-                        "Checkpoint SSTable id does not match manifest: " + id
-                    );
+                    throw new StorageException.Corruption("Checkpoint SSTable id does not match manifest: " + id);
                 }
-
-                int fileLength = buffer.getInt();
-                if (fileLength < 0) {
+                long length = in.readLong();
+                if (length < 0) {
                     throw new StorageException.Corruption("Negative checkpoint SSTable length");
                 }
-                if (buffer.remaining() < fileLength) {
-                    throw new StorageException.Corruption("Truncated checkpoint SSTable payload");
-                }
-
-                byte[] fileBytes = new byte[fileLength];
-                buffer.get(fileBytes);
-                sstables.add(new CheckpointSSTable(id, fileBytes));
+                Path path = stagedPath(directory, id);
+                staged.add(path);
+                copy(in, path, length, buffer);
             }
 
-            if (buffer.hasRemaining()) {
-                throw new StorageException.Corruption("Trailing checkpoint data");
+            var checkpoint = new VersionCheckpoint(manifest);
+            checkpoint.validate(directory);
+            return checkpoint;
+        } catch (EOFException e) {
+            deleteQuietly(staged);
+            throw new StorageException.Corruption("Truncated checkpoint", e);
+        } catch (IOException | RuntimeException e) {
+            deleteQuietly(staged);
+            if (e instanceof IllegalArgumentException) {
+                throw new StorageException.Corruption("Malformed checkpoint", e);
             }
-
-            return new VersionCheckpoint(manifest, sstables);
-        } catch (BufferUnderflowException | IllegalArgumentException e) {
-            throw new StorageException.Corruption("Malformed checkpoint", e);
+            throw e;
         }
     }
 
@@ -128,44 +120,24 @@ final class VersionCheckpoint {
         return manifest;
     }
 
-    byte[] toBytes() {
-        byte[] manifestBytes = manifest.toBytes();
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-
-        ByteBuffer header = ByteBuffer.allocate(Integer.BYTES * 4);
-        header.putInt(CHECKPOINT_MAGIC);
-        header.putInt(CHECKPOINT_VERSION);
-        header.putInt(manifestBytes.length);
-        header.putInt(sstables.size());
-        output.writeBytes(header.array());
-        output.writeBytes(manifestBytes);
-
-        for (CheckpointSSTable sstable : sstables) {
-            ByteBuffer sstableHeader = ByteBuffer.allocate(Long.BYTES + Integer.BYTES);
-            sstableHeader.putLong(sstable.id());
-            sstableHeader.putInt(sstable.data().length);
-            output.writeBytes(sstableHeader.array());
-            output.writeBytes(sstable.data());
-        }
-
-        return output.toByteArray();
-    }
-
-    void stage(Path directory) throws IOException {
-        Files.createDirectories(directory);
-        for (CheckpointSSTable sstable : sstables) {
-            Files.write(
-                stagedPath(directory, sstable.id()),
-                sstable.data(),
-                StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING,
-                StandardOpenOption.WRITE
+    LoadedStoreVersion activate(Path directory, ManifestStore manifestStore, SSTableStore sstableStore) throws IOException {
+        for (SSTableMetadata metadata : manifest.sstables()) {
+            Files.move(
+                stagedPath(directory, metadata.id()),
+                directory.resolve("%06d.sst".formatted(metadata.id())),
+                StandardCopyOption.REPLACE_EXISTING
             );
         }
+        manifestStore.write(manifest);
+        return sstableStore.loadState(manifest);
     }
 
-    void validate(Path directory) {
-        List<SSTableReader> readers = new ArrayList<>(sstables.size());
+    void cleanup(Path directory) {
+        deleteQuietly(manifest.sstables().stream().map(metadata -> stagedPath(directory, metadata.id())).toList());
+    }
+
+    private void validate(Path directory) {
+        List<SSTableReader> readers = new ArrayList<>(manifest.sstables().size());
         try {
             for (SSTableMetadata metadata : manifest.sstables()) {
                 SSTableReader reader = SSTableReader.open(
@@ -184,44 +156,44 @@ final class VersionCheckpoint {
         } catch (RuntimeException e) {
             throw new StorageException.Corruption("Checkpoint validation failed", e);
         } finally {
-            for (SSTableReader reader : readers) {
-                reader.close();
-            }
+            readers.forEach(SSTableReader::close);
         }
     }
 
-    LoadedStoreVersion activate(Path directory, ManifestStore manifestStore, SSTableStore sstableStore) throws IOException {
-        commitTo(directory);
-        manifestStore.write(manifest);
-        return sstableStore.loadState(manifest);
+    private static void copy(InputStream in, Path target, long length, byte[] buffer) throws IOException {
+        try (FileChannel channel = FileChannel.open(
+            target,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE
+        )) {
+            long remaining = length;
+            while (remaining > 0) {
+                int read = in.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+                if (read < 0) {
+                    throw new EOFException("Checkpoint ended inside SSTable " + target.getFileName());
+                }
+                ByteBuffer chunk = ByteBuffer.wrap(buffer, 0, read);
+                while (chunk.hasRemaining()) {
+                    channel.write(chunk);
+                }
+                remaining -= read;
+            }
+            channel.force(true);
+        }
     }
 
-    void cleanup(Path directory) {
-        for (CheckpointSSTable sstable : sstables) {
+    private static void deleteQuietly(List<Path> paths) {
+        for (Path path : paths) {
             try {
-                Files.deleteIfExists(stagedPath(directory, sstable.id()));
+                Files.deleteIfExists(path);
             } catch (IOException e) {
-                log.atWarn()
-                    .setCause(e)
-                    .addKeyValue("sstableId", sstable.id())
-                    .log("Failed to clean staged checkpoint SSTable");
+                log.atWarn().setCause(e).addKeyValue("path", path).log("Failed to clean staged checkpoint SSTable");
             }
-        }
-    }
-
-    private void commitTo(Path directory) throws IOException {
-        for (CheckpointSSTable sstable : sstables) {
-            Files.move(
-                stagedPath(directory, sstable.id()),
-                directory.resolve("%06d.sst".formatted(sstable.id())),
-                StandardCopyOption.REPLACE_EXISTING
-            );
         }
     }
 
     private static Path stagedPath(Path directory, long id) {
-        return directory.resolve("%06d.sst%s".formatted(id, RESTORE_SUFFIX));
+        return directory.resolve("%06d.sst%s".formatted(id, STAGED_SUFFIX));
     }
-
-    private record CheckpointSSTable(long id, byte[] data) {}
 }

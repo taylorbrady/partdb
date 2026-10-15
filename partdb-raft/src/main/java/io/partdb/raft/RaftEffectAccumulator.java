@@ -14,7 +14,7 @@ final class RaftEffectAccumulator {
     private final List<RaftEffects.ReadState> readStates = new ArrayList<>();
     private final List<RaftEffects.MembershipTransition> membershipTransitions = new ArrayList<>();
     private long appliedThroughIndex;
-    private RaftSnapshot incomingSnapshot;
+    private SnapshotMetadata incomingSnapshot;
     private RaftEffects.SnapshotNeeded snapshotNeeded;
 
     void setHardState(RaftHardState hardState) {
@@ -33,7 +33,7 @@ final class RaftEffectAccumulator {
         toApply.add(new RaftEffects.ApplyEntry(index, term, data));
     }
 
-    void addReadState(long index, Bytes context) {
+    void addReadState(long index, long context) {
         readStates.add(new RaftEffects.ReadState(index, context));
     }
 
@@ -45,7 +45,7 @@ final class RaftEffectAccumulator {
         appliedThroughIndex = Math.max(appliedThroughIndex, index);
     }
 
-    void setIncomingSnapshot(RaftSnapshot snapshot) {
+    void setIncomingSnapshot(SnapshotMetadata snapshot) {
         this.incomingSnapshot = snapshot;
     }
 

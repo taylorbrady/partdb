@@ -7,7 +7,7 @@ import java.util.Optional;
 final class InMemoryRaftLog implements RaftLogReader {
     private volatile RaftHardState hardState = RaftHardState.INITIAL;
     private final List<RaftLogEntry> entries = new ArrayList<>();
-    private volatile RaftSnapshot snapshot;
+    private volatile SnapshotMetadata snapshot;
     private volatile RaftMembership configuration;
 
     InMemoryRaftLog(RaftMembership initialConfiguration) {
@@ -86,11 +86,11 @@ final class InMemoryRaftLog implements RaftLogReader {
     public void sync() {
     }
 
-    public Optional<RaftSnapshot> snapshot() {
+    public Optional<SnapshotMetadata> snapshot() {
         return Optional.ofNullable(snapshot);
     }
 
-    public void saveSnapshot(RaftSnapshot snapshot) {
+    public void saveSnapshot(SnapshotMetadata snapshot) {
         this.snapshot = snapshot;
         this.configuration = snapshot.membership();
         entries.removeIf(e -> e.index() <= snapshot.index());

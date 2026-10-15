@@ -1,6 +1,6 @@
 package io.partdb.server;
 
-import io.partdb.transport.grpc.PeerEndpoint;
+import io.partdb.server.peer.PeerEndpoint;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -26,7 +26,7 @@ class PartDbServerConfigTest {
             8102
         );
 
-        assertEquals(Set.of("node1", "node2"), config.nodeConfig().memberIds());
+        assertEquals(Set.of("node1", "node2"), config.nodeConfig().raft().membership().memberIds());
         assertEquals(
             Map.of(
                 "node1", new PeerEndpoint("127.0.0.1", 8100),

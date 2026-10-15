@@ -1,179 +1,106 @@
 package io.partdb.node.state;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.consensus.CommittedCommand;
-import io.partdb.consensus.StateMachineResult;
-import io.partdb.consensus.ReplicatedStateMachine;
-import io.partdb.consensus.StoredSnapshot;
-import io.partdb.node.command.KvCommand;
-import io.partdb.node.command.KvCommandCodec;
-import io.partdb.node.command.KvCommandResult;
-import io.partdb.node.command.KvCommandResultCodec;
 import io.partdb.node.kv.Condition;
+import io.partdb.node.kv.KeyRange;
+import io.partdb.node.kv.KeyValueEntry;
+import io.partdb.node.kv.ScanCursor;
+import io.partdb.node.kv.VersionedValue;
 import io.partdb.node.kv.WriteOperation;
+import io.partdb.raft.runtime.StateMachine;
 import io.partdb.storage.EntryRecord;
-import io.partdb.storage.KeyRange;
 import io.partdb.storage.Mutation;
 import io.partdb.storage.MutationBatch;
 import io.partdb.storage.Revision;
 import io.partdb.storage.Scan;
-import io.partdb.storage.StorageOptions;
-import io.partdb.storage.StorageCheckpoint;
 import io.partdb.storage.StorageEngine;
+import io.partdb.storage.StorageOptions;
 import io.partdb.storage.StorageReadView;
 import io.partdb.storage.StorageStats;
 import io.partdb.storage.ValueRecord;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.ByteBuffer;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
-import java.util.Spliterator;
-import java.util.Spliterators;
-import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
-public final class PartDbStateMachine implements ReplicatedStateMachine, AutoCloseable {
+public final class PartDbStateMachine implements StateMachine, AutoCloseable {
 
     private final StorageEngine store;
     private volatile long lastApplied;
 
     private PartDbStateMachine(StorageEngine store) {
         this.store = store;
-        // Storage becomes durable independently of the Raft log (checkpoints, write-buffer
-        // flushes), so replay must resume from what storage already holds.
-        this.lastApplied = store.metadata().appliedThrough().value();
+        this.lastApplied = store.appliedThrough().value();
     }
 
-    public static PartDbStateMachine open(Path dataDirectory, StorageOptions options) {
-        StorageEngine store = StorageEngine.open(dataDirectory, options);
-        return new PartDbStateMachine(store);
+    public static PartDbStateMachine open(Path dataDirectory) {
+        return new PartDbStateMachine(StorageEngine.open(dataDirectory, StorageOptions.defaults()));
     }
 
     @Override
-    public StateMachineResult apply(CommittedCommand committed) {
-        long index = committed.index();
-        if (index <= lastApplied) {
-            // Already durable in storage; Raft log replay after a restart re-delivers it.
-            return applied(index);
-        }
-        KvCommand command = KvCommandCodec.decode(committed.payload());
+    public long appliedIndex() {
+        return lastApplied;
+    }
 
-        StateMachineResult result = switch (command) {
+    @Override
+    public Bytes apply(long index, Bytes encoded) {
+        if (index <= lastApplied) {
+            return KvCommandResultCodec.encode(new KvCommandResult.Applied(index));
+        }
+        var revision = new Revision(index);
+        KvCommandResult result = switch (KvCommandCodec.decode(encoded)) {
             case KvCommand.Put(var key, var value) -> {
-                store.apply(new Revision(index), Mutation.put(key, value));
-                yield applied(index);
+                store.apply(revision, Mutation.put(key, value));
+                yield new KvCommandResult.Applied(index);
             }
             case KvCommand.Delete(var key) -> {
-                store.apply(new Revision(index), Mutation.delete(key));
-                yield applied(index);
+                store.apply(revision, Mutation.delete(key));
+                yield new KvCommandResult.Applied(index);
             }
             case KvCommand.BatchWrite(var batch) -> {
-                store.apply(new Revision(index), toStorageBatch(batch.operations()));
-
-                yield applied(index);
+                store.apply(revision, toStorageBatch(batch.operations()));
+                yield new KvCommandResult.Applied(index);
             }
             case KvCommand.CompareAndWrite(var transaction) -> {
                 if (!conditionsMatch(transaction.conditions())) {
-                    yield conditionFailed();
+                    yield new KvCommandResult.ConditionFailed();
                 }
-                store.apply(new Revision(index), toStorageBatch(transaction.operations()));
-                yield applied(index);
+                store.apply(revision, toStorageBatch(transaction.operations()));
+                yield new KvCommandResult.Applied(index);
             }
         };
-
         lastApplied = index;
-        return result;
-    }
-
-    public Optional<StoredValue> getValue(Bytes key) {
-        Optional<ValueRecord> raw = store.get(key);
-        if (raw.isEmpty()) {
-            return Optional.empty();
-        }
-        return Optional.of(new StoredValue(
-            raw.get().value(),
-            raw.get().modRevision().value()
-        ));
-    }
-
-    public Stream<KvEntry> scan(KeyRange range) {
-        Scan cursor = store.scan(range);
-        Iterator<EntryRecord> entries = cursor.iterator();
-
-        Iterator<KvEntry> iterator = new Iterator<>() {
-            private KvEntry next = advance();
-
-            private KvEntry advance() {
-                while (entries.hasNext()) {
-                    EntryRecord entry = entries.next();
-                    return new KvEntry(entry.key(), entry.value(), entry.modRevision().value());
-                }
-                return null;
-            }
-
-            @Override
-            public boolean hasNext() {
-                return next != null;
-            }
-
-            @Override
-            public KvEntry next() {
-                if (next == null) {
-                    throw new NoSuchElementException();
-                }
-                KvEntry current = next;
-                next = advance();
-                return current;
-            }
-        };
-
-        return StreamSupport.stream(
-            Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL),
-            false
-        ).onClose(cursor::close);
-    }
-
-    public record KvEntry(Bytes key, Bytes value, long version) {}
-
-    @Override
-    public StoredSnapshot snapshot() {
-        try {
-            byte[] storageData = store.checkpoint().bytes().toByteArray();
-
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ByteBuffer header = ByteBuffer.allocate(12);
-            header.putLong(lastApplied);
-            header.putInt(storageData.length);
-            baos.write(header.array());
-            baos.write(storageData);
-
-            return new StoredSnapshot(lastApplied, 0, Bytes.copyOf(baos.toByteArray()));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to create snapshot", e);
-        }
+        return KvCommandResultCodec.encode(result);
     }
 
     @Override
-    public void restore(StoredSnapshot snapshot) {
-        ByteBuffer buffer = ByteBuffer.wrap(snapshot.data().toByteArray());
-        buffer.getLong();
-        int storageLen = buffer.getInt();
-
-        byte[] storageData = new byte[storageLen];
-        buffer.get(storageData);
-
-        store.restore(new StorageCheckpoint(Bytes.copyOf(storageData)));
-
-        lastApplied = snapshot.index();
+    public void restore(long index, InputStream snapshot) {
+        long revision = load(snapshot);
+        if (revision != index) {
+            throw new IllegalStateException("Snapshot " + index + " restored storage at revision " + revision);
+        }
     }
 
-    public long lastAppliedIndex() {
+    public long load(InputStream checkpoint) {
+        store.restore(checkpoint);
+        lastApplied = store.appliedThrough().value();
         return lastApplied;
+    }
+
+    public long checkpoint(OutputStream target) {
+        return store.checkpoint(target).value();
+    }
+
+    public Optional<VersionedValue> get(Bytes key) {
+        return store.get(key).map(record -> new VersionedValue(record.value(), record.modRevision().value()));
+    }
+
+    public ScanCursor<KeyValueEntry> scan(KeyRange range) {
+        return new EntryCursor(store.scan(toStorageRange(range)));
     }
 
     public StorageStats storageStats() {
@@ -185,50 +112,81 @@ public final class PartDbStateMachine implements ReplicatedStateMachine, AutoClo
         store.close();
     }
 
-    private static StateMachineResult applied(long revision) {
-        return new StateMachineResult.Applied(KvCommandResultCodec.encode(new KvCommandResult.Applied(revision)));
-    }
-
-    private static StateMachineResult conditionFailed() {
-        return new StateMachineResult.Applied(KvCommandResultCodec.encode(new KvCommandResult.ConditionFailed()));
-    }
-
     private boolean conditionsMatch(List<Condition> conditions) {
         try (StorageReadView view = store.readView()) {
-            for (Condition condition : conditions) {
-                if (!conditionMatches(view, condition)) {
-                    return false;
-                }
-            }
-            return true;
+            return conditions.stream().allMatch(condition -> conditionMatches(view.get(condition.key()), condition));
         }
     }
 
-    private boolean conditionMatches(StorageReadView view, Condition condition) {
-        Optional<ValueRecord> value = view.get(condition.key());
+    private static boolean conditionMatches(Optional<ValueRecord> value, Condition condition) {
         return switch (condition) {
             case Condition.Exists _ -> value.isPresent();
             case Condition.Missing _ -> value.isEmpty();
-            case Condition.ValueEquals(var ignored, var expected) -> value
-                .map(ValueRecord::value)
-                .filter(expected::equals)
-                .isPresent();
-            case Condition.RevisionEquals(var ignored, long expectedRevision) -> value
-                .map(ValueRecord::modRevision)
-                .map(Revision::value)
-                .filter(revision -> revision == expectedRevision)
-                .isPresent();
+            case Condition.ValueEquals(var _, var expected) -> value.map(ValueRecord::value).filter(expected::equals).isPresent();
+            case Condition.RevisionEquals(var _, long expected) -> value.filter(record -> record.modRevision().value() == expected).isPresent();
         };
     }
 
     private static MutationBatch toStorageBatch(List<WriteOperation> operations) {
-        MutationBatch.Builder storageBatch = MutationBatch.builder();
+        MutationBatch.Builder batch = MutationBatch.builder();
         for (var operation : operations) {
             switch (operation) {
-                case WriteOperation.Put(var key, var value) -> storageBatch.put(key, value);
-                case WriteOperation.Delete(var key) -> storageBatch.delete(key);
+                case WriteOperation.Put(var key, var value) -> batch.put(key, value);
+                case WriteOperation.Delete(var key) -> batch.delete(key);
             }
         }
-        return storageBatch.build();
+        return batch.build();
+    }
+
+    private static io.partdb.storage.KeyRange toStorageRange(KeyRange range) {
+        var start = range.startInclusive();
+        var end = range.endExclusive();
+        if (start.isPresent() && end.isPresent()) {
+            return io.partdb.storage.KeyRange.between(start.get(), end.get());
+        }
+        if (start.isPresent()) {
+            return io.partdb.storage.KeyRange.from(start.get());
+        }
+        return end.map(io.partdb.storage.KeyRange::until).orElseGet(io.partdb.storage.KeyRange::all);
+    }
+
+    private static final class EntryCursor implements ScanCursor<KeyValueEntry> {
+        private final Scan scan;
+        private final Iterator<EntryRecord> entries;
+        private boolean closed;
+
+        private EntryCursor(Scan scan) {
+            this.scan = scan;
+            this.entries = scan.iterator();
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (closed) {
+                return false;
+            }
+            if (entries.hasNext()) {
+                return true;
+            }
+            close();
+            return false;
+        }
+
+        @Override
+        public KeyValueEntry next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            EntryRecord entry = entries.next();
+            return new KeyValueEntry(entry.key(), entry.value(), entry.modRevision().value());
+        }
+
+        @Override
+        public void close() {
+            if (!closed) {
+                closed = true;
+                scan.close();
+            }
+        }
     }
 }

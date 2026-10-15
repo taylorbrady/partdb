@@ -1,7 +1,7 @@
 package io.partdb.server;
 
 import io.partdb.node.PartDbNodeConfig;
-import io.partdb.transport.grpc.PeerEndpoint;
+import io.partdb.server.peer.PeerEndpoint;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -30,9 +30,6 @@ public record PartDbServerConfig(
         return nodeConfig.nodeId();
     }
 
-    /**
-     * @param raftPeerAddresses {@code nodeId -> host:port} for every voter, or empty for single-node mode
-     */
     public static PartDbServerConfig create(
         String nodeId,
         Map<String, String> raftPeerAddresses,

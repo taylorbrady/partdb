@@ -5,7 +5,6 @@ import io.partdb.benchmark.support.BenchmarkKeys;
 import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
-import io.partdb.storage.StorageCheckpoint;
 import io.partdb.storage.StorageOptions;
 import io.partdb.storage.StorageEngine;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -19,7 +18,13 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 
@@ -43,7 +48,7 @@ public class StorageRestoreBenchmark {
         private final StorageOptions options = StorageFixtures.defaultOptions();
 
         private Path sourceDir;
-        private StorageCheckpoint checkpoint;
+        private Path checkpoint;
         private Path targetDir;
 
         @Setup(Level.Trial)
@@ -52,7 +57,10 @@ public class StorageRestoreBenchmark {
             try (StorageEngine sourceStore = StorageEngine.open(sourceDir, options)) {
                 Bytes[] keys = BenchmarkKeys.storageKeys(keyCount);
                 StorageFixtures.populate(sourceStore, keys, BenchmarkValues.fixedValue(valueSize, 0x9eedL), 1);
-                checkpoint = sourceStore.checkpoint();
+                checkpoint = sourceDir.resolveSibling(sourceDir.getFileName() + ".checkpoint");
+                try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(checkpoint))) {
+                    sourceStore.checkpoint(out);
+                }
             }
         }
 
@@ -63,7 +71,11 @@ public class StorageRestoreBenchmark {
 
         public void restoreIntoNewStore() {
             try (StorageEngine store = StorageEngine.open(targetDir, options)) {
-                store.restore(checkpoint);
+                try (InputStream in = new BufferedInputStream(Files.newInputStream(checkpoint))) {
+                    store.restore(in);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
             }
         }
 
@@ -76,7 +88,9 @@ public class StorageRestoreBenchmark {
         @TearDown(Level.Trial)
         public void tearDownTrial() throws IOException {
             BenchmarkDirectories.deleteRecursively(sourceDir);
+            Files.deleteIfExists(checkpoint);
             sourceDir = null;
+            checkpoint = null;
         }
     }
 }

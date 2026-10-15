@@ -12,11 +12,7 @@ public sealed interface RaftInput {
         }
     }
     record MessageReceived(String from, RaftMessage message) implements RaftInput {}
-    record ReadIndexRequested(Bytes context) implements RaftInput {
-        public ReadIndexRequested {
-            context = Objects.requireNonNull(context, "context must not be null");
-        }
-    }
+    record ReadIndexRequested(long context) implements RaftInput {}
 
     record MembershipChangeProposed(MembershipChange change) implements RaftInput {
         public MembershipChangeProposed {
