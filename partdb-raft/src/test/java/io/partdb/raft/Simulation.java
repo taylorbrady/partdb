@@ -34,6 +34,8 @@ final class Simulation {
         double partitionRate,
         double crashRate,
         double transferRate,
+        double membershipRate,
+        int spares,
         int compactionThreshold
     ) {
         static Settings forSeed(long seed) {
@@ -49,6 +51,8 @@ final class Simulation {
                 random.nextDouble(0.01),
                 random.nextDouble(0.006),
                 random.nextDouble(0.01),
+                random.nextDouble(0.01),
+                random.nextInt(3),
                 10 + random.nextInt(60)
             );
         }
@@ -93,8 +97,8 @@ final class Simulation {
             voters.add("n" + i);
         }
         this.membership = RaftMembership.of(voters, Set.of());
-        for (String id : membership.voters()) {
-            nodes.put(id, new Node(id));
+        for (int i = 0; i < settings.nodes() + settings.spares(); i++) {
+            nodes.put("n" + i, new Node("n" + i));
         }
         for (int i = 0; i < settings.clients(); i++) {
             clients.add(new Client(i));
@@ -189,11 +193,33 @@ final class Simulation {
                 crash(up.get(random.nextInt(up.size())));
             }
         }
+        if (random.nextDouble() < settings.membershipRate()) {
+            leader().ifPresent(this::changeMembership);
+        }
         if (random.nextDouble() < settings.transferRate()) {
             leader().ifPresent(leader -> {
                 var voters = List.copyOf(leader.raft.membership().voters());
                 step(leader, new RaftInput.TransferLeadership(voters.get(random.nextInt(voters.size()))));
             });
+        }
+    }
+
+    private void changeMembership(Node leader) {
+        var current = leader.raft.membership();
+        var changes = new ArrayList<MembershipChange>();
+        for (String id : nodes.keySet()) {
+            if (!current.isMember(id)) {
+                changes.add(new MembershipChange.AddLearner(id));
+            } else if (current.isLearner(id)) {
+                changes.add(new MembershipChange.PromoteToVoter(id));
+                changes.add(new MembershipChange.RemoveNode(id));
+            } else if (current.voters().size() > 1) {
+                changes.add(new MembershipChange.DemoteToLearner(id));
+                changes.add(new MembershipChange.RemoveNode(id));
+            }
+        }
+        if (!changes.isEmpty()) {
+            step(leader, new RaftInput.ChangeMembership(++requestIds, changes.get(random.nextInt(changes.size()))));
         }
     }
 
@@ -330,7 +356,12 @@ final class Simulation {
                 return;
             }
         }
-        fail("cluster did not converge after faults healed");
+        fail("cluster did not converge after faults healed:\n" + nodes.values().stream()
+            .map(node -> "  %s %s term=%d leader=%s commit=%d applied=%d log=[%d..%d] voters=%s learners=%s".formatted(
+                node.id, node.raft.role(), node.raft.term(), node.raft.leaderId().orElse("-"), node.raft.commitIndex(),
+                node.applied, node.log.firstIndex(), node.log.lastIndex(), node.raft.membership().voters(),
+                node.raft.membership().learners()))
+            .collect(Collectors.joining("\n")));
     }
 
     private boolean converged() {
@@ -343,7 +374,10 @@ final class Simulation {
         if (commit == 0 || leader.get().log.term(commit) != raft.term()) {
             return false;
         }
-        return nodes.values().stream().allMatch(node -> node.raft.commitIndex() == commit && node.applied == commit);
+        var members = raft.membership().members();
+        return nodes.values().stream()
+            .filter(node -> members.contains(node.id))
+            .allMatch(node -> node.raft.commitIndex() == commit && node.applied == commit);
     }
 
     private void resolveIndeterminateWrites() {
