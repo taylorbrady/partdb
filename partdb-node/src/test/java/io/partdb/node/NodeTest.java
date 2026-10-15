@@ -216,6 +216,36 @@ class NodeTest {
         }
     }
 
+    @Test
+    void snapshotsAdvancePastEntriesThatChangeNothing() throws Exception {
+        var config = config(directory.resolve("node-1"), SnapshotPolicy.everyEntries(5), KvLimits.DEFAULT);
+        try (var node = leader(config)) {
+            long write = node.kv().put(bytes("guard"), bytes("actual"), TIMEOUT);
+            for (int i = 0; i < 20; i++) {
+                var result = node.kv().transact(Txn.when(
+                    List.of(Condition.valueEquals(bytes("guard"), bytes("expected"))),
+                    List.of(Mutation.put(bytes("never"), bytes("written")))
+                ), TIMEOUT);
+                assertInstanceOf(TxnResult.ConditionFailed.class, result);
+            }
+            long applied = node.cluster().status().appliedIndex();
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (node.cluster().status().snapshotIndex() <= write + 5 && System.nanoTime() < deadline) {
+                Thread.sleep(2);
+            }
+
+            assertTrue(node.cluster().status().snapshotIndex() > write + 5,
+                "snapshot index " + node.cluster().status().snapshotIndex() + " stayed near the last real write " + write);
+            assertTrue(applied >= write + 20);
+        }
+
+        try (var recovered = leader(config)) {
+            assertEquals(bytes("actual"), recovered.kv().get(bytes("guard"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().value());
+            assertTrue(recovered.kv().get(bytes("never"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().isEmpty());
+        }
+    }
+
     private static Bytes bytes(String value) {
         return Bytes.utf8(value);
     }
