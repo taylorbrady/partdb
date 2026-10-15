@@ -2,13 +2,8 @@ plugins {
     `kotlin-dsl`
 }
 
-repositories {
-    gradlePluginPortal()
-    mavenCentral()
-}
-
 dependencies {
-    implementation("me.champeau.jmh:me.champeau.jmh.gradle.plugin:0.7.3")
+    implementation(libs.jmh.gradle.plugin)
 }
 
 java {

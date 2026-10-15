@@ -1,16 +1,15 @@
 plugins {
+    id("partdb.java-conventions")
     `java-library`
+    `java-test-fixtures`
 }
 
 dependencies {
     api(project(":partdb-bytes"))
     implementation(project(":partdb-grpc"))
 
-    val grpcVersion = "1.80.0"
-    val protobufVersion = "4.34.0"
-
-    implementation("io.grpc:grpc-stub:$grpcVersion")
-    implementation("io.grpc:grpc-protobuf:$grpcVersion")
-    implementation("io.grpc:grpc-netty:$grpcVersion")
-    implementation("com.google.protobuf:protobuf-java:$protobufVersion")
+    implementation(libs.grpc.stub)
+    implementation(libs.grpc.protobuf)
+    implementation(libs.grpc.netty)
+    implementation(libs.protobuf.java)
 }

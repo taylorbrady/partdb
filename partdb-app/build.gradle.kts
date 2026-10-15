@@ -1,16 +1,13 @@
 plugins {
+    id("partdb.java-conventions")
     application
 }
-
-val logbackVersion = "1.5.32"
-val logstashEncoderVersion = "9.0"
 
 dependencies {
     implementation(project(":partdb-server"))
     implementation(project(":partdb-client"))
 
-    runtimeOnly("ch.qos.logback:logback-classic:$logbackVersion")
-    runtimeOnly("net.logstash.logback:logstash-logback-encoder:$logstashEncoderVersion")
+    runtimeOnly(libs.logback.classic)
 }
 
 application {
@@ -21,12 +18,10 @@ application {
 testing {
     suites {
         register<JvmTestSuite>("integrationTest") {
-            useJUnitJupiter()
-
             dependencies {
                 implementation(project())
                 implementation(project(":partdb-server"))
-                implementation(project(":partdb-client"))
+                implementation(testFixtures(project(":partdb-client")))
             }
 
             targets {
@@ -34,31 +29,27 @@ testing {
                     testTask.configure {
                         shouldRunAfter(tasks.named("test"))
                         maxParallelForks = 1
-                        jvmArgs("--sun-misc-unsafe-memory-access=allow")
                     }
                 }
             }
         }
 
         register<JvmTestSuite>("packagedIntegrationTest") {
-            useJUnitJupiter()
-
             dependencies {
-                implementation(project(":partdb-client"))
-                runtimeOnly("ch.qos.logback:logback-classic:$logbackVersion")
+                implementation(testFixtures(project(":partdb-client")))
             }
 
             targets {
                 all {
                     testTask.configure {
-                        dependsOn(tasks.named("installDist"))
                         shouldRunAfter(tasks.named("integrationTest"))
                         maxParallelForks = 1
-                        jvmArgs("--sun-misc-unsafe-memory-access=allow")
-                        systemProperty(
-                            "partdb.app.installDir",
-                            layout.buildDirectory.dir("install/partdb-app").get().asFile.absolutePath
-                        )
+
+                        val installDir = tasks.installDist.map { it.destinationDir }
+                        inputs.dir(installDir).withPropertyName("installDir")
+                        jvmArgumentProviders.add(CommandLineArgumentProvider {
+                            listOf("-Dpartdb.app.installDir=" + installDir.get().absolutePath)
+                        })
                     }
                 }
             }

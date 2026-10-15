@@ -6,7 +6,7 @@ plugins {
     id("me.champeau.jmh")
 }
 
-val partdbJmhVersion = "1.37"
+val libs = the<VersionCatalogsExtension>().named("libs")
 val jmhJvmArgs = listOf(
     "--sun-misc-unsafe-memory-access=allow",
     "-Xms2g",
@@ -14,7 +14,7 @@ val jmhJvmArgs = listOf(
 )
 
 extensions.configure<JmhParameters>("jmh") {
-    jmhVersion.set(partdbJmhVersion)
+    jmhVersion.set(libs.findVersion("jmh").get().requiredVersion)
     warmupIterations.set(3)
     iterations.set(5)
     fork.set(1)

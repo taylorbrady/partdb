@@ -1,0 +1,21 @@
+[versions]
+grpc = "1.80.0"
+protobuf = "4.34.0"
+slf4j = "2.0.17"
+logback = "1.5.32"
+junit = "6.0.3"
+jmh = "1.37"
+jmhPlugin = "0.7.3"
+protobufPlugin = "0.9.6"
+
+[libraries]
+grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
+grpc-protobuf = { module = "io.grpc:grpc-protobuf", version.ref = "grpc" }
+grpc-netty = { module = "io.grpc:grpc-netty", version.ref = "grpc" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+jmh-gradle-plugin = { module = "me.champeau.jmh:me.champeau.jmh.gradle.plugin", version.ref = "jmhPlugin" }
+
+[plugins]
+protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }

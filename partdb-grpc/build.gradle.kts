@@ -1,24 +1,25 @@
 plugins {
-    id("com.google.protobuf")
+    id("partdb.java-conventions")
     `java-library`
+    alias(libs.plugins.protobuf)
 }
 
 dependencies {
-    val grpcVersion = "1.80.0"
-    val protobufVersion = "4.34.0"
-
-    api("io.grpc:grpc-stub:$grpcVersion")
-    api("io.grpc:grpc-protobuf:$grpcVersion")
-    api("com.google.protobuf:protobuf-java:$protobufVersion")
+    api(libs.grpc.stub)
+    api(libs.grpc.protobuf)
+    api(libs.protobuf.java)
 }
+
+val protocArtifact = "com.google.protobuf:protoc:${libs.versions.protobuf.get()}"
+val grpcPluginArtifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:4.34.0"
+        artifact = protocArtifact
     }
     plugins {
         create("grpc") {
-            artifact = "io.grpc:protoc-gen-grpc-java:1.80.0"
+            artifact = grpcPluginArtifact
         }
     }
     generateProtoTasks {

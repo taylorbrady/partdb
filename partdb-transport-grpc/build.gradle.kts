@@ -1,6 +1,7 @@
 plugins {
-    id("com.google.protobuf")
+    id("partdb.java-conventions")
     `java-library`
+    alias(libs.plugins.protobuf)
 }
 
 dependencies {
@@ -9,23 +10,23 @@ dependencies {
     api(project(":partdb-raft"))
     implementation(project(":partdb-grpc"))
 
-    val grpcVersion = "1.80.0"
-    val protobufVersion = "4.34.0"
-
-    implementation("io.grpc:grpc-netty:$grpcVersion")
-    implementation("io.grpc:grpc-protobuf:$grpcVersion")
-    implementation("io.grpc:grpc-stub:$grpcVersion")
-    implementation("com.google.protobuf:protobuf-java:$protobufVersion")
-    implementation("org.slf4j:slf4j-api:2.0.17")
+    implementation(libs.grpc.netty)
+    implementation(libs.grpc.protobuf)
+    implementation(libs.grpc.stub)
+    implementation(libs.protobuf.java)
+    implementation(libs.slf4j.api)
 }
+
+val protocArtifact = "com.google.protobuf:protoc:${libs.versions.protobuf.get()}"
+val grpcPluginArtifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:4.34.0"
+        artifact = protocArtifact
     }
     plugins {
         create("grpc") {
-            artifact = "io.grpc:protoc-gen-grpc-java:1.80.0"
+            artifact = grpcPluginArtifact
         }
     }
     generateProtoTasks {
