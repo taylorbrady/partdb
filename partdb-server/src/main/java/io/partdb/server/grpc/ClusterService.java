@@ -12,8 +12,9 @@ import io.partdb.grpc.cluster.proto.ClusterProto.StatusRequest;
 import io.partdb.grpc.cluster.proto.ClusterProto.StatusResponse;
 import io.partdb.grpc.cluster.proto.ClusterServiceGrpc;
 import io.partdb.node.PartDbNode;
-import io.partdb.raft.RaftMembership;
-import io.partdb.raft.RaftRole;
+import io.partdb.raft.Membership;
+import io.partdb.raft.NodeId;
+import io.partdb.raft.Role;
 import io.partdb.raft.runtime.RaftStatus;
 
 final class ClusterService extends ClusterServiceGrpc.ClusterServiceImplBase {
@@ -29,10 +30,10 @@ final class ClusterService extends ClusterServiceGrpc.ClusterServiceImplBase {
         RaftStatus status = node.cluster().status();
         var response = StatusResponse.newBuilder()
             .setError(okError())
-            .setNodeId(status.nodeId())
+            .setNodeId(status.nodeId().value())
             .setRole(toProtoRole(status.role()))
             .setTerm(status.term())
-            .setLeaderId(status.leaderId().orElse(""))
+            .setLeaderId(status.leader().map(NodeId::value).orElse(""))
             .setCommitIndex(status.commitIndex())
             .setLastAppliedIndex(status.appliedIndex())
             .setIsRunning(status.running())
@@ -43,20 +44,20 @@ final class ClusterService extends ClusterServiceGrpc.ClusterServiceImplBase {
 
     @Override
     public void memberList(MemberListRequest request, StreamObserver<MemberListResponse> responseObserver) {
-        RaftMembership membership = node.cluster().membership();
+        Membership membership = node.cluster().membership();
         RaftStatus status = node.cluster().status();
-        String leaderId = status.leaderId().orElse("");
-        String selfId = status.nodeId();
+        String leaderId = status.leader().map(NodeId::value).orElse("");
+        String selfId = status.nodeId().value();
 
         var builder = MemberListResponse.newBuilder()
             .setError(okError())
             .setLeaderId(leaderId);
 
-        for (String voterId : membership.voters()) {
-            builder.addMembers(buildMember(voterId, MemberRole.VOTER, leaderId, selfId));
+        for (NodeId voter : membership.voters()) {
+            builder.addMembers(buildMember(voter.value(), MemberRole.VOTER, leaderId, selfId));
         }
-        for (String learnerId : membership.learners()) {
-            builder.addMembers(buildMember(learnerId, MemberRole.LEARNER, leaderId, selfId));
+        for (NodeId learner : membership.learners()) {
+            builder.addMembers(buildMember(learner.value(), MemberRole.LEARNER, leaderId, selfId));
         }
 
         responseObserver.onNext(builder.build());
@@ -72,7 +73,7 @@ final class ClusterService extends ClusterServiceGrpc.ClusterServiceImplBase {
             .build();
     }
 
-    private static NodeRole toProtoRole(RaftRole role) {
+    private static NodeRole toProtoRole(Role role) {
         return switch (role) {
             case FOLLOWER -> NodeRole.FOLLOWER;
             case PRE_CANDIDATE -> NodeRole.PRE_CANDIDATE;

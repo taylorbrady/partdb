@@ -60,7 +60,7 @@ final class AdminHttpServer implements AutoCloseable {
         }
         return switch (status.role()) {
             case LEADER -> HealthStatus.ok();
-            case FOLLOWER -> status.leaderId().isPresent()
+            case FOLLOWER -> status.leader().isPresent()
                 ? HealthStatus.ok()
                 : HealthStatus.unavailable("not ready: leader unknown\n");
             case PRE_CANDIDATE, CANDIDATE -> HealthStatus.unavailable("not ready: role=" + status.role() + "\n");

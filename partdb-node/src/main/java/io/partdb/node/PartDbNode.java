@@ -16,7 +16,7 @@ import io.partdb.node.state.KvCommandCodec;
 import io.partdb.node.state.KvCommandResult;
 import io.partdb.node.state.KvCommandResultCodec;
 import io.partdb.node.state.PartDbStateMachine;
-import io.partdb.raft.RaftMembership;
+import io.partdb.raft.Membership;
 import io.partdb.raft.runtime.RaftRuntime;
 import io.partdb.raft.runtime.RaftStatus;
 import io.partdb.raft.runtime.RaftTransport;
@@ -49,7 +49,7 @@ public final class PartDbNode implements AutoCloseable {
     private static final Executor BACKGROUND = task -> Thread.ofVirtual().name("partdb-background").start(task);
 
     private final PartDbStateMachine stateMachine;
-    private final RaftRuntime raft;
+    private final RaftRuntime<Bytes> raft;
     private final AtomicLong proposalCount = new AtomicLong();
     private final AtomicLong proposalFailureCount = new AtomicLong();
 
@@ -57,7 +57,7 @@ public final class PartDbNode implements AutoCloseable {
     private final ClusterView cluster = new Cluster();
     private final NodeAdmin admin = new Admin();
 
-    private PartDbNode(PartDbStateMachine stateMachine, RaftRuntime raft) {
+    private PartDbNode(PartDbStateMachine stateMachine, RaftRuntime<Bytes> raft) {
         this.stateMachine = stateMachine;
         this.raft = raft;
     }
@@ -74,13 +74,7 @@ public final class PartDbNode implements AutoCloseable {
         Objects.requireNonNull(config, "config must not be null");
         Objects.requireNonNull(transport, "transport must not be null");
 
-        PartDbStateMachine stateMachine;
-        try {
-            stateMachine = PartDbStateMachine.open(storageDirectory(config));
-        } catch (RuntimeException e) {
-            transport.close();
-            throw e;
-        }
+        var stateMachine = PartDbStateMachine.open(storageDirectory(config));
         try {
             return new PartDbNode(stateMachine, RaftRuntime.open(raftDirectory(config), config.raft(), transport, stateMachine));
         } catch (RuntimeException e) {
@@ -272,7 +266,7 @@ public final class PartDbNode implements AutoCloseable {
         }
 
         @Override
-        public RaftMembership membership() {
+        public Membership membership() {
             return raft.membership();
         }
     }

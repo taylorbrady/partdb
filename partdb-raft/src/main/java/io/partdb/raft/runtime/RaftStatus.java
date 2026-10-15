@@ -1,16 +1,17 @@
 package io.partdb.raft.runtime;
 
-import io.partdb.raft.RaftRole;
+import io.partdb.raft.NodeId;
+import io.partdb.raft.Role;
 
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
 public record RaftStatus(
-    String nodeId,
-    RaftRole role,
+    NodeId nodeId,
+    Role role,
     long term,
-    Optional<String> leaderId,
+    Optional<NodeId> leader,
     long commitIndex,
     long appliedIndex,
     long snapshotIndex,
@@ -20,7 +21,7 @@ public record RaftStatus(
     public RaftStatus {
         Objects.requireNonNull(nodeId, "nodeId must not be null");
         Objects.requireNonNull(role, "role must not be null");
-        Objects.requireNonNull(leaderId, "leaderId must not be null");
+        Objects.requireNonNull(leader, "leader must not be null");
         Objects.requireNonNull(lastLeaderChange, "lastLeaderChange must not be null");
     }
 }

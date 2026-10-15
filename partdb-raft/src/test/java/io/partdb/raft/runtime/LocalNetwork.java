@@ -1,14 +1,11 @@
 package io.partdb.raft.runtime;
 
 import io.partdb.raft.Envelope;
-import io.partdb.raft.RaftMessage;
+import io.partdb.raft.NodeId;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -17,10 +14,10 @@ import java.util.concurrent.ConcurrentHashMap;
 
 final class LocalNetwork {
 
-    private final Map<String, RaftTransport.Receiver> receivers = new ConcurrentHashMap<>();
-    private final Set<String> isolated = ConcurrentHashMap.newKeySet();
+    private final Map<NodeId, RaftTransport.Receiver> receivers = new ConcurrentHashMap<>();
+    private final Set<NodeId> isolated = ConcurrentHashMap.newKeySet();
 
-    RaftTransport transport(String self) {
+    RaftTransport transport(NodeId self) {
         return new RaftTransport() {
             @Override
             public void start(Receiver receiver) {
@@ -41,37 +38,35 @@ final class LocalNetwork {
             }
 
             @Override
-            public CompletionStage<Void> sendSnapshot(String to, RaftMessage.InstallSnapshot request, Path payload) {
+            public CompletionStage<Void> sendSnapshot(NodeId to, long term, SnapshotSource snapshot) {
                 var target = receivers.get(to);
                 if (target == null || isolated.contains(self) || isolated.contains(to)) {
                     return CompletableFuture.failedFuture(new IOException("unreachable: " + to));
                 }
                 return CompletableFuture.runAsync(() -> {
-                    try (FileChannel file = FileChannel.open(payload, StandardOpenOption.READ)) {
-                        var receiver = target.receiveSnapshot(self, request);
+                    try {
+                        var sink = target.receiveSnapshot(self, term, snapshot.info());
                         var chunk = ByteBuffer.allocate(1024);
-                        while (file.read(chunk.clear()) >= 0) {
-                            receiver.write(chunk.flip());
+                        long position = 0;
+                        int read;
+                        while ((read = snapshot.channel().read(chunk.clear(), position)) >= 0) {
+                            position += read;
+                            sink.write(chunk.flip());
                         }
-                        receiver.complete();
+                        sink.complete();
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
                     }
                 });
             }
-
-            @Override
-            public void close() {
-                receivers.remove(self);
-            }
         };
     }
 
-    void isolate(String node) {
+    void isolate(NodeId node) {
         isolated.add(node);
     }
 
-    void heal(String node) {
+    void heal(NodeId node) {
         isolated.remove(node);
     }
 }

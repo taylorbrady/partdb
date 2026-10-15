@@ -1,36 +1,31 @@
 package io.partdb.raft;
 
+import java.util.Objects;
+
 public sealed interface MembershipChange {
-    String nodeId();
+    NodeId node();
 
-    default boolean revokesVote(String voter) {
-        return nodeId().equals(voter) && switch (this) {
-            case RemoveNode _, DemoteToLearner _ -> true;
-            case AddLearner _, PromoteToVoter _ -> false;
-        };
-    }
-
-    record AddLearner(String nodeId) implements MembershipChange {
+    record AddLearner(NodeId node) implements MembershipChange {
         public AddLearner {
-            Validation.nodeId(nodeId, "nodeId");
+            Objects.requireNonNull(node, "node must not be null");
         }
     }
 
-    record PromoteToVoter(String nodeId) implements MembershipChange {
+    record PromoteToVoter(NodeId node) implements MembershipChange {
         public PromoteToVoter {
-            Validation.nodeId(nodeId, "nodeId");
+            Objects.requireNonNull(node, "node must not be null");
         }
     }
 
-    record DemoteToLearner(String nodeId) implements MembershipChange {
+    record DemoteToLearner(NodeId node) implements MembershipChange {
         public DemoteToLearner {
-            Validation.nodeId(nodeId, "nodeId");
+            Objects.requireNonNull(node, "node must not be null");
         }
     }
 
-    record RemoveNode(String nodeId) implements MembershipChange {
+    record RemoveNode(NodeId node) implements MembershipChange {
         public RemoveNode {
-            Validation.nodeId(nodeId, "nodeId");
+            Objects.requireNonNull(node, "node must not be null");
         }
     }
 }

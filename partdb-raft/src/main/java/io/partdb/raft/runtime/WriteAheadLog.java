@@ -1,7 +1,7 @@
 package io.partdb.raft.runtime;
 
-import io.partdb.raft.RaftHardState;
-import io.partdb.raft.RaftLogEntry;
+import io.partdb.raft.HardState;
+import io.partdb.raft.LogEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,7 +19,7 @@ final class WriteAheadLog implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(WriteAheadLog.class);
     private static final String SUFFIX = ".wal";
 
-    record Replay(RaftHardState hardState, OptionalLong resetIndex, List<RaftLogEntry> entries) {}
+    record Replay(HardState hardState, OptionalLong resetIndex, List<LogEntry> entries) {}
 
     private record Segment(Path path, long sequence, long maxIndex) {}
 
@@ -30,7 +30,7 @@ final class WriteAheadLog implements AutoCloseable {
     private WalSegment active;
     private long activeSequence;
     private long activeMaxIndex;
-    private RaftHardState hardState;
+    private HardState hardState;
 
     private WriteAheadLog(Path directory, long segmentBytes) {
         this.directory = directory;
@@ -52,8 +52,8 @@ final class WriteAheadLog implements AutoCloseable {
         return replay;
     }
 
-    void append(Optional<RaftHardState> state, List<RaftLogEntry> entries) {
-        for (RaftLogEntry entry : entries) {
+    void append(Optional<HardState> state, List<LogEntry> entries) {
+        for (LogEntry entry : entries) {
             active.append(new WalRecord.Entry(entry));
             activeMaxIndex = Math.max(activeMaxIndex, entry.index());
         }
@@ -107,8 +107,8 @@ final class WriteAheadLog implements AutoCloseable {
 
     private Replay recover() {
         var paths = segmentPaths();
-        hardState = RaftHardState.INITIAL;
-        var entries = new ArrayList<RaftLogEntry>();
+        hardState = HardState.INITIAL;
+        var entries = new ArrayList<LogEntry>();
         OptionalLong resetIndex = OptionalLong.empty();
         int firstLive = 0;
 
@@ -163,7 +163,7 @@ final class WriteAheadLog implements AutoCloseable {
         return new Replay(hardState, resetIndex, List.copyOf(entries));
     }
 
-    private static void truncateFrom(List<RaftLogEntry> entries, long index) {
+    private static void truncateFrom(List<LogEntry> entries, long index) {
         while (!entries.isEmpty() && entries.getLast().index() >= index) {
             entries.removeLast();
         }

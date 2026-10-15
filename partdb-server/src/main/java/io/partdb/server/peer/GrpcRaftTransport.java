@@ -1,24 +1,20 @@
 package io.partdb.server.peer;
 
 import com.google.protobuf.UnsafeByteOperations;
-import io.grpc.CallOptions;
-import io.grpc.Channel;
-import io.grpc.ClientCall;
-import io.grpc.ClientInterceptor;
-import io.grpc.ForwardingClientCall;
 import io.grpc.ManagedChannel;
-import io.grpc.Metadata;
-import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.ClientCallStreamObserver;
 import io.grpc.stub.ClientResponseObserver;
 import io.partdb.raft.Envelope;
-import io.partdb.raft.RaftMessage;
+import io.partdb.raft.NodeId;
+import io.partdb.raft.runtime.ClusterId;
 import io.partdb.raft.runtime.RaftTransport;
-import io.partdb.server.peer.proto.RaftProto;
-import io.partdb.server.peer.proto.RaftServiceGrpc;
+import io.partdb.server.peer.proto.InstallSnapshotRequest;
+import io.partdb.server.peer.proto.InstallSnapshotResponse;
+import io.partdb.server.peer.proto.RaftPeerGrpc;
+import io.partdb.server.peer.proto.SnapshotHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,8 +22,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -36,21 +31,28 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-public final class GrpcRaftTransport implements RaftTransport {
+public final class GrpcRaftTransport implements RaftTransport, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(GrpcRaftTransport.class);
     private static final int SNAPSHOT_CHUNK_BYTES = 1 << 20;
-    private static final int STREAM_CAPACITY = 4096;
+    private static final long STREAM_CAPACITY_BYTES = 64L << 20;
+    private static final int MAX_MESSAGE_BYTES = 64 << 20;
+    private static final Duration KEEPALIVE = Duration.ofSeconds(10);
+    private static final Duration KEEPALIVE_TIMEOUT = Duration.ofSeconds(5);
+    private static final Duration SNAPSHOT_BASE_DEADLINE = Duration.ofSeconds(30);
+    private static final long SNAPSHOT_MIN_BYTES_PER_SECOND = 4L << 20;
 
-    private final String nodeId;
+    private final ClusterId clusterId;
+    private final NodeId nodeId;
     private final int port;
-    private final Map<String, PeerEndpoint> peers;
-    private final Map<String, ManagedChannel> channels = new ConcurrentHashMap<>();
-    private final Map<String, PeerStream> streams = new ConcurrentHashMap<>();
-    private Receiver receiver;
-    private Server server;
+    private final Map<NodeId, PeerEndpoint> peers;
+    private final Map<NodeId, ManagedChannel> channels = new ConcurrentHashMap<>();
+    private final Map<NodeId, PeerStream> streams = new ConcurrentHashMap<>();
+    private volatile Receiver receiver;
+    private volatile Server server;
 
-    public GrpcRaftTransport(String nodeId, int port, Map<String, PeerEndpoint> peers) {
+    public GrpcRaftTransport(ClusterId clusterId, NodeId nodeId, int port, Map<NodeId, PeerEndpoint> peers) {
+        this.clusterId = Objects.requireNonNull(clusterId, "clusterId must not be null");
         this.nodeId = Objects.requireNonNull(nodeId, "nodeId must not be null");
         this.port = port;
         this.peers = Map.copyOf(Objects.requireNonNull(peers, "peers must not be null"));
@@ -58,12 +60,15 @@ public final class GrpcRaftTransport implements RaftTransport {
 
     @Override
     public void start(Receiver receiver) {
-        this.receiver = receiver;
+        this.receiver = Objects.requireNonNull(receiver, "receiver must not be null");
         try {
             server = NettyServerBuilder.forPort(port)
                 .addService(new RaftService(nodeId, receiver))
-                .intercept(RaftService.senderInterceptor())
+                .intercept(PeerHeaders.incoming(clusterId, nodeId))
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
+                .maxInboundMessageSize(MAX_MESSAGE_BYTES)
+                .permitKeepAliveTime(KEEPALIVE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
+                .permitKeepAliveWithoutCalls(true)
                 .build()
                 .start();
         } catch (IOException e) {
@@ -83,19 +88,14 @@ public final class GrpcRaftTransport implements RaftTransport {
     }
 
     @Override
-    public CompletionStage<Void> sendSnapshot(String to, RaftMessage.InstallSnapshot request, Path payload) {
+    public CompletionStage<Void> sendSnapshot(NodeId to, long term, SnapshotSource snapshot) {
         var stub = stub(to);
         if (stub == null) {
             return CompletableFuture.failedFuture(new IllegalArgumentException("unknown peer " + to));
         }
-        FileChannel file;
-        try {
-            file = FileChannel.open(payload, StandardOpenOption.READ);
-        } catch (IOException e) {
-            return CompletableFuture.failedFuture(e);
-        }
-        var upload = new SnapshotUpload(RaftProtoMapper.toProto(request), file);
-        stub.installSnapshot(upload);
+        long seconds = SNAPSHOT_BASE_DEADLINE.toSeconds() + snapshot.info().size() / SNAPSHOT_MIN_BYTES_PER_SECOND;
+        var upload = new SnapshotUpload(RaftProtoMapper.toProto(term, snapshot.info()), snapshot.channel());
+        stub.withDeadlineAfter(seconds, TimeUnit.SECONDS).installSnapshot(upload);
         return upload.result;
     }
 
@@ -103,9 +103,10 @@ public final class GrpcRaftTransport implements RaftTransport {
     public void close() {
         streams.values().forEach(PeerStream::close);
         streams.clear();
-        if (server != null) {
-            server.shutdownNow();
-            awaitTermination(server::awaitTermination);
+        var running = server;
+        if (running != null) {
+            running.shutdownNow();
+            awaitTermination(running::awaitTermination);
         }
         for (ManagedChannel channel : channels.values()) {
             channel.shutdownNow();
@@ -115,12 +116,12 @@ public final class GrpcRaftTransport implements RaftTransport {
         log.atInfo().addKeyValue("nodeId", nodeId).log("Raft transport stopped");
     }
 
-    private PeerStream openStream(String peer) {
+    private PeerStream openStream(NodeId peer) {
         var stub = stub(peer);
-        return stub == null ? null : new PeerStream(peer, stub, receiver, STREAM_CAPACITY);
+        return stub == null ? null : new PeerStream(peer, stub, receiver, STREAM_CAPACITY_BYTES);
     }
 
-    private RaftServiceGrpc.RaftServiceStub stub(String peer) {
+    private RaftPeerGrpc.RaftPeerStub stub(NodeId peer) {
         PeerEndpoint endpoint = peers.get(peer);
         if (endpoint == null) {
             return null;
@@ -128,8 +129,14 @@ public final class GrpcRaftTransport implements RaftTransport {
         var channel = channels.computeIfAbsent(peer, _ -> NettyChannelBuilder
             .forAddress(endpoint.host(), endpoint.port())
             .usePlaintext()
+            .maxInboundMessageSize(MAX_MESSAGE_BYTES)
+            .keepAliveTime(KEEPALIVE.toMillis(), TimeUnit.MILLISECONDS)
+            .keepAliveTimeout(KEEPALIVE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
+            .keepAliveWithoutCalls(true)
             .build());
-        return RaftServiceGrpc.newStub(channel).withInterceptors(new SenderInterceptor());
+        return RaftPeerGrpc.newStub(channel)
+            .withInterceptors(PeerHeaders.outgoing(clusterId, nodeId, peer))
+            .withMaxOutboundMessageSize(MAX_MESSAGE_BYTES);
     }
 
     private static void awaitTermination(Termination termination) {
@@ -145,40 +152,23 @@ public final class GrpcRaftTransport implements RaftTransport {
         boolean await(long timeout, TimeUnit unit) throws InterruptedException;
     }
 
-    private final class SenderInterceptor implements ClientInterceptor {
-        @Override
-        public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(
-            MethodDescriptor<ReqT, RespT> method,
-            CallOptions callOptions,
-            Channel next
-        ) {
-            return new ForwardingClientCall.SimpleForwardingClientCall<>(next.newCall(method, callOptions)) {
-                @Override
-                public void start(Listener<RespT> responseListener, Metadata headers) {
-                    headers.put(RaftService.SENDER_KEY, nodeId);
-                    super.start(responseListener, headers);
-                }
-            };
-        }
-    }
+    private static final class SnapshotUpload implements ClientResponseObserver<InstallSnapshotRequest, InstallSnapshotResponse> {
 
-    private static final class SnapshotUpload
-        implements ClientResponseObserver<RaftProto.InstallSnapshotRequest, RaftProto.InstallSnapshotResponse> {
-
-        private final RaftProto.SnapshotHeader header;
+        private final SnapshotHeader header;
         private final FileChannel file;
         private final CompletableFuture<Void> result = new CompletableFuture<>();
-        private ClientCallStreamObserver<RaftProto.InstallSnapshotRequest> requests;
+        private ClientCallStreamObserver<InstallSnapshotRequest> requests;
+        private long position;
         private boolean headerSent;
         private boolean finished;
 
-        private SnapshotUpload(RaftProto.SnapshotHeader header, FileChannel file) {
+        private SnapshotUpload(SnapshotHeader header, FileChannel file) {
             this.header = header;
             this.file = file;
         }
 
         @Override
-        public void beforeStart(ClientCallStreamObserver<RaftProto.InstallSnapshotRequest> requests) {
+        public void beforeStart(ClientCallStreamObserver<InstallSnapshotRequest> requests) {
             this.requests = requests;
             requests.setOnReadyHandler(this::pump);
         }
@@ -187,52 +177,42 @@ public final class GrpcRaftTransport implements RaftTransport {
             try {
                 while (!finished && requests.isReady()) {
                     if (!headerSent) {
-                        requests.onNext(RaftProto.InstallSnapshotRequest.newBuilder().setHeader(header).build());
+                        requests.onNext(InstallSnapshotRequest.newBuilder().setHeader(header).build());
                         headerSent = true;
                         continue;
                     }
                     ByteBuffer chunk = ByteBuffer.allocate(SNAPSHOT_CHUNK_BYTES);
-                    if (file.read(chunk) < 0) {
+                    int read = file.read(chunk, position);
+                    if (read < 0) {
                         finished = true;
-                        closeFile();
                         requests.onCompleted();
                         return;
                     }
-                    requests.onNext(RaftProto.InstallSnapshotRequest.newBuilder()
+                    position += read;
+                    requests.onNext(InstallSnapshotRequest.newBuilder()
                         .setChunk(UnsafeByteOperations.unsafeWrap(chunk.flip()))
                         .build());
                 }
             } catch (IOException e) {
                 finished = true;
-                closeFile();
                 requests.onError(e);
                 result.completeExceptionally(e);
             }
         }
 
         @Override
-        public void onNext(RaftProto.InstallSnapshotResponse value) {
+        public void onNext(InstallSnapshotResponse value) {
         }
 
         @Override
         public synchronized void onError(Throwable error) {
             finished = true;
-            closeFile();
             result.completeExceptionally(error);
         }
 
         @Override
         public void onCompleted() {
-            closeFile();
             result.complete(null);
-        }
-
-        private void closeFile() {
-            try {
-                file.close();
-            } catch (IOException e) {
-                log.atDebug().setCause(e).log("Failed to close snapshot payload");
-            }
         }
     }
 }

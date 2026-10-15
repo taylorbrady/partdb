@@ -12,7 +12,10 @@ import java.util.zip.CRC32C;
 
 final class WalSegment implements AutoCloseable {
 
-    static final int HEADER_BYTES = Integer.BYTES + Integer.BYTES + Byte.BYTES;
+    static final int MAGIC = 0x4C415750;
+    static final int VERSION = 1;
+    static final int SEGMENT_HEADER_BYTES = 2 * Integer.BYTES;
+    static final int RECORD_HEADER_BYTES = Integer.BYTES + Integer.BYTES + Byte.BYTES;
     private static final int BUFFER_BYTES = 256 * 1024;
 
     record Scan(List<WalRecord> records, long validBytes, boolean complete) {}
@@ -31,7 +34,10 @@ final class WalSegment implements AutoCloseable {
 
     static WalSegment create(Path path) {
         try {
-            return new WalSegment(path, FileChannel.open(path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), 0);
+            var channel = FileChannel.open(path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            var segment = new WalSegment(path, channel, 0);
+            segment.writeHeader();
+            return segment;
         } catch (IOException e) {
             throw new RaftStorageException.IO("failed to create WAL segment " + path, e);
         }
@@ -40,6 +46,12 @@ final class WalSegment implements AutoCloseable {
     static WalSegment reopen(Path path, long validBytes) {
         try {
             var channel = FileChannel.open(path, StandardOpenOption.WRITE);
+            if (validBytes < SEGMENT_HEADER_BYTES) {
+                channel.truncate(0);
+                var segment = new WalSegment(path, channel, 0);
+                segment.writeHeader();
+                return segment;
+            }
             if (channel.size() > validBytes) {
                 channel.truncate(validBytes);
                 channel.force(true);
@@ -55,8 +67,19 @@ final class WalSegment implements AutoCloseable {
         try {
             var bytes = ByteBuffer.wrap(Files.readAllBytes(path)).order(BinaryFormat.ORDER);
             var records = new ArrayList<WalRecord>();
+            if (bytes.remaining() < SEGMENT_HEADER_BYTES) {
+                return new Scan(records, 0, false);
+            }
+            int magic = bytes.getInt();
+            int version = bytes.getInt();
+            if (magic != MAGIC) {
+                throw new RaftStorageException.Corruption("WAL segment " + path + " has an invalid header");
+            }
+            if (version != VERSION) {
+                throw new RaftStorageException.Corruption("WAL segment " + path + " has unsupported version " + version);
+            }
             var crc = new CRC32C();
-            while (bytes.remaining() >= HEADER_BYTES) {
+            while (bytes.remaining() >= RECORD_HEADER_BYTES) {
                 int start = bytes.position();
                 int length = bytes.getInt();
                 int checksum = bytes.getInt();
@@ -94,18 +117,18 @@ final class WalSegment implements AutoCloseable {
         crc.update(record.type());
         crc.update(payload.duplicate());
         int length = payload.remaining();
-        if (buffer.remaining() < HEADER_BYTES + length) {
+        if (buffer.remaining() < RECORD_HEADER_BYTES + length) {
             flush();
         }
-        if (buffer.remaining() < HEADER_BYTES + length) {
-            var header = ByteBuffer.allocate(HEADER_BYTES).order(BinaryFormat.ORDER);
+        if (buffer.remaining() < RECORD_HEADER_BYTES + length) {
+            var header = ByteBuffer.allocate(RECORD_HEADER_BYTES).order(BinaryFormat.ORDER);
             header.putInt(length).putInt((int) crc.getValue()).put(record.type()).flip();
             write(header);
             write(payload);
         } else {
             buffer.putInt(length).putInt((int) crc.getValue()).put(record.type()).put(payload);
         }
-        size += HEADER_BYTES + length;
+        size += RECORD_HEADER_BYTES + length;
     }
 
     void sync() {
@@ -125,6 +148,14 @@ final class WalSegment implements AutoCloseable {
         } catch (IOException e) {
             throw new RaftStorageException.IO("failed to close WAL segment " + path, e);
         }
+    }
+
+    private void writeHeader() throws IOException {
+        var header = ByteBuffer.allocate(SEGMENT_HEADER_BYTES).order(BinaryFormat.ORDER);
+        header.putInt(MAGIC).putInt(VERSION).flip();
+        write(header);
+        channel.force(true);
+        size = SEGMENT_HEADER_BYTES;
     }
 
     private void flush() {

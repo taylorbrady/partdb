@@ -1,13 +1,13 @@
 package io.partdb.raft;
 
-public record RaftOptions(
+public record Options(
     int electionTicks,
     int heartbeatTicks,
     long maxAppendBytes,
     int maxInflightAppends,
     long maxApplyBytes
 ) {
-    public RaftOptions {
+    public Options {
         Validation.positive(electionTicks, "electionTicks");
         Validation.positive(heartbeatTicks, "heartbeatTicks");
         Validation.positive(maxAppendBytes, "maxAppendBytes");
@@ -18,7 +18,7 @@ public record RaftOptions(
         }
     }
 
-    public static RaftOptions defaults() {
-        return new RaftOptions(10, 3, 1 << 20, 256, 64 << 20);
+    public static Options defaults() {
+        return new Options(10, 3, 1 << 20, 256, 64 << 20);
     }
 }

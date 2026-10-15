@@ -2,77 +2,97 @@ package io.partdb.server.peer;
 
 import com.google.protobuf.UnsafeByteOperations;
 import io.partdb.bytes.Bytes;
-import io.partdb.raft.RaftLogEntry;
-import io.partdb.raft.RaftMembership;
-import io.partdb.raft.RaftMessage;
+import io.partdb.raft.LogEntry;
+import io.partdb.raft.Membership;
+import io.partdb.raft.Message;
+import io.partdb.raft.NodeId;
 import io.partdb.raft.SnapshotMetadata;
-import io.partdb.server.peer.proto.RaftProto;
+import io.partdb.raft.runtime.SnapshotInfo;
+import io.partdb.server.peer.proto.AppendAccepted;
+import io.partdb.server.peer.proto.AppendEntries;
+import io.partdb.server.peer.proto.AppendRejected;
+import io.partdb.server.peer.proto.Heartbeat;
+import io.partdb.server.peer.proto.HeartbeatResponse;
+import io.partdb.server.peer.proto.NoOp;
+import io.partdb.server.peer.proto.PeerMessage;
+import io.partdb.server.peer.proto.PreVote;
+import io.partdb.server.peer.proto.PreVoteResponse;
+import io.partdb.server.peer.proto.ReadIndexRequest;
+import io.partdb.server.peer.proto.ReadIndexResponse;
+import io.partdb.server.peer.proto.RequestVote;
+import io.partdb.server.peer.proto.RequestVoteResponse;
+import io.partdb.server.peer.proto.SnapshotHeader;
+import io.partdb.server.peer.proto.SnapshotInstalled;
+import io.partdb.server.peer.proto.TimeoutNow;
 
-import java.util.Set;
+import java.util.OptionalLong;
+import java.util.stream.Collectors;
 
 final class RaftProtoMapper {
 
     private RaftProtoMapper() {
     }
 
-    static RaftProto.RaftMessage toProto(RaftMessage message) {
-        var builder = RaftProto.RaftMessage.newBuilder();
+    static PeerMessage toProto(Message message) {
+        var builder = PeerMessage.newBuilder();
         switch (message) {
-            case RaftMessage.PreVote vote -> builder.setPreVote(RaftProto.PreVote.newBuilder()
+            case Message.PreVote vote -> builder.setPreVote(PreVote.newBuilder()
                 .setTerm(vote.term()).setLastLogIndex(vote.lastLogIndex()).setLastLogTerm(vote.lastLogTerm()));
-            case RaftMessage.PreVoteResponse response -> builder.setPreVoteResponse(RaftProto.PreVoteResponse.newBuilder()
+            case Message.PreVoteResponse response -> builder.setPreVoteResponse(PreVoteResponse.newBuilder()
                 .setTerm(response.term()).setGranted(response.granted()));
-            case RaftMessage.RequestVote vote -> builder.setRequestVote(RaftProto.RequestVote.newBuilder()
+            case Message.RequestVote vote -> builder.setRequestVote(RequestVote.newBuilder()
                 .setTerm(vote.term()).setLastLogIndex(vote.lastLogIndex()).setLastLogTerm(vote.lastLogTerm())
                 .setLeadershipTransfer(vote.leadershipTransfer()));
-            case RaftMessage.RequestVoteResponse response -> builder.setRequestVoteResponse(RaftProto.RequestVoteResponse.newBuilder()
+            case Message.RequestVoteResponse response -> builder.setRequestVoteResponse(RequestVoteResponse.newBuilder()
                 .setTerm(response.term()).setGranted(response.granted()));
-            case RaftMessage.AppendEntries append -> builder.setAppendEntries(RaftProto.AppendEntries.newBuilder()
+            case Message.AppendEntries append -> builder.setAppendEntries(AppendEntries.newBuilder()
                 .setTerm(append.term()).setPrevLogIndex(append.prevLogIndex()).setPrevLogTerm(append.prevLogTerm())
                 .addAllEntries(append.entries().stream().map(RaftProtoMapper::toProto).toList())
                 .setCommitIndex(append.commitIndex()));
-            case RaftMessage.AppendAccepted accepted -> builder.setAppendAccepted(RaftProto.AppendAccepted.newBuilder()
+            case Message.AppendAccepted accepted -> builder.setAppendAccepted(AppendAccepted.newBuilder()
                 .setTerm(accepted.term()).setMatchIndex(accepted.matchIndex()));
-            case RaftMessage.AppendRejected rejected -> builder.setAppendRejected(RaftProto.AppendRejected.newBuilder()
+            case Message.AppendRejected rejected -> builder.setAppendRejected(AppendRejected.newBuilder()
                 .setTerm(rejected.term()).setRejectedIndex(rejected.rejectedIndex())
                 .setHintIndex(rejected.hintIndex()).setHintTerm(rejected.hintTerm()));
-            case RaftMessage.Heartbeat heartbeat -> builder.setHeartbeat(RaftProto.Heartbeat.newBuilder()
+            case Message.Heartbeat heartbeat -> builder.setHeartbeat(Heartbeat.newBuilder()
                 .setTerm(heartbeat.term()).setCommitIndex(heartbeat.commitIndex()).setRound(heartbeat.round()));
-            case RaftMessage.HeartbeatResponse response -> builder.setHeartbeatResponse(RaftProto.HeartbeatResponse.newBuilder()
+            case Message.HeartbeatResponse response -> builder.setHeartbeatResponse(HeartbeatResponse.newBuilder()
                 .setTerm(response.term()).setRound(response.round()));
-            case RaftMessage.InstallSnapshot _ -> throw new IllegalArgumentException("snapshots are streamed separately");
-            case RaftMessage.InstallSnapshotResponse response -> builder.setInstallSnapshotResult(RaftProto.InstallSnapshotResult.newBuilder()
-                .setTerm(response.term()).setMatchIndex(response.matchIndex()));
-            case RaftMessage.ReadIndex read -> builder.setReadIndex(RaftProto.ReadIndex.newBuilder()
+            case Message.SnapshotInstalled installed -> builder.setSnapshotInstalled(SnapshotInstalled.newBuilder()
+                .setTerm(installed.term()).setMatchIndex(installed.matchIndex()));
+            case Message.ReadIndexRequest read -> builder.setReadIndexRequest(ReadIndexRequest.newBuilder()
                 .setTerm(read.term()).setId(read.id()));
-            case RaftMessage.ReadIndexResponse response -> builder.setReadIndexResponse(RaftProto.ReadIndexResponse.newBuilder()
-                .setTerm(response.term()).setId(response.id()).setReadIndex(response.readIndex()));
-            case RaftMessage.TimeoutNow timeout -> builder.setTimeoutNow(RaftProto.TimeoutNow.newBuilder().setTerm(timeout.term()));
+            case Message.ReadIndexResponse response -> {
+                var proto = ReadIndexResponse.newBuilder().setTerm(response.term()).setId(response.id());
+                response.readIndex().ifPresent(proto::setReadIndex);
+                builder.setReadIndexResponse(proto);
+            }
+            case Message.TimeoutNow timeout -> builder.setTimeoutNow(TimeoutNow.newBuilder().setTerm(timeout.term()));
         }
         return builder.build();
     }
 
-    static RaftMessage fromProto(RaftProto.RaftMessage proto) {
+    static Message fromProto(PeerMessage proto) {
         return switch (proto.getMessageCase()) {
             case PRE_VOTE -> {
                 var vote = proto.getPreVote();
-                yield new RaftMessage.PreVote(vote.getTerm(), vote.getLastLogIndex(), vote.getLastLogTerm());
+                yield new Message.PreVote(vote.getTerm(), vote.getLastLogIndex(), vote.getLastLogTerm());
             }
             case PRE_VOTE_RESPONSE -> {
                 var response = proto.getPreVoteResponse();
-                yield new RaftMessage.PreVoteResponse(response.getTerm(), response.getGranted());
+                yield new Message.PreVoteResponse(response.getTerm(), response.getGranted());
             }
             case REQUEST_VOTE -> {
                 var vote = proto.getRequestVote();
-                yield new RaftMessage.RequestVote(vote.getTerm(), vote.getLastLogIndex(), vote.getLastLogTerm(), vote.getLeadershipTransfer());
+                yield new Message.RequestVote(vote.getTerm(), vote.getLastLogIndex(), vote.getLastLogTerm(), vote.getLeadershipTransfer());
             }
             case REQUEST_VOTE_RESPONSE -> {
                 var response = proto.getRequestVoteResponse();
-                yield new RaftMessage.RequestVoteResponse(response.getTerm(), response.getGranted());
+                yield new Message.RequestVoteResponse(response.getTerm(), response.getGranted());
             }
             case APPEND_ENTRIES -> {
                 var append = proto.getAppendEntries();
-                yield new RaftMessage.AppendEntries(
+                yield new Message.AppendEntries(
                     append.getTerm(),
                     append.getPrevLogIndex(),
                     append.getPrevLogTerm(),
@@ -82,81 +102,88 @@ final class RaftProtoMapper {
             }
             case APPEND_ACCEPTED -> {
                 var accepted = proto.getAppendAccepted();
-                yield new RaftMessage.AppendAccepted(accepted.getTerm(), accepted.getMatchIndex());
+                yield new Message.AppendAccepted(accepted.getTerm(), accepted.getMatchIndex());
             }
             case APPEND_REJECTED -> {
                 var rejected = proto.getAppendRejected();
-                yield new RaftMessage.AppendRejected(rejected.getTerm(), rejected.getRejectedIndex(), rejected.getHintIndex(), rejected.getHintTerm());
+                yield new Message.AppendRejected(rejected.getTerm(), rejected.getRejectedIndex(), rejected.getHintIndex(), rejected.getHintTerm());
             }
             case HEARTBEAT -> {
                 var heartbeat = proto.getHeartbeat();
-                yield new RaftMessage.Heartbeat(heartbeat.getTerm(), heartbeat.getCommitIndex(), heartbeat.getRound());
+                yield new Message.Heartbeat(heartbeat.getTerm(), heartbeat.getCommitIndex(), heartbeat.getRound());
             }
             case HEARTBEAT_RESPONSE -> {
                 var response = proto.getHeartbeatResponse();
-                yield new RaftMessage.HeartbeatResponse(response.getTerm(), response.getRound());
+                yield new Message.HeartbeatResponse(response.getTerm(), response.getRound());
             }
-            case INSTALL_SNAPSHOT_RESULT -> {
-                var result = proto.getInstallSnapshotResult();
-                yield new RaftMessage.InstallSnapshotResponse(result.getTerm(), result.getMatchIndex());
+            case SNAPSHOT_INSTALLED -> {
+                var installed = proto.getSnapshotInstalled();
+                yield new Message.SnapshotInstalled(installed.getTerm(), installed.getMatchIndex());
             }
-            case READ_INDEX -> {
-                var read = proto.getReadIndex();
-                yield new RaftMessage.ReadIndex(read.getTerm(), read.getId());
+            case READ_INDEX_REQUEST -> {
+                var read = proto.getReadIndexRequest();
+                yield new Message.ReadIndexRequest(read.getTerm(), read.getId());
             }
             case READ_INDEX_RESPONSE -> {
                 var response = proto.getReadIndexResponse();
-                yield new RaftMessage.ReadIndexResponse(response.getTerm(), response.getId(), response.getReadIndex());
+                yield new Message.ReadIndexResponse(
+                    response.getTerm(),
+                    response.getId(),
+                    response.hasReadIndex() ? OptionalLong.of(response.getReadIndex()) : OptionalLong.empty()
+                );
             }
-            case TIMEOUT_NOW -> new RaftMessage.TimeoutNow(proto.getTimeoutNow().getTerm());
-            case MESSAGE_NOT_SET -> throw new IllegalArgumentException("raft message not set");
+            case TIMEOUT_NOW -> new Message.TimeoutNow(proto.getTimeoutNow().getTerm());
+            case MESSAGE_NOT_SET -> throw new IllegalArgumentException("peer message not set");
         };
     }
 
-    static RaftProto.SnapshotHeader toProto(RaftMessage.InstallSnapshot install) {
-        var snapshot = install.snapshot();
-        return RaftProto.SnapshotHeader.newBuilder()
-            .setTerm(install.term())
+    static SnapshotHeader toProto(long term, SnapshotInfo info) {
+        var snapshot = info.metadata();
+        return SnapshotHeader.newBuilder()
+            .setTerm(term)
             .setSnapshotIndex(snapshot.index())
             .setSnapshotTerm(snapshot.term())
             .setMembership(toProto(snapshot.membership()))
+            .setSizeBytes(info.size())
+            .setCrc32C(info.checksum())
             .build();
     }
 
-    static RaftMessage.InstallSnapshot fromProto(RaftProto.SnapshotHeader proto) {
-        return new RaftMessage.InstallSnapshot(
-            proto.getTerm(),
-            new SnapshotMetadata(proto.getSnapshotIndex(), proto.getSnapshotTerm(), fromProto(proto.getMembership()))
-        );
+    static SnapshotInfo fromProto(SnapshotHeader proto) {
+        var metadata = new SnapshotMetadata(proto.getSnapshotIndex(), proto.getSnapshotTerm(), fromProto(proto.getMembership()));
+        return new SnapshotInfo(metadata, proto.getSizeBytes(), proto.getCrc32C());
     }
 
-    private static RaftProto.LogEntry toProto(RaftLogEntry entry) {
-        var builder = RaftProto.LogEntry.newBuilder().setIndex(entry.index()).setTerm(entry.term());
+    private static io.partdb.server.peer.proto.LogEntry toProto(LogEntry entry) {
+        var builder = io.partdb.server.peer.proto.LogEntry.newBuilder().setIndex(entry.index()).setTerm(entry.term());
         switch (entry) {
-            case RaftLogEntry.Command command -> builder.setCommand(UnsafeByteOperations.unsafeWrap(command.command().asReadOnlyByteBuffer()));
-            case RaftLogEntry.NoOp _ -> builder.setNoOp(true);
-            case RaftLogEntry.Membership membership -> builder.setMembership(toProto(membership.membership()));
+            case LogEntry.Command command -> builder.setCommand(UnsafeByteOperations.unsafeWrap(command.command().asReadOnlyByteBuffer()));
+            case LogEntry.NoOp _ -> builder.setNoOp(NoOp.getDefaultInstance());
+            case LogEntry.Configuration configuration -> builder.setConfiguration(toProto(configuration.membership()));
         }
         return builder.build();
     }
 
-    private static RaftLogEntry fromProto(RaftProto.LogEntry proto) {
+    private static LogEntry fromProto(io.partdb.server.peer.proto.LogEntry proto) {
         return switch (proto.getEntryCase()) {
-            case COMMAND -> new RaftLogEntry.Command(proto.getIndex(), proto.getTerm(), Bytes.copyOf(proto.getCommand().asReadOnlyByteBuffer()));
-            case NO_OP -> new RaftLogEntry.NoOp(proto.getIndex(), proto.getTerm());
-            case MEMBERSHIP -> new RaftLogEntry.Membership(proto.getIndex(), proto.getTerm(), fromProto(proto.getMembership()));
-            case ENTRY_NOT_SET -> throw new IllegalArgumentException("raft log entry not set");
+            case COMMAND -> new LogEntry.Command(proto.getIndex(), proto.getTerm(), Bytes.copyOf(proto.getCommand().asReadOnlyByteBuffer()));
+            case NO_OP -> new LogEntry.NoOp(proto.getIndex(), proto.getTerm());
+            case CONFIGURATION -> new LogEntry.Configuration(proto.getIndex(), proto.getTerm(), fromProto(proto.getConfiguration()));
+            case ENTRY_NOT_SET -> throw new IllegalArgumentException("log entry not set");
         };
     }
 
-    private static RaftProto.Membership toProto(RaftMembership membership) {
-        return RaftProto.Membership.newBuilder()
-            .addAllVoters(membership.voters())
-            .addAllLearners(membership.learners())
+    private static io.partdb.server.peer.proto.Membership toProto(Membership membership) {
+        return io.partdb.server.peer.proto.Membership.newBuilder()
+            .addAllVoters(membership.voters().stream().map(NodeId::value).toList())
+            .addAllLearners(membership.learners().stream().map(NodeId::value).toList())
             .build();
     }
 
-    private static RaftMembership fromProto(RaftProto.Membership proto) {
-        return RaftMembership.of(Set.copyOf(proto.getVotersList()), Set.copyOf(proto.getLearnersList()));
+    private static Membership fromProto(io.partdb.server.peer.proto.Membership proto) {
+        return Membership.of(
+            proto.getVotersList().stream().map(NodeId::new).collect(Collectors.toSet()),
+            proto.getLearnersList().stream().map(NodeId::new).collect(Collectors.toSet())
+        );
     }
 }

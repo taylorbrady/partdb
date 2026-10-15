@@ -2,196 +2,113 @@ package io.partdb.raft.runtime;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.raft.Envelope;
+import io.partdb.raft.HardState;
+import io.partdb.raft.Input;
+import io.partdb.raft.LogEntry;
+import io.partdb.raft.Membership;
 import io.partdb.raft.MembershipChange;
+import io.partdb.raft.NodeId;
 import io.partdb.raft.Raft;
-import io.partdb.raft.RaftEffects;
-import io.partdb.raft.RaftEffects.ProposalResult;
-import io.partdb.raft.RaftEffects.ReadResult;
-import io.partdb.raft.RaftHardState;
-import io.partdb.raft.RaftInput;
-import io.partdb.raft.RaftLogEntry;
-import io.partdb.raft.RaftMembership;
-import io.partdb.raft.RaftMessage;
-import io.partdb.raft.RaftRole;
+import io.partdb.raft.Ready;
+import io.partdb.raft.Role;
 import io.partdb.raft.SnapshotMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.io.UncheckedIOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.SplittableRandom;
-import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.function.LongFunction;
 import java.util.stream.Stream;
+import java.util.zip.CRC32C;
+import java.util.zip.CheckedInputStream;
 
-public final class RaftRuntime implements AutoCloseable {
+public final class RaftRuntime<R> implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(RaftRuntime.class);
     private static final Executor CALLBACKS = Thread::startVirtualThread;
     private static final long BOOTSTRAP_TERM = 1;
     private static final int MAX_BATCH = 4096;
 
-    private sealed interface Event {
-        record Input(RaftInput input) implements Event {}
-
-        record Propose(Bytes command, CompletableFuture<Bytes> future) implements Event {}
-
-        record Read(CompletableFuture<Long> future) implements Event {}
-
-        record ChangeMembership(MembershipChange change, CompletableFuture<RaftMembership> future) implements Event {}
-
-        record Transfer(String target, CompletableFuture<Void> future) implements Event {}
-
-        record SnapshotReceived(String from, RaftMessage.InstallSnapshot request, Path payload) implements Event {}
-
-        record SnapshotDelivered(String peer, boolean delivered) implements Event {}
-
-        record SnapshotCreated(Path payload, long index, Throwable failure) implements Event {}
-
-        record Shutdown() implements Event {}
-    }
-
-    private sealed interface PendingCommit {
-        long term();
-
-        void fail(RuntimeException error);
-    }
-
-    private record PendingCommand(long term, CompletableFuture<Bytes> future) implements PendingCommit {
-        @Override
-        public void fail(RuntimeException error) {
-            future.completeExceptionally(error);
-        }
-    }
-
-    private record PendingMembership(long term, CompletableFuture<RaftMembership> future) implements PendingCommit {
-        @Override
-        public void fail(RuntimeException error) {
-            future.completeExceptionally(error);
-        }
-    }
-
-    private record PendingTransfer(String target, long deadline, CompletableFuture<Void> future) {}
-
-    private record SnapshotTask(Path payload, CompletableFuture<Long> index) {}
-
-    private final String nodeId;
+    private final NodeId nodeId;
     private final long tickNanos;
-    private final long transferTimeoutNanos;
-    private final long snapshotThreshold;
     private final Raft raft;
-    private final FileRaftStorage storage;
+    private final LogStore storage;
     private final RaftTransport transport;
-    private final StateMachine stateMachine;
-    private final ApplyTracker applied = new ApplyTracker();
-    private final LinkedBlockingQueue<Event> events = new LinkedBlockingQueue<>();
+    private final StateMachine<R> stateMachine;
+    private final Requests requests;
+    private final Snapshots snapshots;
+    private final LinkedBlockingQueue<LoopEvent> events = new LinkedBlockingQueue<>();
 
-    private final Map<Long, CompletableFuture<Bytes>> proposals = new HashMap<>();
-    private final Map<Long, CompletableFuture<RaftMembership>> membershipChanges = new HashMap<>();
-    private final Map<Long, CompletableFuture<Long>> reads = new HashMap<>();
-    private final NavigableMap<Long, PendingCommit> commits = new TreeMap<>();
-    private final List<PendingTransfer> transfers = new ArrayList<>();
-    private final Map<Long, Path> stagedSnapshots = new HashMap<>();
-    private final Set<String> snapshotTransfers = new HashSet<>();
-    private final NavigableMap<Long, RaftMembership> membershipHistory = new TreeMap<>();
-
-    private long requestIds;
-    private long snapshotIndex;
-    private SnapshotTask snapshotTask;
-    private RaftHardState syncedState;
-    private RaftRole lastRole;
-    private Optional<String> lastLeader;
+    private HardState syncedState;
+    private Role lastRole;
+    private Optional<NodeId> lastLeader;
     private Instant lastLeaderChange;
     private volatile boolean running = true;
     private volatile RaftStatus status;
-    private volatile RaftMembership membership;
+    private volatile Membership membership;
     private Thread loop;
 
-    private RaftRuntime(RaftConfig config, Raft raft, FileRaftStorage storage, RaftTransport transport, StateMachine stateMachine) {
+    private RaftRuntime(RaftConfig config, Raft raft, LogStore storage, RaftTransport transport, StateMachine<R> stateMachine) {
         this.nodeId = config.nodeId();
         this.tickNanos = config.tickInterval().toNanos();
-        this.transferTimeoutNanos = 2L * config.options().electionTicks() * tickNanos;
-        this.snapshotThreshold = config.snapshotThreshold();
         this.raft = raft;
         this.storage = storage;
         this.transport = transport;
         this.stateMachine = stateMachine;
+        this.requests = new Requests(raft.appliedIndex());
+        this.snapshots = new Snapshots(nodeId, storage, stateMachine, transport, config.snapshots(), CALLBACKS, this::enqueue);
         this.syncedState = storage.hardState();
         this.lastRole = raft.role();
         this.lastLeader = raft.leaderId();
-        this.snapshotIndex = storage.firstIndex() - 1;
-        membershipHistory.put(snapshotIndex, storage.snapshot()
-            .map(file -> file.metadata().membership())
-            .orElse(config.initialMembership()));
-        if (raft.appliedIndex() > snapshotIndex) {
-            for (RaftLogEntry entry : storage.entries(snapshotIndex + 1, raft.appliedIndex() + 1, Long.MAX_VALUE)) {
-                if (entry instanceof RaftLogEntry.Membership(long index, _, var next)) {
-                    membershipHistory.put(index, next);
-                }
-            }
-        }
-        applied.advance(raft.appliedIndex());
     }
 
-    public static RaftRuntime open(Path directory, RaftConfig config, RaftTransport transport, StateMachine stateMachine) {
+    public static <R> RaftRuntime<R> open(Path directory, RaftConfig config, RaftTransport transport, StateMachine<R> stateMachine) {
         Objects.requireNonNull(directory, "directory must not be null");
         Objects.requireNonNull(config, "config must not be null");
         Objects.requireNonNull(transport, "transport must not be null");
         Objects.requireNonNull(stateMachine, "stateMachine must not be null");
 
-        FileRaftStorage storage = null;
+        LogStore storage = null;
         try {
-            storage = FileRaftStorage.open(directory);
+            storage = LogStore.open(directory);
+            var cluster = clusterFile(directory, config, storage);
             var snapshot = storage.snapshot();
             long snapshotIndex = snapshot.map(file -> file.metadata().index()).orElse(0L);
             if (snapshot.isPresent() && stateMachine.appliedIndex() < snapshotIndex) {
-                restore(stateMachine, snapshot.get());
+                Snapshots.restore(stateMachine, snapshot.get());
             }
             var raft = Raft.recover(
                 config.nodeId(),
-                snapshot.map(file -> file.metadata().membership()).orElse(config.initialMembership()),
+                snapshot.map(file -> file.metadata().membership()).orElse(cluster.initialMembership()),
                 config.options(),
                 storage,
                 storage.hardState(),
                 Math.max(stateMachine.appliedIndex(), snapshotIndex),
                 new SplittableRandom()
             );
-            var runtime = new RaftRuntime(config, raft, storage, transport, stateMachine);
-            runtime.processReady();
-            runtime.publishStatus();
+            var runtime = new RaftRuntime<>(config, raft, storage, transport, stateMachine);
             runtime.start();
             return runtime;
         } catch (RuntimeException e) {
             if (storage != null) {
                 storage.close();
             }
-            transport.close();
             throw e;
         }
     }
@@ -200,8 +117,8 @@ public final class RaftRuntime implements AutoCloseable {
         Objects.requireNonNull(directory, "directory must not be null");
         Objects.requireNonNull(config, "config must not be null");
         Objects.requireNonNull(snapshot, "snapshot must not be null");
-        if (index < 0) {
-            throw new IllegalArgumentException("index must not be negative");
+        if (index <= 0) {
+            throw new IllegalArgumentException("index must be positive");
         }
         try {
             if (Files.exists(directory)) {
@@ -215,48 +132,51 @@ public final class RaftRuntime implements AutoCloseable {
         } catch (IOException e) {
             throw new UncheckedIOException("failed to prepare raft directory " + directory, e);
         }
-        if (index == 0) {
-            return;
-        }
-        try (var storage = FileRaftStorage.open(directory)) {
+        new ClusterFile(config.clusterId(), config.initialMembership()).write(directory);
+        try (var storage = LogStore.open(directory)) {
             Path staged = storage.stagingFile();
-            Files.copy(snapshot, staged, StandardCopyOption.REPLACE_EXISTING);
-            storage.installSnapshot(new SnapshotMetadata(index, BOOTSTRAP_TERM, config.initialMembership()), staged);
-            storage.append(Optional.of(new RaftHardState(BOOTSTRAP_TERM, Optional.empty(), index)), List.of());
+            var crc = new CRC32C();
+            try (InputStream in = new CheckedInputStream(Files.newInputStream(snapshot), crc);
+                 var out = Files.newOutputStream(staged, StandardOpenOption.TRUNCATE_EXISTING)) {
+                in.transferTo(out);
+            }
+            storage.installSnapshot(new SnapshotMetadata(index, BOOTSTRAP_TERM, config.initialMembership()), staged, (int) crc.getValue());
+            storage.append(Optional.of(new HardState(BOOTSTRAP_TERM, Optional.empty(), index)), List.of());
             storage.sync();
         } catch (IOException e) {
             throw new UncheckedIOException("failed to stage bootstrap snapshot " + snapshot, e);
         }
     }
 
-    public CompletionStage<Bytes> propose(Bytes command) {
+    @SuppressWarnings("unchecked")
+    public CompletionStage<R> propose(Bytes command) {
         Objects.requireNonNull(command, "command must not be null");
-        var future = new CompletableFuture<Bytes>();
-        return submit(new Event.Propose(command, future), future);
+        var pending = new Requests.Pending.Proposal(new CompletableFuture<>());
+        return submit(pending, id -> new Input.Propose(id, command)).thenApply(result -> (R) result);
     }
 
     public CompletionStage<Long> readBarrier() {
-        var future = new CompletableFuture<Long>();
-        return submit(new Event.Read(future), future);
+        var pending = new Requests.Pending.Read(new CompletableFuture<>());
+        return submit(pending, Input.ReadIndex::new);
     }
 
-    public CompletionStage<RaftMembership> changeMembership(MembershipChange change) {
+    public CompletionStage<Membership> changeMembership(MembershipChange change) {
         Objects.requireNonNull(change, "change must not be null");
-        var future = new CompletableFuture<RaftMembership>();
-        return submit(new Event.ChangeMembership(change, future), future);
+        var pending = new Requests.Pending.Change(new CompletableFuture<>());
+        return submit(pending, id -> new Input.ChangeMembership(id, change));
     }
 
-    public CompletionStage<Void> transferLeadership(String target) {
+    public CompletionStage<Void> transferLeadership(NodeId target) {
         Objects.requireNonNull(target, "target must not be null");
-        var future = new CompletableFuture<Void>();
-        return submit(new Event.Transfer(target, future), future);
+        var pending = new Requests.Pending.Transfer(new CompletableFuture<>());
+        return submit(pending, id -> new Input.TransferLeadership(id, target));
     }
 
     public RaftStatus status() {
         return status;
     }
 
-    public RaftMembership membership() {
+    public Membership membership() {
         return membership;
     }
 
@@ -266,37 +186,57 @@ public final class RaftRuntime implements AutoCloseable {
             return;
         }
         running = false;
-        events.add(new Event.Shutdown());
+        events.add(new LoopEvent.Shutdown());
         try {
             loop.join();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        transport.close();
         failPending(new RaftException.Closed());
-        stagedSnapshots.values().forEach(RaftRuntime::deleteQuietly);
+        snapshots.discardStaged();
         storage.close();
         publishStatus();
     }
 
-    private <T> CompletionStage<T> submit(Event event, CompletableFuture<T> future) {
+    @SuppressWarnings("unchecked")
+    private <T> CompletionStage<T> submit(Requests.Pending pending, LongFunction<Input> input) {
+        var future = (CompletableFuture<T>) pending.future();
         if (!running) {
             return CompletableFuture.failedFuture(new RaftException.Closed());
         }
-        events.add(event);
+        events.add(new LoopEvent.Submit(pending, input));
         if (!running) {
             future.completeExceptionally(new RaftException.Closed());
         }
         return future.thenApplyAsync(Function.identity(), CALLBACKS);
     }
 
+    private void enqueue(LoopEvent event) {
+        if (running) {
+            events.add(event);
+            return;
+        }
+        switch (event) {
+            case LoopEvent.SnapshotReceived received -> Snapshots.deleteQuietly(received.payload());
+            case LoopEvent.SnapshotCreated created -> Snapshots.deleteQuietly(created.payload());
+            default -> {}
+        }
+    }
+
     private void start() {
+        try {
+            transport.start(new Receiver());
+            processReady();
+            publishStatus();
+        } catch (RuntimeException e) {
+            running = false;
+            throw e;
+        }
         loop = Thread.ofVirtual().name("raft-" + nodeId).start(this::run);
-        transport.start(new Receiver());
     }
 
     private void run() {
-        var batch = new ArrayList<Event>();
+        var batch = new ArrayList<LoopEvent>();
         long nextTick = System.nanoTime() + tickNanos;
         try {
             while (running) {
@@ -306,19 +246,18 @@ public final class RaftRuntime implements AutoCloseable {
                     batch.add(event);
                     events.drainTo(batch, MAX_BATCH);
                 }
-                for (Event next : batch) {
+                for (LoopEvent next : batch) {
                     handle(next);
                 }
                 batch.clear();
                 long now = System.nanoTime();
                 if (now - nextTick >= 0) {
-                    raft.step(new RaftInput.Tick());
+                    raft.step(new Input.Tick());
                     nextTick = now + tickNanos;
                 }
                 processReady();
-                discardUnusedSnapshots();
-                maybeSnapshot();
-                resolveTransfers(now);
+                snapshots.discardStaged();
+                snapshots.maybeCreate(requests.applied());
                 observeLeadership();
                 publishStatus();
             }
@@ -332,276 +271,68 @@ public final class RaftRuntime implements AutoCloseable {
         }
     }
 
-    private void handle(Event event) {
+    private void handle(LoopEvent event) {
         switch (event) {
-            case Event.Input(var input) -> raft.step(input);
-            case Event.Propose(var command, var future) -> {
-                long id = ++requestIds;
-                proposals.put(id, future);
-                raft.step(new RaftInput.Propose(id, command));
+            case LoopEvent.Step(var input) -> raft.step(input);
+            case LoopEvent.Submit(var pending, var input) -> raft.step(input.apply(requests.register(pending)));
+            case LoopEvent.SnapshotReceived received -> {
+                snapshots.received(received);
+                raft.step(new Input.InstallSnapshot(received.from(), received.term(), received.info().metadata()));
             }
-            case Event.Read(var future) -> {
-                long id = ++requestIds;
-                reads.put(id, future);
-                raft.step(new RaftInput.ReadIndex(id));
+            case LoopEvent.SnapshotDelivered(var peer, boolean delivered) -> {
+                snapshots.delivered(peer);
+                raft.step(delivered ? new Input.SnapshotSent(peer) : new Input.SnapshotFailed(peer));
             }
-            case Event.ChangeMembership(var change, var future) -> {
-                var invalid = validate(change);
-                if (invalid.isPresent()) {
-                    future.completeExceptionally(invalid.get());
-                    return;
-                }
-                long id = ++requestIds;
-                membershipChanges.put(id, future);
-                raft.step(new RaftInput.ChangeMembership(id, change));
-            }
-            case Event.Transfer(var target, var future) -> transfer(target, future);
-            case Event.SnapshotReceived(var from, var request, var payload) -> {
-                var previous = stagedSnapshots.put(request.snapshot().index(), payload);
-                if (previous != null) {
-                    deleteQuietly(previous);
-                }
-                raft.step(new RaftInput.Receive(from, request));
-            }
-            case Event.SnapshotDelivered(var peer, boolean delivered) -> {
-                snapshotTransfers.remove(peer);
-                raft.step(delivered ? new RaftInput.SnapshotSent(peer) : new RaftInput.SnapshotFailed(peer));
-            }
-            case Event.SnapshotCreated(var payload, long index, var failure) -> compact(payload, index, failure);
-            case Event.Shutdown() -> {
+            case LoopEvent.SnapshotCreated created -> snapshots.created(created, raft);
+            case LoopEvent.Shutdown() -> {
             }
         }
     }
 
     private void processReady() {
-        for (var effects = raft.ready(); !effects.isEmpty(); effects = raft.ready()) {
-            effects.snapshot().ifPresent(this::installSnapshot);
-            persist(effects);
-            effects.messages().forEach(transport::send);
-            effects.proposals().forEach(this::resolveProposal);
-            for (RaftLogEntry entry : effects.committed()) {
+        for (var ready = raft.ready(); !ready.isEmpty(); ready = raft.ready()) {
+            ready.snapshot().ifPresent(this::installSnapshot);
+            persist(ready);
+            ready.messages().forEach(transport::send);
+            ready.outcomes().forEach(requests::resolve);
+            for (LogEntry entry : ready.committed()) {
                 apply(entry);
             }
-            if (!effects.committed().isEmpty()) {
-                applied.advance(effects.committed().getLast().index());
-            }
-            effects.reads().forEach(this::resolveRead);
-            effects.snapshotRequests().forEach(this::sendSnapshot);
-            effects.persisted().ifPresent(raft::step);
+            ready.snapshotRequests().forEach(peer -> snapshots.send(peer, raft.term()));
+            ready.persisted().ifPresent(raft::step);
         }
     }
 
-    private void persist(RaftEffects effects) {
-        if (effects.entries().isEmpty() && effects.hardState().isEmpty()) {
+    private void persist(Ready ready) {
+        if (ready.entries().isEmpty() && ready.hardState().isEmpty()) {
             return;
         }
-        storage.append(effects.hardState(), effects.entries());
-        var state = effects.hardState().orElse(syncedState);
+        storage.append(ready.hardState(), ready.entries());
+        var state = ready.hardState().orElse(syncedState);
         boolean voteChanged = state.term() != syncedState.term() || !state.votedFor().equals(syncedState.votedFor());
-        if (!effects.entries().isEmpty() || voteChanged) {
+        if (!ready.entries().isEmpty() || voteChanged) {
             storage.sync();
         }
         syncedState = state;
     }
 
     private void installSnapshot(SnapshotMetadata metadata) {
-        Path staged = stagedSnapshots.remove(metadata.index());
-        if (staged == null) {
-            throw new IllegalStateException("raft accepted snapshot " + metadata.index() + " without a payload");
-        }
-        if (snapshotTask != null) {
-            snapshotTask.index().handle((_, _) -> null).join();
-        }
-        storage.installSnapshot(metadata, staged);
-        restore(stateMachine, storage.snapshot().orElseThrow());
-        snapshotIndex = metadata.index();
-        membershipHistory.clear();
-        membershipHistory.put(metadata.index(), metadata.membership());
-        var superseded = commits.headMap(metadata.index(), true);
-        superseded.forEach((index, pending) -> pending.fail(new RaftException.OutcomeUnknown(index)));
-        superseded.clear();
-        applied.advance(metadata.index());
+        snapshots.install(metadata);
+        requests.superseded(metadata.index());
     }
 
-    private void resolveProposal(ProposalResult result) {
-        switch (result) {
-            case ProposalResult.Accepted(long id, long index, long term) -> {
-                var proposal = proposals.remove(id);
-                if (proposal != null) {
-                    commits.put(index, new PendingCommand(term, proposal));
-                }
-                var change = membershipChanges.remove(id);
-                if (change != null) {
-                    commits.put(index, new PendingMembership(term, change));
-                }
-            }
-            case ProposalResult.Rejected(long id) -> {
-                var proposal = proposals.remove(id);
-                if (proposal != null) {
-                    proposal.completeExceptionally(notLeader());
-                }
-                var change = membershipChanges.remove(id);
-                if (change != null) {
-                    change.completeExceptionally(raft.role() == RaftRole.LEADER
-                        ? new IllegalStateException("the leader cannot change membership until its previous change and an entry of its term are committed")
-                        : notLeader());
-                }
-            }
-        }
-    }
-
-    private void apply(RaftLogEntry entry) {
-        var pending = commits.remove(entry.index());
-        boolean ours = pending != null && pending.term() == entry.term();
+    private void apply(LogEntry entry) {
         switch (entry) {
-            case RaftLogEntry.Command command -> {
-                Bytes result = stateMachine.apply(command.index(), command.command());
-                if (ours && pending instanceof PendingCommand(_, var future)) {
-                    future.complete(result);
-                    return;
-                }
-            }
-            case RaftLogEntry.Membership change -> {
-                membershipHistory.put(change.index(), change.membership());
-                if (ours && pending instanceof PendingMembership(_, var future)) {
-                    future.complete(change.membership());
-                    return;
-                }
-            }
-            case RaftLogEntry.NoOp _ -> {
+            case LogEntry.Command command -> requests.applied(entry, Optional.ofNullable(stateMachine.apply(command.index(), command.command())));
+            case LogEntry.Configuration _, LogEntry.NoOp _ -> {
+                stateMachine.skip(entry.index());
+                requests.applied(entry, Optional.empty());
             }
         }
-        if (pending != null) {
-            pending.fail(notLeader());
-        }
-    }
-
-    private void resolveRead(ReadResult result) {
-        var future = reads.remove(result.id());
-        if (future == null) {
-            return;
-        }
-        switch (result) {
-            case ReadResult.Confirmed(_, long index) -> applied.waitFor(index).whenComplete((value, error) -> {
-                if (error != null) {
-                    future.completeExceptionally(error);
-                } else {
-                    future.complete(value);
-                }
-            });
-            case ReadResult.Rejected _ -> future.completeExceptionally(notLeader());
-        }
-    }
-
-    private Optional<RuntimeException> validate(MembershipChange change) {
-        if (raft.role() != RaftRole.LEADER) {
-            return Optional.empty();
-        }
-        if (change.revokesVote(nodeId)) {
-            return Optional.of(new IllegalArgumentException("transfer leadership before removing or demoting the leader"));
-        }
-        try {
-            raft.membership().apply(change);
-            return Optional.empty();
-        } catch (IllegalArgumentException e) {
-            return Optional.of(e);
-        }
-    }
-
-    private void transfer(String target, CompletableFuture<Void> future) {
-        if (raft.role() != RaftRole.LEADER) {
-            future.completeExceptionally(notLeader());
-        } else if (!raft.membership().isVoter(target)) {
-            future.completeExceptionally(new IllegalArgumentException(target + " is not a voter"));
-        } else if (target.equals(nodeId)) {
-            future.complete(null);
-        } else {
-            raft.step(new RaftInput.TransferLeadership(target));
-            transfers.add(new PendingTransfer(target, System.nanoTime() + transferTimeoutNanos, future));
-        }
-    }
-
-    private void resolveTransfers(long now) {
-        var iterator = transfers.iterator();
-        while (iterator.hasNext()) {
-            var transfer = iterator.next();
-            if (raft.leaderId().filter(transfer.target()::equals).isPresent()) {
-                transfer.future().complete(null);
-                iterator.remove();
-            } else if (now - transfer.deadline() >= 0) {
-                transfer.future().completeExceptionally(new RaftException.TransferTimedOut(transfer.target()));
-                iterator.remove();
-            }
-        }
-    }
-
-    private void sendSnapshot(String peer) {
-        var snapshot = storage.snapshot().orElseThrow(() -> new IllegalStateException("raft requested a snapshot that does not exist"));
-        if (!snapshotTransfers.add(peer)) {
-            return;
-        }
-        var request = new RaftMessage.InstallSnapshot(raft.term(), snapshot.metadata());
-        transport.sendSnapshot(peer, request, snapshot.payload()).whenComplete((_, error) -> {
-            if (error != null) {
-                log.atDebug().addKeyValue("nodeId", nodeId).addKeyValue("peer", peer).setCause(error).log("Snapshot transfer failed");
-            }
-            events.add(new Event.SnapshotDelivered(peer, error == null));
-        });
-    }
-
-    private void maybeSnapshot() {
-        if (snapshotTask != null || applied.lastApplied() - snapshotIndex < snapshotThreshold) {
-            return;
-        }
-        Path payload = storage.stagingFile();
-        var index = CompletableFuture.supplyAsync(() -> writeSnapshot(payload), CALLBACKS);
-        snapshotTask = new SnapshotTask(payload, index);
-        index.whenComplete((value, error) -> events.add(new Event.SnapshotCreated(payload, error == null ? value : 0, error)));
-    }
-
-    private long writeSnapshot(Path payload) {
-        try (FileChannel channel = FileChannel.open(payload, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-            OutputStream out = new BufferedOutputStream(Channels.newOutputStream(channel));
-            long index = stateMachine.snapshot(out);
-            out.flush();
-            channel.force(true);
-            return index;
-        } catch (IOException e) {
-            throw new UncheckedIOException("failed to write snapshot " + payload, e);
-        }
-    }
-
-    private void compact(Path payload, long index, Throwable failure) {
-        if (snapshotTask != null && snapshotTask.payload().equals(payload)) {
-            snapshotTask = null;
-        }
-        if (failure != null) {
-            log.atWarn().addKeyValue("nodeId", nodeId).setCause(failure).log("Snapshot failed");
-            deleteQuietly(payload);
-            return;
-        }
-        if (index <= snapshotIndex) {
-            deleteQuietly(payload);
-            return;
-        }
-        var metadata = new SnapshotMetadata(index, storage.term(index), membershipHistory.floorEntry(index).getValue());
-        storage.compact(metadata, payload);
-        snapshotIndex = index;
-        membershipHistory.headMap(membershipHistory.floorKey(index), false).clear();
-        log.atDebug().addKeyValue("nodeId", nodeId).addKeyValue("index", index).log("Compacted raft log");
-    }
-
-    private void discardUnusedSnapshots() {
-        stagedSnapshots.values().forEach(RaftRuntime::deleteQuietly);
-        stagedSnapshots.clear();
-    }
-
-    private RaftException.NotLeader notLeader() {
-        return new RaftException.NotLeader(raft.leaderId());
     }
 
     private void observeLeadership() {
-        RaftRole role = raft.role();
+        Role role = raft.role();
         var leader = raft.leaderId();
         if (role == lastRole && leader.equals(lastLeader)) {
             return;
@@ -615,12 +346,12 @@ public final class RaftRuntime implements AutoCloseable {
             .log("Raft role changed");
 
         var event = new LeaderChangeEvent();
-        event.nodeId = nodeId;
+        event.nodeId = nodeId.value();
         event.term = raft.term();
         event.previousRole = lastRole.name();
         event.newRole = role.name();
-        event.previousLeaderId = lastLeader.orElse(null);
-        event.newLeaderId = leader.orElse(null);
+        event.previousLeaderId = lastLeader.map(NodeId::value).orElse(null);
+        event.newLeaderId = leader.map(NodeId::value).orElse(null);
         event.commit();
 
         lastRole = role;
@@ -636,118 +367,65 @@ public final class RaftRuntime implements AutoCloseable {
             raft.term(),
             raft.leaderId(),
             raft.commitIndex(),
-            applied.lastApplied(),
-            snapshotIndex,
+            requests.applied(),
+            snapshots.snapshotIndex(),
             Optional.ofNullable(lastLeaderChange),
             running
         );
     }
 
     private void failPending(RuntimeException error) {
-        proposals.values().forEach(future -> future.completeExceptionally(error));
-        proposals.clear();
-        membershipChanges.values().forEach(future -> future.completeExceptionally(error));
-        membershipChanges.clear();
-        reads.values().forEach(future -> future.completeExceptionally(error));
-        reads.clear();
-        commits.values().forEach(pending -> pending.fail(error));
-        commits.clear();
-        transfers.forEach(transfer -> transfer.future().completeExceptionally(error));
-        transfers.clear();
-        applied.failAll(error);
-        for (Event event; (event = events.poll()) != null; ) {
+        requests.failAll(error);
+        for (LoopEvent event; (event = events.poll()) != null; ) {
             switch (event) {
-                case Event.Propose(_, var future) -> future.completeExceptionally(error);
-                case Event.Read(var future) -> future.completeExceptionally(error);
-                case Event.ChangeMembership(_, var future) -> future.completeExceptionally(error);
-                case Event.Transfer(_, var future) -> future.completeExceptionally(error);
-                case Event.SnapshotReceived(_, _, var payload) -> deleteQuietly(payload);
-                case Event.SnapshotCreated(var payload, _, _) -> deleteQuietly(payload);
-                case Event.Input _, Event.SnapshotDelivered _, Event.Shutdown _ -> {
+                case LoopEvent.Submit(var pending, _) -> pending.future().completeExceptionally(error);
+                case LoopEvent.SnapshotReceived received -> Snapshots.deleteQuietly(received.payload());
+                case LoopEvent.SnapshotCreated created -> Snapshots.deleteQuietly(created.payload());
+                case LoopEvent.Step _, LoopEvent.SnapshotDelivered _, LoopEvent.Shutdown _ -> {
                 }
             }
         }
     }
 
-    private static void restore(StateMachine stateMachine, SnapshotStore.SnapshotFile snapshot) {
-        try (InputStream in = new BufferedInputStream(Files.newInputStream(snapshot.payload()))) {
-            stateMachine.restore(snapshot.metadata().index(), in);
-        } catch (IOException e) {
-            throw new UncheckedIOException("failed to restore snapshot " + snapshot.metadata().index(), e);
+    private static ClusterFile clusterFile(Path directory, RaftConfig config, LogStore storage) {
+        var existing = ClusterFile.read(directory);
+        if (existing.isEmpty()) {
+            if (!storage.isEmpty()) {
+                throw new RaftStorageException.Corruption("raft directory " + directory + " has a log but no cluster file");
+            }
+            var created = new ClusterFile(config.clusterId(), config.initialMembership());
+            created.write(directory);
+            return created;
         }
-    }
-
-    private static void deleteQuietly(Path path) {
-        try {
-            Files.deleteIfExists(path);
-        } catch (IOException e) {
-            log.atWarn().addKeyValue("path", path).setCause(e).log("Failed to delete staged snapshot");
+        var cluster = existing.get();
+        if (!cluster.clusterId().equals(config.clusterId())) {
+            throw new IllegalStateException(
+                "raft directory " + directory + " belongs to cluster " + cluster.clusterId() + ", not " + config.clusterId());
         }
+        return cluster;
     }
 
     private final class Receiver implements RaftTransport.Receiver {
         @Override
         public void receive(Envelope envelope) {
-            if (running && !(envelope.message() instanceof RaftMessage.InstallSnapshot)) {
-                events.add(new Event.Input(new RaftInput.Receive(envelope.from(), envelope.message())));
-            }
-        }
-
-        @Override
-        public RaftTransport.SnapshotReceiver receiveSnapshot(String from, RaftMessage.InstallSnapshot request) throws IOException {
-            if (!running) {
-                throw new RaftException.Closed();
-            }
-            return new StagedSnapshot(from, request, storage.stagingFile());
-        }
-
-        @Override
-        public void unreachable(String peer) {
             if (running) {
-                events.add(new Event.Input(new RaftInput.Unreachable(peer)));
-            }
-        }
-    }
-
-    private final class StagedSnapshot implements RaftTransport.SnapshotReceiver {
-        private final String from;
-        private final RaftMessage.InstallSnapshot request;
-        private final Path path;
-        private final FileChannel channel;
-
-        private StagedSnapshot(String from, RaftMessage.InstallSnapshot request, Path path) throws IOException {
-            this.from = from;
-            this.request = request;
-            this.path = path;
-            this.channel = FileChannel.open(path, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
-        }
-
-        @Override
-        public void write(ByteBuffer chunk) throws IOException {
-            while (chunk.hasRemaining()) {
-                channel.write(chunk);
+                events.add(new LoopEvent.Step(new Input.Receive(envelope.from(), envelope.message())));
             }
         }
 
         @Override
-        public void complete() throws IOException {
-            channel.force(true);
-            channel.close();
+        public RaftTransport.SnapshotSink receiveSnapshot(NodeId from, long term, SnapshotInfo snapshot) throws IOException {
             if (!running) {
-                deleteQuietly(path);
                 throw new RaftException.Closed();
             }
-            events.add(new Event.SnapshotReceived(from, request, path));
+            return snapshots.stage(from, term, snapshot);
         }
 
         @Override
-        public void abort() {
-            try {
-                channel.close();
-            } catch (IOException e) {
-                log.atDebug().setCause(e).log("Failed to close staged snapshot");
+        public void unreachable(NodeId peer) {
+            if (running) {
+                events.add(new LoopEvent.Step(new Input.Unreachable(peer)));
             }
-            deleteQuietly(path);
         }
     }
 }

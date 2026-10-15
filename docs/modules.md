@@ -77,27 +77,38 @@ Role: Raft consensus, from the pure algorithm to the durable runtime.
 
 The module has two packages:
 
-- `io.partdb.raft` is the pure core. `Raft.step(RaftInput)` mutates state and
-  `Raft.ready()` drains everything that must happen next as one
-  `RaftEffects`: hard state, snapshot and entries to persist, messages to
-  send, committed entries to apply, proposal and read results, and snapshot
-  requests. Any number of inputs batch into one `ready`. The leader tracks
-  each peer with a `Progress` (probe, replicate with an inflight window,
-  snapshot), confirms reads with heartbeat rounds, and supports pre-vote,
-  check-quorum, learners, single-server membership changes, and leadership
-  transfer. It is deterministic and side-effect free; `RaftCorePurityTest`
-  keeps JDK IO, clocks, threads, and runtime imports out of it.
+- `io.partdb.raft` is the pure core. `Raft.step(Input)` mutates state and
+  `Raft.ready()` drains everything that must happen next as one `Ready`: hard
+  state, snapshot and entries to persist, messages to send, committed entries
+  to apply, request `Outcome`s, and snapshot requests. Every request (proposal,
+  read, membership change, leadership transfer) carries an id and ends in
+  exactly one outcome; a rejection names its `Rejection` reason. Any number of
+  inputs batch into one `ready`. The leader tracks each peer with a `Progress`
+  (probe, replicate with an inflight window, snapshot), confirms reads with
+  heartbeat rounds, and supports pre-vote, check-quorum, learners,
+  single-server membership changes that take effect when appended, leader
+  self-removal with hand-off once the change commits, and leadership transfer.
+  Nodes are named by `NodeId`. It is deterministic and side-effect free;
+  `RaftCorePurityTest` keeps JDK IO, clocks, threads, and runtime imports out
+  of it.
 - `io.partdb.raft.runtime` drives the core from one virtual-thread event loop:
   it persists each `ready` with one sync, sends one-way messages through the
-  `RaftTransport` SPI, applies committed entries to a `StateMachine`, and
-  completes proposals, read barriers, membership changes, and leadership
-  transfers. Storage is an append-only write-ahead log replayed into memory
-  plus file-based snapshots. Once the applied index runs `snapshotThreshold`
-  entries past the last snapshot, the runtime asks the `StateMachine` for a
-  point-in-time snapshot and compacts the log behind it; lagging peers
-  receive that snapshot as a stream.
+  `RaftTransport` SPI, applies committed entries to a `StateMachine<R>` (every
+  index reaches it: commands through `apply`, no-ops and configuration entries
+  through `skip`), and completes proposals, read barriers, membership changes,
+  and leadership transfers. `Requests` owns every pending future; `Snapshots`
+  owns snapshot creation, compaction, leased sending, staging, and install.
+  Storage is a versioned, checksummed write-ahead log replayed into memory plus
+  file-based snapshots with a payload CRC; every file create, rename, and
+  delete is followed by a directory sync. The first open records the cluster
+  id and initial membership in a `cluster` file; later opens use that record
+  and refuse a directory from another cluster. A `SnapshotPolicy` bounds the
+  in-memory log by entries and by bytes; when either is reached the runtime
+  asks the `StateMachine` for a point-in-time snapshot and compacts the log
+  behind it. Lagging peers receive that snapshot as a stream from a lease that
+  keeps the file alive until the transfer ends.
 
-Membership, role, and status are modeled once (`RaftMembership`, `RaftRole`,
+Membership, role, and status are modeled once (`Membership`, `Role`,
 `RaftStatus`) and used as-is by the node API.
 
 Allowed dependencies: `partdb-bytes`, SLF4J.
@@ -168,8 +179,11 @@ This is the one place gRPC is implemented on the server side:
   shut everything down in order.
 - `io.partdb.server.grpc` implements the public KV and cluster services.
 - `io.partdb.server.peer` implements `RaftTransport` over a private gRPC
-  protocol (`raft.proto`): one long-lived, flow-controlled message stream per
-  peer, plus chunked snapshot uploads.
+  protocol (`raft.proto`, package `partdb.peer.v1`): one long-lived,
+  flow-controlled message stream per peer, plus chunked snapshot uploads with
+  a size-scaled deadline. Every call carries the cluster id, sender, and
+  recipient; a peer rejects calls for another cluster or another node. The
+  server owns the transport and closes it after the node.
 
 Allowed dependencies: `partdb-node`, `partdb-grpc`, gRPC/protobuf libraries.
 

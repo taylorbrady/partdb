@@ -1,12 +1,12 @@
 package io.partdb.raft;
 
-import io.partdb.raft.RaftMessage.AppendEntries;
-import io.partdb.raft.RaftMessage.Heartbeat;
-import io.partdb.raft.RaftMessage.HeartbeatResponse;
-import io.partdb.raft.RaftMessage.PreVote;
-import io.partdb.raft.RaftMessage.PreVoteResponse;
-import io.partdb.raft.RaftMessage.RequestVote;
-import io.partdb.raft.RaftMessage.RequestVoteResponse;
+import io.partdb.raft.Message.AppendEntries;
+import io.partdb.raft.Message.Heartbeat;
+import io.partdb.raft.Message.HeartbeatResponse;
+import io.partdb.raft.Message.PreVote;
+import io.partdb.raft.Message.PreVoteResponse;
+import io.partdb.raft.Message.RequestVote;
+import io.partdb.raft.Message.RequestVoteResponse;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -26,7 +26,7 @@ class RaftElectionTest {
         void startsAsLeaderlessFollowerAtTermZero() {
             var node = TestNode.create("n1", "n1", "n2", "n3");
 
-            assertEquals(RaftRole.FOLLOWER, node.raft.role());
+            assertEquals(Role.FOLLOWER, node.raft.role());
             assertEquals(0, node.raft.term());
             assertTrue(node.raft.leaderId().isEmpty());
             assertEquals(0, node.raft.commitIndex());
@@ -40,11 +40,11 @@ class RaftElectionTest {
             var node = TestNode.create("n1", "n1", "n2", "n3");
 
             node.tick(TestNode.OPTIONS.electionTicks() - 1);
-            assertEquals(RaftRole.FOLLOWER, node.raft.role());
+            assertEquals(Role.FOLLOWER, node.raft.role());
 
             var output = node.tick(1);
 
-            assertEquals(RaftRole.PRE_CANDIDATE, node.raft.role());
+            assertEquals(Role.PRE_CANDIDATE, node.raft.role());
             assertEquals(0, node.raft.term());
             assertEquals(new PreVote(1, 0, 0), output.singleTo("n2", PreVote.class));
             assertEquals(new PreVote(1, 0, 0), output.singleTo("n3", PreVote.class));
@@ -58,10 +58,10 @@ class RaftElectionTest {
 
             var output = node.receive("n2", new PreVoteResponse(1, true));
 
-            assertEquals(RaftRole.CANDIDATE, node.raft.role());
+            assertEquals(Role.CANDIDATE, node.raft.role());
             assertEquals(1, node.raft.term());
             assertEquals(new RequestVote(1, 0, 0, false), output.singleTo("n2", RequestVote.class));
-            assertEquals(Optional.of("n1"), output.hardStates().getLast().votedFor());
+            assertEquals(Optional.of(Ids.id("n1")), output.hardStates().getLast().votedFor());
         }
 
         @Test
@@ -72,7 +72,7 @@ class RaftElectionTest {
             node.receive("n2", new PreVoteResponse(0, false));
             node.receive("n3", new PreVoteResponse(0, false));
 
-            assertEquals(RaftRole.FOLLOWER, node.raft.role());
+            assertEquals(Role.FOLLOWER, node.raft.role());
             assertEquals(0, node.raft.term());
         }
 
@@ -101,7 +101,7 @@ class RaftElectionTest {
         @Test
         void rejectsPreVoteFromCandidateWithStaleLog() {
             var node = TestNode.create("n1", "n1", "n2", "n3");
-            node.receive("n2", new AppendEntries(1, 0, 0, List.of(new RaftLogEntry.NoOp(1, 1)), 0));
+            node.receive("n2", new AppendEntries(1, 0, 0, List.of(new LogEntry.NoOp(1, 1)), 0));
             node.tick(2 * TestNode.OPTIONS.electionTicks());
 
             var output = node.receive("n3", new PreVote(2, 0, 0));
@@ -117,7 +117,7 @@ class RaftElectionTest {
             node.receive("n2", new PreVoteResponse(7, true));
             node.receive("n3", new PreVoteResponse(7, true));
 
-            assertEquals(RaftRole.PRE_CANDIDATE, node.raft.role());
+            assertEquals(Role.PRE_CANDIDATE, node.raft.role());
         }
     }
 
@@ -130,7 +130,7 @@ class RaftElectionTest {
             var output = node.receive("n2", new RequestVote(1, 0, 0, false));
 
             assertEquals(new RequestVoteResponse(1, true), output.single(RequestVoteResponse.class));
-            assertEquals(new RaftHardState(1, Optional.of("n2"), 0), output.hardStates().getLast());
+            assertEquals(new HardState(1, Optional.of(Ids.id("n2")), 0), output.hardStates().getLast());
         }
 
         @Test
@@ -156,7 +156,7 @@ class RaftElectionTest {
         @Test
         void rejectsCandidateWithStaleLog() {
             var node = TestNode.create("n1", "n1", "n2", "n3");
-            node.receive("n2", new AppendEntries(2, 0, 0, List.of(new RaftLogEntry.NoOp(1, 2)), 0));
+            node.receive("n2", new AppendEntries(2, 0, 0, List.of(new LogEntry.NoOp(1, 2)), 0));
             node.tick(2 * TestNode.OPTIONS.electionTicks());
 
             var output = node.receive("n3", new RequestVote(3, 5, 1, false));
@@ -207,11 +207,11 @@ class RaftElectionTest {
 
             var output = node.elect("n2", "n3");
 
-            assertEquals(RaftRole.LEADER, node.raft.role());
-            assertEquals(Optional.of("n1"), node.raft.leaderId());
-            assertEquals(List.of(new RaftLogEntry.NoOp(1, 1)), output.persisted());
+            assertEquals(Role.LEADER, node.raft.role());
+            assertEquals(Optional.of(Ids.id("n1")), node.raft.leaderId());
+            assertEquals(List.of(new LogEntry.NoOp(1, 1)), output.persisted());
             var append = output.singleTo("n2", AppendEntries.class);
-            assertEquals(new AppendEntries(1, 0, 0, List.of(new RaftLogEntry.NoOp(1, 1)), 0), append);
+            assertEquals(new AppendEntries(1, 0, 0, List.of(new LogEntry.NoOp(1, 1)), 0), append);
         }
 
         @Test
@@ -223,7 +223,7 @@ class RaftElectionTest {
             node.receive("n2", new RequestVoteResponse(1, false));
             node.receive("n3", new RequestVoteResponse(1, false));
 
-            assertEquals(RaftRole.FOLLOWER, node.raft.role());
+            assertEquals(Role.FOLLOWER, node.raft.role());
             assertEquals(1, node.raft.term());
         }
 
@@ -233,9 +233,9 @@ class RaftElectionTest {
 
             var output = node.campaign();
 
-            assertEquals(RaftRole.LEADER, node.raft.role());
+            assertEquals(Role.LEADER, node.raft.role());
             assertEquals(1, node.raft.term());
-            assertEquals(List.of(new RaftLogEntry.NoOp(1, 1)), output.committed());
+            assertEquals(List.of(new LogEntry.NoOp(1, 1)), output.committed());
         }
 
         @Test
@@ -246,7 +246,7 @@ class RaftElectionTest {
 
             var output = node.tick(2 * TestNode.OPTIONS.electionTicks());
 
-            assertEquals(RaftRole.PRE_CANDIDATE, node.raft.role());
+            assertEquals(Role.PRE_CANDIDATE, node.raft.role());
             assertEquals(1, node.raft.term());
             assertEquals(2, output.sentTo("n2", PreVote.class).getLast().term());
         }
@@ -254,15 +254,15 @@ class RaftElectionTest {
         @Test
         void electionTimeoutIsRandomized() {
             var log = new InMemoryRaftLog();
-            var raft = Raft.recover("n1", RaftMembership.voters("n1", "n2", "n3"), TestNode.OPTIONS, log,
-                RaftHardState.INITIAL, 0, TestNode.jitter(7));
+            var raft = Raft.recover(Ids.id("n1"), Ids.voters("n1", "n2", "n3"), TestNode.OPTIONS, log,
+                HardState.INITIAL, 0, TestNode.jitter(7));
 
             for (int i = 0; i < TestNode.OPTIONS.electionTicks() + 6; i++) {
-                raft.step(new RaftInput.Tick());
+                raft.step(new Input.Tick());
             }
-            assertEquals(RaftRole.FOLLOWER, raft.role());
-            raft.step(new RaftInput.Tick());
-            assertEquals(RaftRole.PRE_CANDIDATE, raft.role());
+            assertEquals(Role.FOLLOWER, raft.role());
+            raft.step(new Input.Tick());
+            assertEquals(Role.PRE_CANDIDATE, raft.role());
         }
 
         @Test
@@ -272,9 +272,9 @@ class RaftElectionTest {
 
             node.receive("n2", new Heartbeat(5, 0, 0));
 
-            assertEquals(RaftRole.FOLLOWER, node.raft.role());
+            assertEquals(Role.FOLLOWER, node.raft.role());
             assertEquals(5, node.raft.term());
-            assertEquals(Optional.of("n2"), node.raft.leaderId());
+            assertEquals(Optional.of(Ids.id("n2")), node.raft.leaderId());
         }
 
         @Test
@@ -284,7 +284,7 @@ class RaftElectionTest {
 
             node.tick(TestNode.OPTIONS.electionTicks());
 
-            assertEquals(RaftRole.FOLLOWER, node.raft.role());
+            assertEquals(Role.FOLLOWER, node.raft.role());
         }
 
         @Test
@@ -297,7 +297,7 @@ class RaftElectionTest {
                 node.receive("n2", new HeartbeatResponse(node.raft.term(), 0));
             }
 
-            assertEquals(RaftRole.LEADER, node.raft.role());
+            assertEquals(Role.LEADER, node.raft.role());
         }
 
         @Test
@@ -308,16 +308,16 @@ class RaftElectionTest {
             var output = node.receive("n3", new Heartbeat(2, 0, 0));
 
             assertEquals(new HeartbeatResponse(3, 0), output.single(HeartbeatResponse.class));
-            assertEquals(Optional.of("n2"), node.raft.leaderId());
+            assertEquals(Optional.of(Ids.id("n2")), node.raft.leaderId());
         }
 
         @Test
         void learnerNeverCampaigns() {
-            var node = TestNode.create("n3", RaftMembership.of(Set.of("n1", "n2"), Set.of("n3")));
+            var node = TestNode.create("n3", Ids.membership(Set.of("n1", "n2"), Set.of("n3")));
 
             var output = node.tick(5 * TestNode.OPTIONS.electionTicks());
 
-            assertEquals(RaftRole.FOLLOWER, node.raft.role());
+            assertEquals(Role.FOLLOWER, node.raft.role());
             assertTrue(output.messages().isEmpty());
         }
     }

@@ -4,9 +4,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-final class InMemoryRaftLog implements RaftLog {
-    private final List<RaftLogEntry> entries = new ArrayList<>();
-    private RaftHardState hardState = RaftHardState.INITIAL;
+final class InMemoryRaftLog implements StableLog {
+    private final List<LogEntry> entries = new ArrayList<>();
+    private HardState hardState = HardState.INITIAL;
     private SnapshotMetadata snapshot;
 
     @Override
@@ -34,11 +34,11 @@ final class InMemoryRaftLog implements RaftLog {
     }
 
     @Override
-    public List<RaftLogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
+    public List<LogEntry> entries(long fromIndex, long toIndex, long maxBytes) {
         if (fromIndex < firstIndex()) {
             throw new IllegalArgumentException("index " + fromIndex + " is compacted");
         }
-        var result = new ArrayList<RaftLogEntry>();
+        var result = new ArrayList<LogEntry>();
         long bytes = 0;
         for (long index = fromIndex; index < Math.min(toIndex, lastIndex() + 1); index++) {
             var entry = entries.get(position(index));
@@ -51,7 +51,7 @@ final class InMemoryRaftLog implements RaftLog {
         return result;
     }
 
-    RaftHardState hardState() {
+    HardState hardState() {
         return hardState;
     }
 
@@ -59,21 +59,21 @@ final class InMemoryRaftLog implements RaftLog {
         return Optional.ofNullable(snapshot);
     }
 
-    List<RaftLogEntry> entries() {
+    List<LogEntry> entries() {
         return List.copyOf(entries);
     }
 
-    void persistHardState(RaftHardState state) {
+    void persistHardState(HardState state) {
         hardState = state;
     }
 
-    void persist(RaftEffects effects) {
-        effects.snapshot().ifPresent(this::installSnapshot);
-        effects.hardState().ifPresent(state -> hardState = state);
-        append(effects.entries());
+    void persist(Ready ready) {
+        ready.snapshot().ifPresent(this::installSnapshot);
+        ready.hardState().ifPresent(state -> hardState = state);
+        append(ready.entries());
     }
 
-    void append(List<RaftLogEntry> newEntries) {
+    void append(List<LogEntry> newEntries) {
         if (newEntries.isEmpty()) {
             return;
         }

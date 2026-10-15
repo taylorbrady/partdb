@@ -1,6 +1,5 @@
 package io.partdb.raft;
 
-import io.partdb.raft.RaftEffects.ReadResult;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ClusterTest {
 
     private static String follower(ClusterHarness cluster, String leader) {
-        return cluster.nodes().stream().map(Raft::id).filter(id -> !id.equals(leader)).findFirst().orElseThrow();
+        return cluster.nodes().stream().map(raft -> raft.id().value()).filter(id -> !id.equals(leader)).findFirst().orElseThrow();
     }
 
     @Nested
@@ -31,7 +30,7 @@ class ClusterTest {
                 cluster.run(50);
 
                 assertEquals(1, cluster.leaderCount(term));
-                assertTrue(cluster.nodes().stream().allMatch(raft -> raft.leaderId().orElseThrow().equals(leader)));
+                assertTrue(cluster.nodes().stream().allMatch(raft -> raft.leaderId().orElseThrow().equals(Ids.id(leader))));
             }
         }
 
@@ -63,21 +62,21 @@ class ClusterTest {
 
             cluster.heal(oldLeader);
             cluster.run(20);
-            assertEquals(RaftRole.FOLLOWER, cluster.node(oldLeader).role());
-            assertEquals(newLeader, cluster.node(oldLeader).leaderId().orElseThrow());
+            assertEquals(Role.FOLLOWER, cluster.node(oldLeader).role());
+            assertEquals(Ids.id(newLeader), cluster.node(oldLeader).leaderId().orElseThrow());
         }
 
         @Test
         void minorityCannotElectLeader() {
             var cluster = ClusterHarness.create(5);
             String leader = cluster.electLeader();
-            var minority = cluster.nodes().stream().map(Raft::id).filter(id -> !id.equals(leader)).limit(2).toList();
+            var minority = cluster.nodes().stream().map(raft -> raft.id().value()).filter(id -> !id.equals(leader)).limit(2).toList();
             cluster.isolate(leader);
-            cluster.nodes().stream().map(Raft::id).filter(id -> !minority.contains(id) && !id.equals(leader)).forEach(cluster::isolate);
+            cluster.nodes().stream().map(raft -> raft.id().value()).filter(id -> !minority.contains(id) && !id.equals(leader)).forEach(cluster::isolate);
 
             cluster.run(100);
 
-            assertTrue(minority.stream().noneMatch(id -> cluster.node(id).role() == RaftRole.LEADER));
+            assertTrue(minority.stream().noneMatch(id -> cluster.node(id).role() == Role.LEADER));
         }
 
         @Test
@@ -88,10 +87,10 @@ class ClusterTest {
             cluster.propose(leader, "a");
             cluster.run(5);
 
-            cluster.step(leader, new RaftInput.TransferLeadership(target));
+            cluster.transferLeadership(leader, target);
             cluster.runUntil(c -> c.leader().filter(target::equals).isPresent(), 20);
 
-            assertEquals(RaftRole.FOLLOWER, cluster.node(leader).role());
+            assertEquals(Role.FOLLOWER, cluster.node(leader).role());
         }
     }
 
@@ -110,7 +109,7 @@ class ClusterTest {
             var expected = cluster.appliedCommands(leader);
             assertEquals(20, expected.size());
             for (Raft raft : cluster.nodes()) {
-                assertEquals(expected, cluster.appliedCommands(raft.id()));
+                assertEquals(expected, cluster.appliedCommands(raft.id().value()));
             }
         }
 
@@ -169,8 +168,8 @@ class ClusterTest {
         void learnerReplicatesWithoutAffectingQuorum() {
             var cluster = ClusterHarness.create(2, 1);
             String leader = cluster.electLeader();
-            String voter = cluster.nodes().stream().map(Raft::id)
-                .filter(id -> !id.equals(leader) && cluster.node(id).membership().isVoter(id)).findFirst().orElseThrow();
+            String voter = cluster.nodes().stream().map(raft -> raft.id().value())
+                .filter(id -> !id.equals(leader) && cluster.node(id).membership().isVoter(Ids.id(id))).findFirst().orElseThrow();
 
             cluster.propose(leader, "a");
             cluster.run(5);
@@ -180,7 +179,7 @@ class ClusterTest {
             cluster.propose(leader, "b");
             cluster.run(5);
             assertEquals(2, cluster.appliedCommands(voter).size());
-            assertEquals(RaftRole.FOLLOWER, cluster.node("n2").role());
+            assertEquals(Role.FOLLOWER, cluster.node("n2").role());
         }
     }
 
@@ -193,11 +192,11 @@ class ClusterTest {
             cluster.run(5);
 
             for (Raft raft : cluster.nodes()) {
-                long read = cluster.readIndex(raft.id());
+                long read = cluster.readIndex(raft.id().value());
                 cluster.run(5);
-                var results = cluster.drainReads(raft.id());
+                var results = cluster.drainOutcomes(raft.id().value());
                 assertEquals(1, results.size());
-                var confirmed = assertInstanceOf(ReadResult.Confirmed.class, results.getFirst());
+                var confirmed = assertInstanceOf(Outcome.ReadReady.class, results.getFirst());
                 assertEquals(read, confirmed.id());
                 assertTrue(confirmed.index() >= 1);
             }
@@ -214,8 +213,8 @@ class ClusterTest {
             cluster.readIndex(isolated);
             cluster.run(30);
 
-            assertEquals(List.of(ReadResult.Rejected.class),
-                cluster.drainReads(isolated).stream().map(Object::getClass).toList());
+            assertEquals(List.of(Outcome.Rejected.class),
+                cluster.drainOutcomes(isolated).stream().map(Object::getClass).toList());
         }
     }
 
@@ -226,17 +225,17 @@ class ClusterTest {
             var cluster = ClusterHarness.create(3);
             String leader = cluster.electLeader();
             cluster.run(5);
-            cluster.add("n3", RaftMembership.voters("n0", "n1", "n2"), 0);
+            cluster.add("n3", Ids.voters("n0", "n1", "n2"), 0);
 
-            cluster.changeMembership(leader, new MembershipChange.AddLearner("n3"));
+            cluster.changeMembership(leader, new MembershipChange.AddLearner(Ids.id("n3")));
             cluster.run(10);
-            assertTrue(cluster.node(leader).membership().isLearner("n3"));
+            assertTrue(cluster.node(leader).membership().isLearner(Ids.id("n3")));
 
-            cluster.changeMembership(leader, new MembershipChange.PromoteToVoter("n3"));
+            cluster.changeMembership(leader, new MembershipChange.PromoteToVoter(Ids.id("n3")));
             cluster.run(10);
 
             for (Raft raft : cluster.nodes()) {
-                assertTrue(raft.membership().isVoter("n3"), raft.id());
+                assertTrue(raft.membership().isVoter(Ids.id("n3")), raft.id().value());
             }
             cluster.propose(leader, "a");
             cluster.run(5);
@@ -244,25 +243,24 @@ class ClusterTest {
         }
 
         @Test
-        void leaderIsRemovedAfterTransferringLeadership() {
+        void leaderRemovesItselfAndHandsOffLeadership() {
             var cluster = ClusterHarness.create(3);
             String leader = cluster.electLeader();
-            String successor = follower(cluster, leader);
             cluster.run(5);
 
-            cluster.step(leader, new RaftInput.TransferLeadership(successor));
-            cluster.runUntil(c -> c.leader().filter(successor::equals).isPresent(), 20);
-            cluster.run(5);
-            cluster.changeMembership(successor, new MembershipChange.RemoveNode(leader));
-            cluster.run(10);
+            long change = cluster.changeMembership(leader, new MembershipChange.RemoveNode(Ids.id(leader)));
+            cluster.runUntil(c -> c.leader().filter(id -> !id.equals(leader)).isPresent(), 50);
 
+            assertEquals(List.of(), cluster.drainOutcomes(leader).stream().filter(o -> o instanceof Outcome.Rejected).toList());
+            String successor = cluster.leader().orElseThrow();
             for (Raft raft : cluster.nodes()) {
-                if (!raft.id().equals(leader)) {
-                    assertFalse(raft.membership().isMember(leader), raft.id());
+                if (!raft.id().value().equals(leader)) {
+                    assertFalse(raft.membership().isMember(Ids.id(leader)), raft.id().value());
                 }
             }
+            assertTrue(change > 0);
             cluster.run(100);
-            assertEquals(Optional.of(successor), cluster.node(successor).leaderId());
+            assertEquals(Optional.of(Ids.id(successor)), cluster.node(successor).leaderId());
             cluster.propose(successor, "after");
             cluster.run(5);
             assertEquals(1, cluster.appliedCommands(successor).size());

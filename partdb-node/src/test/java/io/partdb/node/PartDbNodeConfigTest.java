@@ -1,8 +1,9 @@
 package io.partdb.node;
 
 import io.partdb.raft.MembershipChange;
-import io.partdb.raft.RaftMembership;
-import io.partdb.raft.RaftOptions;
+import io.partdb.raft.Membership;
+import io.partdb.raft.NodeId;
+import io.partdb.raft.Options;
 import io.partdb.raft.runtime.RaftConfig;
 import org.junit.jupiter.api.Test;
 
@@ -19,22 +20,22 @@ class PartDbNodeConfigTest {
     void builderDefaultsToSingleVoterWithProductDefaults() {
         var config = PartDbNodeConfig.builder("node1", Path.of("data/node1")).build();
 
-        assertEquals(RaftMembership.voters("node1"), config.raft().initialMembership());
-        assertEquals(RaftOptions.defaults(), config.raft().options());
+        assertEquals(Membership.ofVoters(Set.of(NodeId.of("node1"))), config.raft().initialMembership());
+        assertEquals(Options.defaults(), config.raft().options());
         assertEquals(RaftConfig.DEFAULT_TICK_INTERVAL, config.raft().tickInterval());
-        assertEquals("node1", config.nodeId());
+        assertEquals(NodeId.of("node1"), config.nodeId());
     }
 
     @Test
     void builderSupportsOverrides() {
-        var options = new RaftOptions(20, 5, 1 << 20, 64, 1 << 26);
+        var options = new Options(20, 5, 1 << 20, 64, 1 << 26);
         var config = PartDbNodeConfig.builder("node2", Path.of("data/node2"))
             .voters("node1", "node2")
             .tickInterval(Duration.ofMillis(25))
             .raftOptions(options)
             .build();
 
-        assertEquals(Set.of("node1", "node2"), config.raft().initialMembership().members());
+        assertEquals(Set.of(NodeId.of("node1"), NodeId.of("node2")), config.raft().initialMembership().members());
         assertEquals(Duration.ofMillis(25), config.raft().tickInterval());
         assertEquals(options, config.raft().options());
     }
@@ -52,9 +53,9 @@ class PartDbNodeConfigTest {
     @Test
     void builderSupportsLearnerMembership() {
         var config = PartDbNodeConfig.builder("node3", Path.of("data/node3"))
-            .membership(RaftMembership.voters("node1", "node2").apply(new MembershipChange.AddLearner("node3")))
+            .membership(Membership.ofVoters(Set.of(NodeId.of("node1"), NodeId.of("node2"))).apply(new MembershipChange.AddLearner(NodeId.of("node3"))))
             .build();
 
-        assertEquals(Set.of("node1", "node2", "node3"), config.raft().initialMembership().members());
+        assertEquals(Set.of(NodeId.of("node1"), NodeId.of("node2"), NodeId.of("node3")), config.raft().initialMembership().members());
     }
 }

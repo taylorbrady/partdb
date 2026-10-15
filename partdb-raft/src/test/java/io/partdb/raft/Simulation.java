@@ -2,8 +2,6 @@ package io.partdb.raft;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.raft.LinearizabilityChecker.Operation;
-import io.partdb.raft.RaftEffects.ProposalResult;
-import io.partdb.raft.RaftEffects.ReadResult;
 
 import java.io.PrintStream;
 import java.util.ArrayDeque;
@@ -66,16 +64,16 @@ final class Simulation {
     private final long seed;
     private final Settings settings;
     private final SplittableRandom random;
-    private final RaftOptions options = RaftOptions.defaults();
-    private final RaftMembership membership;
-    private final Map<String, Node> nodes = new LinkedHashMap<>();
+    private final Options options = Options.defaults();
+    private final Membership membership;
+    private final Map<NodeId, Node> nodes = new LinkedHashMap<>();
     private final PriorityQueue<Envelope> network = new PriorityQueue<>(
         Comparator.comparingLong(Envelope::deliverAt).thenComparingLong(Envelope::sequence));
     private final List<Client> clients = new ArrayList<>();
     private final List<Operation> history = new ArrayList<>();
     private final List<PendingWrite> indeterminate = new ArrayList<>();
-    private final Map<Long, String> leaders = new HashMap<>();
-    private final Map<Long, RaftLogEntry> committed = new HashMap<>();
+    private final Map<Long, NodeId> leaders = new HashMap<>();
+    private final Map<Long, LogEntry> committed = new HashMap<>();
     private final Map<String, Long> firstApplied = new HashMap<>();
 
     private PrintStream trace;
@@ -83,7 +81,7 @@ final class Simulation {
     private long clock;
     private long sequence;
     private long requestIds;
-    private Set<String> partitioned = Set.of();
+    private Set<NodeId> partitioned = Set.of();
     private long partitionEnds;
     private int completedWrites;
     private int completedReads;
@@ -96,9 +94,9 @@ final class Simulation {
         for (int i = 0; i < settings.nodes(); i++) {
             voters.add("n" + i);
         }
-        this.membership = RaftMembership.of(voters, Set.of());
+        this.membership = Ids.membership(voters, Set.of());
         for (int i = 0; i < settings.nodes() + settings.spares(); i++) {
-            nodes.put("n" + i, new Node("n" + i));
+            nodes.put(Ids.id("n" + i), new Node(Ids.id("n" + i)));
         }
         for (int i = 0; i < settings.clients(); i++) {
             clients.add(new Client(i));
@@ -174,7 +172,7 @@ final class Simulation {
         } else if (partitioned.isEmpty() && random.nextDouble() < settings.partitionRate()) {
             var ids = new ArrayList<>(nodes.keySet());
             int size = 1 + random.nextInt(ids.size() / 2);
-            var minority = new HashSet<String>();
+            var minority = new HashSet<NodeId>();
             while (minority.size() < size) {
                 minority.add(ids.get(random.nextInt(ids.size())));
             }
@@ -199,7 +197,7 @@ final class Simulation {
         if (random.nextDouble() < settings.transferRate()) {
             leader().ifPresent(leader -> {
                 var voters = List.copyOf(leader.raft.membership().voters());
-                step(leader, new RaftInput.TransferLeadership(voters.get(random.nextInt(voters.size()))));
+                step(leader, new Input.TransferLeadership(++requestIds, voters.get(random.nextInt(voters.size()))));
             });
         }
     }
@@ -207,7 +205,7 @@ final class Simulation {
     private void changeMembership(Node leader) {
         var current = leader.raft.membership();
         var changes = new ArrayList<MembershipChange>();
-        for (String id : nodes.keySet()) {
+        for (NodeId id : nodes.keySet()) {
             if (!current.isMember(id)) {
                 changes.add(new MembershipChange.AddLearner(id));
             } else if (current.isLearner(id)) {
@@ -219,13 +217,13 @@ final class Simulation {
             }
         }
         if (!changes.isEmpty()) {
-            step(leader, new RaftInput.ChangeMembership(++requestIds, changes.get(random.nextInt(changes.size()))));
+            step(leader, new Input.ChangeMembership(++requestIds, changes.get(random.nextInt(changes.size()))));
         }
     }
 
     private Optional<Node> leader() {
         return nodes.values().stream()
-            .filter(node -> node.up && node.raft.role() == RaftRole.LEADER)
+            .filter(node -> node.up && node.raft.role() == Role.LEADER)
             .max(Comparator.comparingLong(node -> node.raft.term()));
     }
 
@@ -263,7 +261,7 @@ final class Simulation {
         var pending = new PendingWrite(client, node, key, "c" + client.id + "-" + client.counter++, ++clock, now, id);
         node.proposals.put(id, pending);
         client.pending = pending;
-        step(node, new RaftInput.Propose(id, Bytes.utf8(key + "=" + pending.value())));
+        step(node, new Input.Propose(id, Bytes.utf8(key + "=" + pending.value())));
     }
 
     private void read(Client client, Node node, String key) {
@@ -271,7 +269,7 @@ final class Simulation {
         var pending = new PendingRead(client, node, key, ++clock, now, id);
         node.reads.put(id, pending);
         client.pending = pending;
-        step(node, new RaftInput.ReadIndex(id));
+        step(node, new Input.ReadIndex(id));
     }
 
     private void tickNodes() {
@@ -281,7 +279,7 @@ final class Simulation {
             }
             drainInbox(node);
             if (random.nextDouble() < 0.95) {
-                step(node, new RaftInput.Tick());
+                step(node, new Input.Tick());
             }
         }
     }
@@ -299,10 +297,10 @@ final class Simulation {
             if (!target.up || partitioned.contains(envelope.from()) != partitioned.contains(envelope.to())) {
                 continue;
             }
-            if (envelope.message() instanceof RaftMessage.InstallSnapshot install) {
+            if (envelope.input() instanceof Input.InstallSnapshot install) {
                 target.incomingSnapshots.put(install.snapshot().index(), envelope.snapshot());
             }
-            step(target, new RaftInput.Receive(envelope.from(), envelope.message()));
+            step(target, envelope.input());
         }
     }
 
@@ -345,7 +343,7 @@ final class Simulation {
         for (int i = 0; i < CONVERGENCE_TICKS; i++, now++) {
             for (Node node : nodes.values()) {
                 drainInbox(node);
-                step(node, new RaftInput.Tick());
+                step(node, new Input.Tick());
             }
             deliverMessages();
             if (converged()) {
@@ -358,7 +356,7 @@ final class Simulation {
         }
         fail("cluster did not converge after faults healed:\n" + nodes.values().stream()
             .map(node -> "  %s %s term=%d leader=%s commit=%d applied=%d log=[%d..%d] voters=%s learners=%s".formatted(
-                node.id, node.raft.role(), node.raft.term(), node.raft.leaderId().orElse("-"), node.raft.commitIndex(),
+                node.id, node.raft.role(), node.raft.term(), node.raft.leaderId().map(NodeId::value).orElse("-"), node.raft.commitIndex(),
                 node.applied, node.log.firstIndex(), node.log.lastIndex(), node.raft.membership().voters(),
                 node.raft.membership().learners()))
             .collect(Collectors.joining("\n")));
@@ -391,7 +389,7 @@ final class Simulation {
 
     private void verifyLogMatching() {
         var logs = nodes.values().stream()
-            .map(node -> node.log.entries().stream().collect(Collectors.toMap(RaftLogEntry::index, entry -> entry)))
+            .map(node -> node.log.entries().stream().collect(Collectors.toMap(LogEntry::index, entry -> entry)))
             .toList();
         for (int a = 0; a < logs.size(); a++) {
             for (int b = a + 1; b < logs.size(); b++) {
@@ -412,8 +410,8 @@ final class Simulation {
         }
     }
 
-    private void step(Node node, RaftInput input) {
-        if (trace != null && !(input instanceof RaftInput.Tick)) {
+    private void step(Node node, Input input) {
+        if (trace != null && !(input instanceof Input.Tick)) {
             trace.printf("%5d %s %-13s t=%d c=%d a=%d log=[%d..%d] <- %s%n", now, node.id, node.raft.role(), node.raft.term(),
                 node.raft.commitIndex(), node.raft.appliedIndex(), node.log.firstIndex(), node.log.lastIndex(), input);
         }
@@ -427,11 +425,11 @@ final class Simulation {
             effects.snapshot().ifPresent(metadata -> restoreSnapshot(node, metadata));
             node.log.persist(effects);
             for (var envelope : effects.messages()) {
-                send(envelope.from(), envelope.to(), envelope.message(), null);
+                send(envelope.from(), envelope.to(), new Input.Receive(envelope.from(), envelope.message()), null);
             }
-            effects.proposals().forEach(result -> resolveProposal(node, result));
+            effects.outcomes().forEach(result -> resolveProposal(node, result));
             effects.committed().forEach(entry -> apply(node, entry));
-            effects.reads().forEach(result -> resolveRead(node, result));
+            effects.outcomes().forEach(result -> resolveRead(node, result));
             serveReads(node);
             effects.snapshotRequests().forEach(peer -> sendSnapshot(node, peer));
             effects.persisted().ifPresent(node.raft::step);
@@ -451,18 +449,19 @@ final class Simulation {
         resolveWritesThrough(node, metadata.index());
     }
 
-    private void resolveProposal(Node node, ProposalResult result) {
+    private void resolveProposal(Node node, Outcome result) {
         var write = node.proposals.remove(result.id());
         if (write == null) {
             return;
         }
         switch (result) {
-            case ProposalResult.Accepted(_, long index, long entryTerm) -> node.writes.put(index, write.at(index, entryTerm));
-            case ProposalResult.Rejected _ -> write.client().pending = null;
+            case Outcome.Appended(_, long index, long entryTerm) -> node.writes.put(index, write.at(index, entryTerm));
+            case Outcome.Rejected _ -> write.client().pending = null;
+            case Outcome.ReadReady _, Outcome.Transferred _ -> fail("unexpected outcome for a proposal: " + result);
         }
     }
 
-    private void apply(Node node, RaftLogEntry entry) {
+    private void apply(Node node, LogEntry entry) {
         if (entry.index() != node.applied + 1) {
             fail(node.id + " applied index " + entry.index() + " after " + node.applied);
         }
@@ -472,15 +471,15 @@ final class Simulation {
         }
         node.applied = entry.index();
         switch (entry) {
-            case RaftLogEntry.Command command -> {
+            case LogEntry.Command command -> {
                 String text = command.command().utf8();
                 int separator = text.indexOf('=');
                 String value = text.substring(separator + 1);
                 node.kv.put(text.substring(0, separator), value);
                 firstApplied.putIfAbsent(value, ++clock);
             }
-            case RaftLogEntry.Membership change -> node.membershipAtApplied = change.membership();
-            case RaftLogEntry.NoOp _ -> {}
+            case LogEntry.Configuration change -> node.membershipAtApplied = change.membership();
+            case LogEntry.NoOp _ -> {}
         }
 
         var write = node.writes.remove(entry.index());
@@ -493,17 +492,18 @@ final class Simulation {
         }
     }
 
-    private void resolveRead(Node node, ReadResult result) {
+    private void resolveRead(Node node, Outcome result) {
         var read = node.reads.get(result.id());
         if (read == null) {
             return;
         }
         switch (result) {
-            case ReadResult.Confirmed(_, long index) -> node.readIndexes.put(read.id(), index);
-            case ReadResult.Rejected _ -> {
+            case Outcome.ReadReady(_, long index) -> node.readIndexes.put(read.id(), index);
+            case Outcome.Rejected _ -> {
                 node.reads.remove(read.id());
                 read.client().pending = null;
             }
+            case Outcome.Appended _, Outcome.Transferred _ -> fail("unexpected outcome for a read: " + result);
         }
     }
 
@@ -538,30 +538,30 @@ final class Simulation {
         write.client().pending = null;
     }
 
-    private void sendSnapshot(Node node, String peer) {
+    private void sendSnapshot(Node node, NodeId peer) {
         var snapshot = node.log.snapshot().orElseThrow(() -> new AssertionError("snapshot requested without a snapshot"));
-        boolean delivered = send(node.id, peer, new RaftMessage.InstallSnapshot(node.raft.term(), snapshot), node.snapshotState);
-        node.inbox.add(delivered ? new RaftInput.SnapshotSent(peer) : new RaftInput.SnapshotFailed(peer));
+        boolean delivered = send(node.id, peer, new Input.InstallSnapshot(node.id, node.raft.term(), snapshot), node.snapshotState);
+        node.inbox.add(delivered ? new Input.SnapshotSent(peer) : new Input.SnapshotFailed(peer));
     }
 
-    private boolean send(String from, String to, RaftMessage message, Map<String, String> snapshot) {
+    private boolean send(NodeId from, NodeId to, Input input, Map<String, String> snapshot) {
         if (random.nextDouble() < settings.dropRate()) {
             if (random.nextBoolean()) {
-                nodes.get(from).inbox.add(new RaftInput.Unreachable(to));
+                nodes.get(from).inbox.add(new Input.Unreachable(to));
             }
             return false;
         }
-        network.add(new Envelope(now + 1 + random.nextInt(settings.maxDelay()), sequence++, from, to, message, snapshot));
+        network.add(new Envelope(now + 1 + random.nextInt(settings.maxDelay()), sequence++, from, to, input, snapshot));
         if (random.nextDouble() < settings.duplicateRate()) {
-            network.add(new Envelope(now + 1 + random.nextInt(settings.maxDelay()), sequence++, from, to, message, snapshot));
+            network.add(new Envelope(now + 1 + random.nextInt(settings.maxDelay()), sequence++, from, to, input, snapshot));
         }
         return true;
     }
 
     private void observe(Node node) {
         var raft = node.raft;
-        if (raft.role() == RaftRole.LEADER) {
-            String existing = leaders.putIfAbsent(raft.term(), node.id);
+        if (raft.role() == Role.LEADER) {
+            NodeId existing = leaders.putIfAbsent(raft.term(), node.id);
             if (existing != null && !existing.equals(node.id)) {
                 fail("term " + raft.term() + " has two leaders: " + existing + " and " + node.id);
             }
@@ -576,7 +576,7 @@ final class Simulation {
         throw new AssertionError("seed " + seed + " at tick " + now + ": " + message);
     }
 
-    private record Envelope(long deliverAt, long sequence, String from, String to, RaftMessage message, Map<String, String> snapshot) {}
+    private record Envelope(long deliverAt, long sequence, NodeId from, NodeId to, Input input, Map<String, String> snapshot) {}
 
     private sealed interface Pending permits PendingWrite, PendingRead {}
 
@@ -613,16 +613,16 @@ final class Simulation {
     }
 
     private final class Node {
-        private final String id;
+        private final NodeId id;
         private final InMemoryRaftLog log = new InMemoryRaftLog();
         private final Map<Long, PendingWrite> proposals = new HashMap<>();
         private final Map<Long, PendingWrite> writes = new HashMap<>();
         private final Map<Long, PendingRead> reads = new LinkedHashMap<>();
         private final Map<Long, Long> readIndexes = new HashMap<>();
         private final Map<Long, Map<String, String>> incomingSnapshots = new HashMap<>();
-        private final Queue<RaftInput> inbox = new ArrayDeque<>();
+        private final Queue<Input> inbox = new ArrayDeque<>();
         private Map<String, String> snapshotState = Map.of();
-        private RaftMembership membershipAtApplied;
+        private Membership membershipAtApplied;
         private Raft raft;
         private Map<String, String> kv;
         private long applied;
@@ -630,7 +630,7 @@ final class Simulation {
         private boolean up;
         private long downUntil;
 
-        private Node(String id) {
+        private Node(NodeId id) {
             this.id = id;
         }
     }

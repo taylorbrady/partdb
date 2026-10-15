@@ -1,0 +1,21 @@
+package io.partdb.raft.runtime;
+
+import io.partdb.raft.Input;
+import io.partdb.raft.NodeId;
+
+import java.nio.file.Path;
+import java.util.function.LongFunction;
+
+sealed interface LoopEvent {
+    record Step(Input input) implements LoopEvent {}
+
+    record Submit(Requests.Pending pending, LongFunction<Input> input) implements LoopEvent {}
+
+    record SnapshotReceived(NodeId from, long term, SnapshotInfo info, Path payload) implements LoopEvent {}
+
+    record SnapshotDelivered(NodeId peer, boolean delivered) implements LoopEvent {}
+
+    record SnapshotCreated(Path payload, long index, int checksum, Throwable failure) implements LoopEvent {}
+
+    record Shutdown() implements LoopEvent {}
+}

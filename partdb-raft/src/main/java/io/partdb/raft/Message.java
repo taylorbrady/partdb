@@ -2,11 +2,12 @@ package io.partdb.raft;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalLong;
 
-public sealed interface RaftMessage {
+public sealed interface Message {
     long term();
 
-    record PreVote(long term, long lastLogIndex, long lastLogTerm) implements RaftMessage {
+    record PreVote(long term, long lastLogIndex, long lastLogTerm) implements Message {
         public PreVote {
             Validation.nonNegative(term, "term");
             Validation.nonNegative(lastLogIndex, "lastLogIndex");
@@ -14,13 +15,13 @@ public sealed interface RaftMessage {
         }
     }
 
-    record PreVoteResponse(long term, boolean granted) implements RaftMessage {
+    record PreVoteResponse(long term, boolean granted) implements Message {
         public PreVoteResponse {
             Validation.nonNegative(term, "term");
         }
     }
 
-    record RequestVote(long term, long lastLogIndex, long lastLogTerm, boolean leadershipTransfer) implements RaftMessage {
+    record RequestVote(long term, long lastLogIndex, long lastLogTerm, boolean leadershipTransfer) implements Message {
         public RequestVote {
             Validation.nonNegative(term, "term");
             Validation.nonNegative(lastLogIndex, "lastLogIndex");
@@ -28,14 +29,14 @@ public sealed interface RaftMessage {
         }
     }
 
-    record RequestVoteResponse(long term, boolean granted) implements RaftMessage {
+    record RequestVoteResponse(long term, boolean granted) implements Message {
         public RequestVoteResponse {
             Validation.nonNegative(term, "term");
         }
     }
 
-    record AppendEntries(long term, long prevLogIndex, long prevLogTerm, List<RaftLogEntry> entries, long commitIndex)
-        implements RaftMessage {
+    record AppendEntries(long term, long prevLogIndex, long prevLogTerm, List<LogEntry> entries, long commitIndex)
+        implements Message {
         public AppendEntries {
             Validation.nonNegative(term, "term");
             Validation.nonNegative(prevLogIndex, "prevLogIndex");
@@ -45,14 +46,14 @@ public sealed interface RaftMessage {
         }
     }
 
-    record AppendAccepted(long term, long matchIndex) implements RaftMessage {
+    record AppendAccepted(long term, long matchIndex) implements Message {
         public AppendAccepted {
             Validation.nonNegative(term, "term");
             Validation.nonNegative(matchIndex, "matchIndex");
         }
     }
 
-    record AppendRejected(long term, long rejectedIndex, long hintIndex, long hintTerm) implements RaftMessage {
+    record AppendRejected(long term, long rejectedIndex, long hintIndex, long hintTerm) implements Message {
         public AppendRejected {
             Validation.nonNegative(term, "term");
             Validation.nonNegative(rejectedIndex, "rejectedIndex");
@@ -61,7 +62,7 @@ public sealed interface RaftMessage {
         }
     }
 
-    record Heartbeat(long term, long commitIndex, long round) implements RaftMessage {
+    record Heartbeat(long term, long commitIndex, long round) implements Message {
         public Heartbeat {
             Validation.nonNegative(term, "term");
             Validation.nonNegative(commitIndex, "commitIndex");
@@ -69,45 +70,34 @@ public sealed interface RaftMessage {
         }
     }
 
-    record HeartbeatResponse(long term, long round) implements RaftMessage {
+    record HeartbeatResponse(long term, long round) implements Message {
         public HeartbeatResponse {
             Validation.nonNegative(term, "term");
             Validation.nonNegative(round, "round");
         }
     }
 
-    record InstallSnapshot(long term, SnapshotMetadata snapshot) implements RaftMessage {
-        public InstallSnapshot {
-            Validation.nonNegative(term, "term");
-            Objects.requireNonNull(snapshot, "snapshot must not be null");
-        }
-    }
-
-    record InstallSnapshotResponse(long term, long matchIndex) implements RaftMessage {
-        public InstallSnapshotResponse {
+    record SnapshotInstalled(long term, long matchIndex) implements Message {
+        public SnapshotInstalled {
             Validation.nonNegative(term, "term");
             Validation.nonNegative(matchIndex, "matchIndex");
         }
     }
 
-    record ReadIndex(long term, long id) implements RaftMessage {
-        public ReadIndex {
+    record ReadIndexRequest(long term, long id) implements Message {
+        public ReadIndexRequest {
             Validation.nonNegative(term, "term");
         }
     }
 
-    record ReadIndexResponse(long term, long id, long readIndex) implements RaftMessage {
+    record ReadIndexResponse(long term, long id, OptionalLong readIndex) implements Message {
         public ReadIndexResponse {
             Validation.nonNegative(term, "term");
-            Validation.nonNegative(readIndex, "readIndex");
-        }
-
-        public boolean rejected() {
-            return readIndex == 0;
+            Objects.requireNonNull(readIndex, "readIndex must not be null");
         }
     }
 
-    record TimeoutNow(long term) implements RaftMessage {
+    record TimeoutNow(long term) implements Message {
         public TimeoutNow {
             Validation.nonNegative(term, "term");
         }

@@ -1,7 +1,7 @@
 package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.raft.RaftRole;
+import io.partdb.raft.Role;
 import io.partdb.node.kv.Condition;
 import io.partdb.node.kv.Transaction;
 import io.partdb.node.kv.TransactionResult;
@@ -210,7 +210,7 @@ class PartDbNodeTest {
     private static void awaitLeader(PartDbNode node) throws Exception {
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadlineNanos) {
-            if (node.cluster().status().role() == RaftRole.LEADER) {
+            if (node.cluster().status().role() == Role.LEADER) {
                 return;
             }
             Thread.sleep(5);

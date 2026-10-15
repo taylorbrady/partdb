@@ -1,12 +1,11 @@
 package io.partdb.raft;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.raft.RaftEffects.ProposalResult;
-import io.partdb.raft.RaftMessage.AppendAccepted;
-import io.partdb.raft.RaftMessage.AppendEntries;
-import io.partdb.raft.RaftMessage.AppendRejected;
-import io.partdb.raft.RaftMessage.Heartbeat;
-import io.partdb.raft.RaftMessage.HeartbeatResponse;
+import io.partdb.raft.Message.AppendAccepted;
+import io.partdb.raft.Message.AppendEntries;
+import io.partdb.raft.Message.AppendRejected;
+import io.partdb.raft.Message.Heartbeat;
+import io.partdb.raft.Message.HeartbeatResponse;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -19,8 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftReplicationTest {
 
-    private static RaftLogEntry.Command command(long index, long term, String value) {
-        return new RaftLogEntry.Command(index, term, Bytes.utf8(value));
+    private static LogEntry.Command command(long index, long term, String value) {
+        return new LogEntry.Command(index, term, Bytes.utf8(value));
     }
 
     @Nested
@@ -143,7 +142,7 @@ class RaftReplicationTest {
 
             var output = node.propose(7, "a");
 
-            assertEquals(List.of(new ProposalResult.Accepted(7, 2, 1)), output.proposals());
+            assertEquals(List.of(new Outcome.Appended(7, 2, 1)), output.outcomes());
             assertEquals(List.of(command(2, 1, "a")), output.persisted());
         }
 
@@ -153,7 +152,7 @@ class RaftReplicationTest {
 
             var output = node.propose(7, "a");
 
-            assertEquals(List.of(new ProposalResult.Rejected(7)), output.proposals());
+            assertEquals(List.of(new Outcome.Rejected(7, new Rejection.NotLeader(Optional.empty()))), output.outcomes());
             assertTrue(output.persisted().isEmpty());
         }
 
@@ -163,9 +162,9 @@ class RaftReplicationTest {
             node.electAndCommit("n2", "n3");
 
             var output = node.step(
-                new RaftInput.Propose(1, Bytes.utf8("a")),
-                new RaftInput.Propose(2, Bytes.utf8("b")),
-                new RaftInput.Propose(3, Bytes.utf8("c"))
+                new Input.Propose(1, Bytes.utf8("a")),
+                new Input.Propose(2, Bytes.utf8("b")),
+                new Input.Propose(3, Bytes.utf8("c"))
             );
 
             var append = output.singleTo("n2", AppendEntries.class);
@@ -200,8 +199,8 @@ class RaftReplicationTest {
         void doesNotCommitPreviousTermEntriesByCounting() {
             var log = new InMemoryRaftLog();
             log.append(List.of(command(1, 1, "a"), command(2, 1, "b")));
-            log.persistHardState(new RaftHardState(1, Optional.empty(), 0));
-            var node = TestNode.restore("n1", RaftMembership.voters("n1", "n2", "n3", "n4", "n5"), log, 0);
+            log.persistHardState(new HardState(1, Optional.empty(), 0));
+            var node = TestNode.restore("n1", Ids.voters("n1", "n2", "n3", "n4", "n5"), log, 0);
             node.elect("n2", "n3", "n4", "n5");
 
             node.receive("n2", new AppendAccepted(node.raft.term(), 2));
@@ -238,11 +237,11 @@ class RaftReplicationTest {
 
         @Test
         void pausesReplicationWhenInflightLimitIsReached() {
-            var options = new RaftOptions(10, 3, 1 << 20, 2, 64 << 20);
-            var node = TestNode.create("n1", RaftMembership.voters("n1", "n2", "n3"), options);
+            var options = new Options(10, 3, 1 << 20, 2, 64 << 20);
+            var node = TestNode.create("n1", Ids.voters("n1", "n2", "n3"), options);
             node.tick(options.electionTicks());
-            node.receive("n2", new RaftMessage.PreVoteResponse(1, true));
-            node.receive("n2", new RaftMessage.RequestVoteResponse(1, true));
+            node.receive("n2", new Message.PreVoteResponse(1, true));
+            node.receive("n2", new Message.RequestVoteResponse(1, true));
             node.receive("n2", new AppendAccepted(1, 1));
 
             assertEquals(1, node.propose(1, "a").sentTo("n2", AppendEntries.class).size());
@@ -256,9 +255,9 @@ class RaftReplicationTest {
         @Test
         void rejectionJumpsBackUsingFollowerHint() {
             var log = new InMemoryRaftLog();
-            log.append(LongStream.rangeClosed(1, 10).mapToObj(index -> (RaftLogEntry) command(index, 1, "v" + index)).toList());
-            log.persistHardState(new RaftHardState(1, Optional.empty(), 0));
-            var node = TestNode.restore("n1", RaftMembership.voters("n1", "n2", "n3"), log, 0);
+            log.append(LongStream.rangeClosed(1, 10).mapToObj(index -> (LogEntry) command(index, 1, "v" + index)).toList());
+            log.persistHardState(new HardState(1, Optional.empty(), 0));
+            var node = TestNode.restore("n1", Ids.voters("n1", "n2", "n3"), log, 0);
             node.elect("n2", "n3");
 
             var output = node.receive("n2", new AppendRejected(node.raft.term(), 10, 3, 1));
@@ -306,7 +305,7 @@ class RaftReplicationTest {
             node.electAndCommit("n2", "n3");
             node.propose(1, "a");
 
-            var output = node.step(new RaftInput.Unreachable("n2"));
+            var output = node.step(new Input.Unreachable(Ids.id("n2")));
 
             var probe = output.singleTo("n2", AppendEntries.class);
             assertEquals(1, probe.prevLogIndex());

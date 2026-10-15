@@ -1,17 +1,18 @@
 syntax = "proto3";
-package io.partdb.server.peer;
 
+package partdb.peer.v1;
+
+option java_multiple_files = true;
 option java_package = "io.partdb.server.peer.proto";
-option java_outer_classname = "RaftProto";
 
-service RaftService {
-  rpc Send(stream RaftMessage) returns (SendResponse);
+service RaftPeer {
+  rpc Send(stream PeerMessage) returns (SendResponse);
   rpc InstallSnapshot(stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
 }
 
 message SendResponse {}
 
-message RaftMessage {
+message PeerMessage {
   oneof message {
     PreVote pre_vote = 1;
     PreVoteResponse pre_vote_response = 2;
@@ -22,96 +23,98 @@ message RaftMessage {
     AppendRejected append_rejected = 7;
     Heartbeat heartbeat = 8;
     HeartbeatResponse heartbeat_response = 9;
-    InstallSnapshotResult install_snapshot_result = 10;
-    ReadIndex read_index = 11;
+    SnapshotInstalled snapshot_installed = 10;
+    ReadIndexRequest read_index_request = 11;
     ReadIndexResponse read_index_response = 12;
     TimeoutNow timeout_now = 13;
   }
 }
 
 message PreVote {
-  int64 term = 1;
-  int64 last_log_index = 2;
-  int64 last_log_term = 3;
+  uint64 term = 1;
+  uint64 last_log_index = 2;
+  uint64 last_log_term = 3;
 }
 
 message PreVoteResponse {
-  int64 term = 1;
+  uint64 term = 1;
   bool granted = 2;
 }
 
 message RequestVote {
-  int64 term = 1;
-  int64 last_log_index = 2;
-  int64 last_log_term = 3;
+  uint64 term = 1;
+  uint64 last_log_index = 2;
+  uint64 last_log_term = 3;
   bool leadership_transfer = 4;
 }
 
 message RequestVoteResponse {
-  int64 term = 1;
+  uint64 term = 1;
   bool granted = 2;
 }
 
 message AppendEntries {
-  int64 term = 1;
-  int64 prev_log_index = 2;
-  int64 prev_log_term = 3;
+  uint64 term = 1;
+  uint64 prev_log_index = 2;
+  uint64 prev_log_term = 3;
   repeated LogEntry entries = 4;
-  int64 commit_index = 5;
+  uint64 commit_index = 5;
 }
 
 message AppendAccepted {
-  int64 term = 1;
-  int64 match_index = 2;
+  uint64 term = 1;
+  uint64 match_index = 2;
 }
 
 message AppendRejected {
-  int64 term = 1;
-  int64 rejected_index = 2;
-  int64 hint_index = 3;
-  int64 hint_term = 4;
+  uint64 term = 1;
+  uint64 rejected_index = 2;
+  uint64 hint_index = 3;
+  uint64 hint_term = 4;
 }
 
 message Heartbeat {
-  int64 term = 1;
-  int64 commit_index = 2;
-  int64 round = 3;
+  uint64 term = 1;
+  uint64 commit_index = 2;
+  uint64 round = 3;
 }
 
 message HeartbeatResponse {
-  int64 term = 1;
-  int64 round = 2;
+  uint64 term = 1;
+  uint64 round = 2;
 }
 
-message InstallSnapshotResult {
-  int64 term = 1;
-  int64 match_index = 2;
+message SnapshotInstalled {
+  uint64 term = 1;
+  uint64 match_index = 2;
 }
 
-message ReadIndex {
-  int64 term = 1;
+message ReadIndexRequest {
+  uint64 term = 1;
   int64 id = 2;
 }
 
 message ReadIndexResponse {
-  int64 term = 1;
+  uint64 term = 1;
   int64 id = 2;
-  int64 read_index = 3;
+  optional uint64 read_index = 3;
 }
 
 message TimeoutNow {
-  int64 term = 1;
+  uint64 term = 1;
 }
 
 message LogEntry {
-  int64 index = 1;
-  int64 term = 2;
+  uint64 index = 1;
+  uint64 term = 2;
   oneof entry {
     bytes command = 3;
-    bool no_op = 4;
-    Membership membership = 5;
+    NoOp no_op = 4;
+    Membership configuration = 5;
   }
 }
+
+message NoOp {}
 
 message Membership {
   repeated string voters = 1;
@@ -126,10 +129,12 @@ message InstallSnapshotRequest {
 }
 
 message SnapshotHeader {
-  int64 term = 1;
-  int64 snapshot_index = 2;
-  int64 snapshot_term = 3;
+  uint64 term = 1;
+  uint64 snapshot_index = 2;
+  uint64 snapshot_term = 3;
   Membership membership = 4;
+  uint64 size_bytes = 5;
+  fixed32 crc32c = 6;
 }
 
 message InstallSnapshotResponse {}

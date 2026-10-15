@@ -2,10 +2,10 @@ package io.partdb.raft;
 
 import java.util.Objects;
 
-public record Envelope(String from, String to, RaftMessage message) {
+public record Envelope(NodeId from, NodeId to, Message message) {
     public Envelope {
-        Validation.nodeId(from, "from");
-        Validation.nodeId(to, "to");
+        Objects.requireNonNull(from, "from must not be null");
+        Objects.requireNonNull(to, "to must not be null");
         Objects.requireNonNull(message, "message must not be null");
     }
 }

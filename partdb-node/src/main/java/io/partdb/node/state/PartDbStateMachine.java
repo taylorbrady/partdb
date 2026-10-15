@@ -27,7 +27,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
-public final class PartDbStateMachine implements StateMachine, AutoCloseable {
+public final class PartDbStateMachine implements StateMachine<Bytes>, AutoCloseable {
 
     private final StorageEngine store;
     private volatile long lastApplied;
@@ -44,6 +44,10 @@ public final class PartDbStateMachine implements StateMachine, AutoCloseable {
     @Override
     public long appliedIndex() {
         return lastApplied;
+    }
+
+    @Override
+    public void skip(long index) {
     }
 
     @Override

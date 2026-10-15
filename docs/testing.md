@@ -27,7 +27,7 @@ behavior.
 Tests of the pure core (`io.partdb.raft`) drive `Raft` through `step` and
 `ready` exactly as the runtime does. They must not use real files, sockets,
 clocks, threads, transports, or PartDB command semantics. `TestNode` wraps one
-core with an `InMemoryRaftLog`, persists every `RaftEffects`, acknowledges it
+core with an `InMemoryRaftLog`, persists every `Ready`, acknowledges it
 with `Persisted`, and returns the combined output; `ClusterHarness` connects
 several cores through an in-memory message queue with isolation and
 compaction.
@@ -40,7 +40,7 @@ Keep focused suites by protocol concern:
 - `RaftReadIndexTest`: read rounds, deferral until the leader commits in its
   term, forwarding, rejection and expiry.
 - `RaftMembershipTest`: single-server changes, learners, quorum changes,
-  leader removal.
+  leader self-removal and hand-off.
 - `RaftSnapshotTest`, `RaftRecoveryTest`, `RaftLeadershipTransferTest`.
 - `ProgressTest`, `UnstableLogTest`, and `RaftCorePurityTest`: helper and
   purity coverage. The purity test keeps the core package free of JDK IO,
@@ -50,8 +50,9 @@ Keep focused suites by protocol concern:
   catch-up, snapshots, reads, membership, leadership transfer).
 - `SimulationTest`: randomized, seeded cluster histories. Each seed drives
   three or five cores through message loss, delay, duplication, reordering,
-  partitions, crashes, unreachable reports, leadership transfers, and log
-  compaction while clients issue reads and writes. Every run checks election
+  partitions, crashes, unreachable reports, leadership transfers, membership
+  changes (including leader self-removal), and log compaction while clients
+  issue reads and writes. Every run checks election
   safety, state machine safety, commit monotonicity, log matching,
   convergence after faults heal, and linearizability of the client history
   (`LinearizabilityChecker`, a WGL search over per-key register histories).
@@ -60,11 +61,12 @@ Keep focused suites by protocol concern:
   `new Simulation(seed, Simulation.Settings.forSeed(seed)).trace(System.out).run()`.
 
 Tests of the runtime (`io.partdb.raft.runtime`) may use real files and
-threads. `WriteAheadLogTest` and `FileRaftStorageTest` cover durability,
-replay, torn tails, snapshot resets, and compaction. `RaftRuntimeTest` runs
-real runtimes over `LocalNetwork`, an in-memory transport, and covers
-replication, follower reads, restart replay, leadership transfer, membership
-changes, partitions, and streamed snapshot catch-up.
+threads. `WriteAheadLogTest` and `LogStoreTest` cover durability, replay,
+torn tails, snapshot resets, and compaction. `RaftRuntimeTest` runs real
+runtimes over `LocalNetwork`, an in-memory transport, and covers replication,
+follower reads, restart replay, the cluster file, leadership transfer,
+membership changes including leader self-removal, partitions, entry- and
+byte-triggered compaction, and streamed snapshot catch-up.
 
 ## Project Checks
 

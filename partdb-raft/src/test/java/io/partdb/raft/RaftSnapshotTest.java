@@ -1,11 +1,10 @@
 package io.partdb.raft;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.raft.RaftMessage.AppendEntries;
-import io.partdb.raft.RaftMessage.AppendRejected;
-import io.partdb.raft.RaftMessage.HeartbeatResponse;
-import io.partdb.raft.RaftMessage.InstallSnapshot;
-import io.partdb.raft.RaftMessage.InstallSnapshotResponse;
+import io.partdb.raft.Message.AppendEntries;
+import io.partdb.raft.Message.AppendRejected;
+import io.partdb.raft.Message.HeartbeatResponse;
+import io.partdb.raft.Message.SnapshotInstalled;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -19,16 +18,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RaftSnapshotTest {
 
-    private static final RaftMembership MEMBERSHIP = RaftMembership.voters("n1", "n2", "n3");
+    private static final Membership MEMBERSHIP = Ids.voters("n1", "n2", "n3");
 
-    private static RaftLogEntry.Command command(long index, long term) {
-        return new RaftLogEntry.Command(index, term, Bytes.utf8("v" + index));
+    private static LogEntry.Command command(long index, long term) {
+        return new LogEntry.Command(index, term, Bytes.utf8("v" + index));
     }
 
     private static TestNode compactedLeader() {
         var log = new InMemoryRaftLog();
-        log.append(LongStream.rangeClosed(1, 10).mapToObj(index -> (RaftLogEntry) command(index, 1)).toList());
-        log.persistHardState(new RaftHardState(1, Optional.empty(), 10));
+        log.append(LongStream.rangeClosed(1, 10).mapToObj(index -> (LogEntry) command(index, 1)).toList());
+        log.persistHardState(new HardState(1, Optional.empty(), 10));
         log.compact(new SnapshotMetadata(8, 1, MEMBERSHIP));
         var node = TestNode.restore("n1", MEMBERSHIP, log, 10);
         node.elect("n2", "n3");
@@ -43,7 +42,7 @@ class RaftSnapshotTest {
 
             var output = node.receive("n2", new AppendRejected(2, 10, 3, 1));
 
-            assertEquals(Set.of("n2"), output.snapshotRequests());
+            assertEquals(Ids.ids("n2"), output.snapshotRequests());
             assertTrue(output.sentTo("n2", AppendEntries.class).isEmpty());
         }
 
@@ -63,7 +62,7 @@ class RaftSnapshotTest {
             var node = compactedLeader();
             node.receive("n2", new AppendRejected(2, 10, 3, 1));
 
-            var output = node.receive("n2", new InstallSnapshotResponse(2, 8));
+            var output = node.receive("n2", new SnapshotInstalled(2, 8));
 
             var append = output.singleTo("n2", AppendEntries.class);
             assertEquals(8, append.prevLogIndex());
@@ -75,7 +74,7 @@ class RaftSnapshotTest {
             var node = compactedLeader();
             node.receive("n2", new AppendRejected(2, 10, 3, 1));
 
-            assertTrue(node.step(new RaftInput.SnapshotSent("n2")).sentTo("n2", AppendEntries.class).isEmpty());
+            assertTrue(node.step(new Input.SnapshotSent(Ids.id("n2"))).sentTo("n2", AppendEntries.class).isEmpty());
 
             var output = node.receive("n2", new HeartbeatResponse(2, 0));
             assertEquals(8, output.singleTo("n2", AppendEntries.class).prevLogIndex());
@@ -85,11 +84,11 @@ class RaftSnapshotTest {
         void retriesSnapshotAfterFailure() {
             var node = compactedLeader();
             node.receive("n2", new AppendRejected(2, 10, 3, 1));
-            node.step(new RaftInput.SnapshotFailed("n2"));
+            node.step(new Input.SnapshotFailed(Ids.id("n2")));
 
             var output = node.receive("n2", new HeartbeatResponse(2, 0));
 
-            assertEquals(Set.of("n2"), output.snapshotRequests());
+            assertEquals(Ids.ids("n2"), output.snapshotRequests());
         }
     }
 
@@ -101,10 +100,10 @@ class RaftSnapshotTest {
             node.receive("n2", new AppendEntries(1, 0, 0, List.of(command(1, 1), command(2, 1)), 0));
             var snapshot = new SnapshotMetadata(5, 2, MEMBERSHIP);
 
-            var output = node.receive("n3", new InstallSnapshot(2, snapshot));
+            var output = node.installSnapshot("n3", 2, snapshot);
 
             assertEquals(List.of(snapshot), output.snapshots());
-            assertEquals(new InstallSnapshotResponse(2, 5), output.single(InstallSnapshotResponse.class));
+            assertEquals(new SnapshotInstalled(2, 5), output.single(SnapshotInstalled.class));
             assertEquals(5, node.raft.commitIndex());
             assertEquals(5, node.raft.appliedIndex());
             assertTrue(node.log.entries().isEmpty());
@@ -120,12 +119,12 @@ class RaftSnapshotTest {
             var node = TestNode.create("n1", "n1", "n2", "n3");
             node.receive("n2", new AppendEntries(1, 0, 0, List.of(command(1, 1), command(2, 1)), 0));
 
-            var output = node.receive("n2", new InstallSnapshot(1, new SnapshotMetadata(2, 1, MEMBERSHIP)));
+            var output = node.installSnapshot("n2", 1, new SnapshotMetadata(2, 1, MEMBERSHIP));
 
             assertTrue(output.snapshots().isEmpty());
             assertEquals(2, node.raft.commitIndex());
             assertEquals(List.of(command(1, 1), command(2, 1)), output.committed());
-            assertEquals(new InstallSnapshotResponse(1, 2), output.single(InstallSnapshotResponse.class));
+            assertEquals(new SnapshotInstalled(1, 2), output.single(SnapshotInstalled.class));
         }
 
         @Test
@@ -133,18 +132,18 @@ class RaftSnapshotTest {
             var node = TestNode.create("n1", "n1", "n2", "n3");
             node.receive("n2", new AppendEntries(1, 0, 0, List.of(command(1, 1), command(2, 1)), 2));
 
-            var output = node.receive("n2", new InstallSnapshot(1, new SnapshotMetadata(1, 1, MEMBERSHIP)));
+            var output = node.installSnapshot("n2", 1, new SnapshotMetadata(1, 1, MEMBERSHIP));
 
             assertTrue(output.snapshots().isEmpty());
-            assertEquals(new InstallSnapshotResponse(1, 2), output.single(InstallSnapshotResponse.class));
+            assertEquals(new SnapshotInstalled(1, 2), output.single(SnapshotInstalled.class));
         }
 
         @Test
         void adoptsSnapshotMembership() {
             var node = TestNode.create("n1", "n1", "n2", "n3");
-            var membership = RaftMembership.of(Set.of("n1", "n2", "n3"), Set.of("n4"));
+            var membership = Ids.membership(Set.of("n1", "n2", "n3"), Set.of("n4"));
 
-            node.receive("n2", new InstallSnapshot(1, new SnapshotMetadata(3, 1, membership)));
+            node.installSnapshot("n2", 1, new SnapshotMetadata(3, 1, membership));
 
             assertEquals(membership, node.raft.membership());
         }
@@ -154,7 +153,7 @@ class RaftSnapshotTest {
             var node = TestNode.create("n1", "n1", "n2", "n3");
             node.follow("n2", 5);
 
-            var output = node.receive("n3", new InstallSnapshot(3, new SnapshotMetadata(10, 3, MEMBERSHIP)));
+            var output = node.installSnapshot("n3", 3, new SnapshotMetadata(10, 3, MEMBERSHIP));
 
             assertTrue(output.snapshots().isEmpty());
             assertEquals(5, output.single(HeartbeatResponse.class).term());

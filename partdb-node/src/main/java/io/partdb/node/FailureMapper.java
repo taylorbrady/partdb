@@ -15,7 +15,7 @@ final class FailureMapper {
             : error;
         return switch (cause) {
             case PartDbException _, IllegalArgumentException _ -> cause;
-            case RaftException.NotLeader e -> new PartDbException.NotLeader(e.leaderId().orElse(null));
+            case RaftException.NotLeader e -> new PartDbException.NotLeader(e.leader().map(io.partdb.raft.NodeId::value).orElse(null));
             case RaftException.Closed _ -> new PartDbException.NodeClosed();
             default -> new PartDbException.StorageFailure(
                 cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName(),

@@ -12,8 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class UnstableLogTest {
 
-    private static RaftLogEntry entry(long index, long term) {
-        return new RaftLogEntry.NoOp(index, term);
+    private static LogEntry entry(long index, long term) {
+        return new LogEntry.NoOp(index, term);
     }
 
     @Test
@@ -83,7 +83,7 @@ class UnstableLogTest {
     void restoreReplacesEntriesWithSnapshot() {
         var unstable = new UnstableLog(1);
         unstable.append(entry(1, 1));
-        var snapshot = new SnapshotMetadata(5, 2, RaftMembership.voters("n1"));
+        var snapshot = new SnapshotMetadata(5, 2, Ids.voters("n1"));
 
         unstable.restore(snapshot);
 
@@ -108,7 +108,7 @@ class UnstableLogTest {
         unstable.append(entry(2, 2));
         assertEquals(List.of(entry(2, 2)), unstable.takeEntries());
 
-        var snapshot = new SnapshotMetadata(5, 2, RaftMembership.voters("n1"));
+        var snapshot = new SnapshotMetadata(5, 2, Ids.voters("n1"));
         unstable.restore(snapshot);
         assertEquals(Optional.of(snapshot), unstable.takeSnapshot());
         assertEquals(Optional.empty(), unstable.takeSnapshot());

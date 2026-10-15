@@ -1,6 +1,6 @@
 package io.partdb.raft;
 
-public enum RaftRole {
+public enum Role {
     FOLLOWER,
     PRE_CANDIDATE,
     CANDIDATE,

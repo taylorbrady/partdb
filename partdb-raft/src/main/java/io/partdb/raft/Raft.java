@@ -1,23 +1,22 @@
 package io.partdb.raft;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.raft.RaftEffects.ProposalResult;
-import io.partdb.raft.RaftEffects.ReadResult;
-import io.partdb.raft.RaftMessage.AppendAccepted;
-import io.partdb.raft.RaftMessage.AppendEntries;
-import io.partdb.raft.RaftMessage.AppendRejected;
-import io.partdb.raft.RaftMessage.Heartbeat;
-import io.partdb.raft.RaftMessage.HeartbeatResponse;
-import io.partdb.raft.RaftMessage.InstallSnapshot;
-import io.partdb.raft.RaftMessage.InstallSnapshotResponse;
-import io.partdb.raft.RaftMessage.PreVote;
-import io.partdb.raft.RaftMessage.PreVoteResponse;
-import io.partdb.raft.RaftMessage.ReadIndexResponse;
-import io.partdb.raft.RaftMessage.RequestVote;
-import io.partdb.raft.RaftMessage.RequestVoteResponse;
-import io.partdb.raft.RaftMessage.TimeoutNow;
+import io.partdb.raft.Message.AppendAccepted;
+import io.partdb.raft.Message.AppendEntries;
+import io.partdb.raft.Message.AppendRejected;
+import io.partdb.raft.Message.Heartbeat;
+import io.partdb.raft.Message.HeartbeatResponse;
+import io.partdb.raft.Message.PreVote;
+import io.partdb.raft.Message.PreVoteResponse;
+import io.partdb.raft.Message.ReadIndexRequest;
+import io.partdb.raft.Message.ReadIndexResponse;
+import io.partdb.raft.Message.RequestVote;
+import io.partdb.raft.Message.RequestVoteResponse;
+import io.partdb.raft.Message.SnapshotInstalled;
+import io.partdb.raft.Message.TimeoutNow;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,6 +24,7 @@ import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -36,60 +36,61 @@ public final class Raft {
 
     private record Follower() implements RoleState {}
 
-    private record PreCandidate(Map<String, Boolean> votes) implements RoleState {}
+    private record PreCandidate(Map<NodeId, Boolean> votes) implements RoleState {}
 
-    private record Candidate(Map<String, Boolean> votes) implements RoleState {}
+    private record Candidate(Map<NodeId, Boolean> votes) implements RoleState {}
 
-    private record PendingRead(String requester, long id, long index, long round, Set<String> acks) {}
+    private record PendingRead(NodeId requester, long id, long index, long round, Set<NodeId> acks) {}
+
+    private record Transfer(long id, NodeId target, long startedAt) {}
 
     private static final class Leader implements RoleState {
-        private final Map<String, Progress> progress = new TreeMap<>();
+        private final Map<NodeId, Progress> progress = new TreeMap<>();
         private final List<PendingRead> pendingReads = new ArrayList<>();
         private final List<PendingRead> deferredReads = new ArrayList<>();
-        private final Set<String> forcedAppends = new TreeSet<>();
-        private String transferTarget;
+        private final Set<NodeId> forcedAppends = new TreeSet<>();
         private long readRound;
         private boolean readRoundStarted;
         private boolean heartbeatDue;
         private boolean commitAdvanced;
     }
 
-    private final String id;
-    private final RaftOptions options;
-    private final RaftLog log;
+    private final NodeId id;
+    private final Options options;
+    private final StableLog log;
     private final RandomGenerator random;
     private final UnstableLog unstable;
     private final Map<Long, Long> forwardedReads = new LinkedHashMap<>();
-    private final NavigableMap<Long, RaftMembership> configurations = new TreeMap<>();
+    private final NavigableMap<Long, Membership> configurations = new TreeMap<>();
 
     private final List<Envelope> messages = new ArrayList<>();
-    private final List<ProposalResult> proposals = new ArrayList<>();
-    private final List<ReadResult> reads = new ArrayList<>();
-    private final Set<String> snapshotRequests = new TreeSet<>();
+    private final List<Outcome> outcomes = new ArrayList<>();
+    private final Set<NodeId> snapshotRequests = new TreeSet<>();
 
-    private RaftMembership membership;
+    private Membership membership;
     private RoleState role = new Follower();
     private long term;
-    private String votedFor;
-    private String leaderId;
+    private NodeId votedFor;
+    private NodeId leaderId;
+    private Transfer transfer;
     private long commitIndex;
     private long appliedIndex;
     private long ticks;
     private long electionElapsed;
     private long heartbeatElapsed;
     private long electionTimeout;
-    private RaftHardState lastHardState;
+    private HardState lastHardState;
 
     private Raft(
-        String id,
-        RaftMembership membership,
-        RaftOptions options,
-        RaftLog log,
-        RaftHardState hardState,
+        NodeId id,
+        Membership membership,
+        Options options,
+        StableLog log,
+        HardState hardState,
         long applied,
         RandomGenerator random
     ) {
-        this.id = Validation.nodeId(id, "id");
+        this.id = Objects.requireNonNull(id, "id must not be null");
         this.options = Objects.requireNonNull(options, "options must not be null");
         this.log = Objects.requireNonNull(log, "log must not be null");
         this.random = Objects.requireNonNull(random, "random must not be null");
@@ -116,27 +117,27 @@ public final class Raft {
     }
 
     public static Raft recover(
-        String id,
-        RaftMembership membership,
-        RaftOptions options,
-        RaftLog log,
-        RaftHardState hardState,
+        NodeId id,
+        Membership membership,
+        Options options,
+        StableLog log,
+        HardState hardState,
         long applied,
         RandomGenerator random
     ) {
         return new Raft(id, membership, options, log, hardState, applied, random);
     }
 
-    public String id() {
+    public NodeId id() {
         return id;
     }
 
-    public RaftRole role() {
+    public Role role() {
         return switch (role) {
-            case Follower _ -> RaftRole.FOLLOWER;
-            case PreCandidate _ -> RaftRole.PRE_CANDIDATE;
-            case Candidate _ -> RaftRole.CANDIDATE;
-            case Leader _ -> RaftRole.LEADER;
+            case Follower _ -> Role.FOLLOWER;
+            case PreCandidate _ -> Role.PRE_CANDIDATE;
+            case Candidate _ -> Role.CANDIDATE;
+            case Leader _ -> Role.LEADER;
         };
     }
 
@@ -144,7 +145,7 @@ public final class Raft {
         return term;
     }
 
-    public Optional<String> leaderId() {
+    public Optional<NodeId> leaderId() {
         return Optional.ofNullable(leaderId);
     }
 
@@ -160,68 +161,84 @@ public final class Raft {
         return unstable.lastIndex().orElseGet(log::lastIndex);
     }
 
-    public RaftMembership membership() {
+    public Membership membership() {
         return membership;
     }
 
-    public void step(RaftInput input) {
+    public Membership membershipAt(long index) {
+        var configuration = configurations.floorEntry(index);
+        if (configuration == null) {
+            throw new IllegalArgumentException("membership at " + index + " precedes the log start " + configurations.firstKey());
+        }
+        return configuration.getValue();
+    }
+
+    public void step(Input input) {
         switch (input) {
-            case RaftInput.Tick() -> tick();
-            case RaftInput.Propose(long proposal, Bytes command) -> propose(proposal, command);
-            case RaftInput.Receive(String from, RaftMessage message) -> receive(from, message);
-            case RaftInput.ReadIndex(long read) -> readIndex(read);
-            case RaftInput.ChangeMembership(long proposal, MembershipChange change) -> changeMembership(proposal, change);
-            case RaftInput.TransferLeadership(String target) -> transferLeadership(target);
-            case RaftInput.Persisted(long index, long entryTerm) -> persisted(index, entryTerm);
-            case RaftInput.SnapshotSent(String peer) -> snapshotSent(peer);
-            case RaftInput.SnapshotFailed(String peer) -> snapshotFailed(peer);
-            case RaftInput.Unreachable(String peer) -> unreachable(peer);
+            case Input.Tick() -> tick();
+            case Input.Propose(long request, Bytes command) -> propose(request, command);
+            case Input.ReadIndex(long request) -> readIndex(request);
+            case Input.ChangeMembership(long request, MembershipChange change) -> changeMembership(request, change);
+            case Input.TransferLeadership(long request, NodeId target) -> transferLeadership(request, target);
+            case Input.Receive(NodeId from, Message message) -> receive(from, message);
+            case Input.InstallSnapshot(NodeId from, long snapshotTerm, SnapshotMetadata snapshot) ->
+                installSnapshot(from, snapshotTerm, snapshot);
+            case Input.Persisted(long index, long entryTerm) -> persisted(index, entryTerm);
+            case Input.SnapshotSent(NodeId peer) -> snapshotSent(peer);
+            case Input.SnapshotFailed(NodeId peer) -> snapshotFailed(peer);
+            case Input.Unreachable(NodeId peer) -> unreachable(peer);
         }
     }
 
-    public RaftEffects ready() {
+    public Ready ready() {
         var committed = takeCommitted();
         if (role instanceof Leader leader) {
             flush(leader);
         }
+        pruneConfigurations();
 
-        var hardState = new RaftHardState(term, Optional.ofNullable(votedFor), commitIndex);
-        var changedHardState = hardState.equals(lastHardState) ? Optional.<RaftHardState>empty() : Optional.of(hardState);
+        var hardState = new HardState(term, Optional.ofNullable(votedFor), commitIndex);
+        var changedHardState = hardState.equals(lastHardState) ? Optional.<HardState>empty() : Optional.of(hardState);
         lastHardState = hardState;
 
-        var effects = new RaftEffects(
+        var ready = new Ready(
             changedHardState,
             unstable.takeSnapshot(),
             unstable.takeEntries(),
             messages,
             committed,
-            proposals,
-            reads,
+            outcomes,
             snapshotRequests
         );
         messages.clear();
-        proposals.clear();
-        reads.clear();
+        outcomes.clear();
         snapshotRequests.clear();
-        return effects;
+        return ready;
     }
 
-    private void recoverConfigurations(RaftMembership base, long snapshotIndex) {
+    private void recoverConfigurations(Membership base, long snapshotIndex) {
         configurations.put(snapshotIndex, base);
         if (log.lastIndex() > snapshotIndex) {
-            for (RaftLogEntry entry : log.entries(snapshotIndex + 1, log.lastIndex() + 1, Long.MAX_VALUE)) {
-                if (entry instanceof RaftLogEntry.Membership(long index, _, var membership)) {
-                    configurations.put(index, membership);
+            for (LogEntry entry : log.entries(snapshotIndex + 1, log.lastIndex() + 1, Long.MAX_VALUE)) {
+                if (entry instanceof LogEntry.Configuration(long index, _, var next)) {
+                    configurations.put(index, next);
                 }
             }
         }
         membership = configurations.lastEntry().getValue();
     }
 
-    private void append(RaftLogEntry entry) {
+    private void pruneConfigurations() {
+        Long base = configurations.floorKey(firstIndex() - 1);
+        if (base != null) {
+            configurations.headMap(base, false).clear();
+        }
+    }
+
+    private void append(LogEntry entry) {
         unstable.append(entry);
         configurations.tailMap(entry.index(), true).clear();
-        if (entry instanceof RaftLogEntry.Membership(long index, _, var next)) {
+        if (entry instanceof LogEntry.Configuration(long index, _, var next)) {
             configurations.put(index, next);
         }
         refreshMembership();
@@ -233,16 +250,16 @@ public final class Raft {
             return;
         }
         membership = current;
+        if (transfer != null && !current.isVoter(transfer.target())) {
+            finishTransfer(new Rejection.Aborted());
+        }
         if (!(role instanceof Leader leader)) {
             return;
         }
         long nextIndex = lastIndex() + 1;
         leader.progress.keySet().removeIf(member -> !member.equals(id) && !current.isMember(member));
-        for (String member : current.members()) {
+        for (NodeId member : current.members()) {
             leader.progress.computeIfAbsent(member, _ -> new Progress(nextIndex, options.maxInflightAppends()));
-        }
-        if (leader.transferTarget != null && !current.isVoter(leader.transferTarget)) {
-            leader.transferTarget = null;
         }
         maybeCommit(leader);
     }
@@ -254,6 +271,9 @@ public final class Raft {
     private void tick() {
         ticks++;
         expireForwardedReads();
+        if (transfer != null && ticks - transfer.startedAt() >= 2L * options.electionTicks()) {
+            finishTransfer(new Rejection.Aborted());
+        }
         if (role instanceof Leader leader) {
             tickLeader(leader);
         } else {
@@ -263,7 +283,7 @@ public final class Raft {
 
     private void tickElection() {
         electionElapsed++;
-        if (electionElapsed >= electionTimeout && membership.isVoter(id)) {
+        if (electionElapsed >= electionTimeout && promotable()) {
             campaign(true, false);
         }
     }
@@ -282,7 +302,9 @@ public final class Raft {
                     progress.resetActive();
                 }
             });
-            leader.transferTarget = null;
+            if (transfer != null) {
+                finishTransfer(new Rejection.Aborted());
+            }
         }
         if (heartbeatElapsed >= options.heartbeatTicks()) {
             heartbeatElapsed = 0;
@@ -297,7 +319,7 @@ public final class Raft {
         return active >= membership.quorum();
     }
 
-    private static boolean isActive(Leader leader, String member) {
+    private static boolean isActive(Leader leader, NodeId member) {
         var progress = leader.progress.get(member);
         return progress != null && progress.recentActive();
     }
@@ -307,7 +329,7 @@ public final class Raft {
         electionElapsed = 0;
         resetElectionTimeout();
 
-        var votes = new TreeMap<String, Boolean>();
+        var votes = new TreeMap<NodeId, Boolean>();
         votes.put(id, true);
         long voteTerm;
         if (preVote) {
@@ -331,7 +353,7 @@ public final class Raft {
 
         long lastIndex = lastIndex();
         long lastTerm = termOf(lastIndex);
-        for (String voter : membership.voters()) {
+        for (NodeId voter : membership.voters()) {
             if (!voter.equals(id)) {
                 send(voter, preVote
                     ? new PreVote(voteTerm, lastIndex, lastTerm)
@@ -342,10 +364,10 @@ public final class Raft {
 
     private enum VoteResult { WON, LOST, PENDING }
 
-    private VoteResult tally(Map<String, Boolean> votes) {
+    private VoteResult tally(Map<NodeId, Boolean> votes) {
         long granted = 0;
         long rejected = 0;
-        for (String voter : membership.voters()) {
+        for (NodeId voter : membership.voters()) {
             Boolean vote = votes.get(voter);
             if (vote == null) {
                 continue;
@@ -365,9 +387,9 @@ public final class Raft {
         return VoteResult.PENDING;
     }
 
-    private void becomeFollower(long newTerm, String leader) {
+    private void becomeFollower(long newTerm, NodeId leader) {
         if (role instanceof Leader current) {
-            rejectLeaderReads(current);
+            rejectLeaderReads(current, Optional.ofNullable(leader));
         }
         if (newTerm > term) {
             term = newTerm;
@@ -382,7 +404,7 @@ public final class Raft {
     private void becomeLeader() {
         var leader = new Leader();
         long next = lastIndex() + 1;
-        for (String member : membership.members()) {
+        for (NodeId member : membership.members()) {
             leader.progress.put(member, new Progress(next, options.maxInflightAppends()));
         }
         var self = leader.progress.computeIfAbsent(id, _ -> new Progress(next, options.maxInflightAppends()));
@@ -393,14 +415,28 @@ public final class Raft {
         changeLeader(id);
         electionElapsed = 0;
         heartbeatElapsed = 0;
-        append(new RaftLogEntry.NoOp(next, term));
+        append(new LogEntry.NoOp(next, term));
     }
 
-    private void changeLeader(String leader) {
+    private void changeLeader(NodeId leader) {
         if (!Objects.equals(leaderId, leader)) {
-            rejectForwardedReads();
+            rejectForwardedReads(Optional.ofNullable(leader));
         }
         leaderId = leader;
+        if (transfer != null && leader != null) {
+            if (leader.equals(transfer.target())) {
+                finishTransfer(null);
+            } else if (leader.equals(id)) {
+                finishTransfer(new Rejection.Aborted());
+            } else {
+                finishTransfer(new Rejection.NotLeader(Optional.of(leader)));
+            }
+        }
+    }
+
+    private void finishTransfer(Rejection rejection) {
+        outcomes.add(rejection == null ? new Outcome.Transferred(transfer.id()) : new Outcome.Rejected(transfer.id(), rejection));
+        transfer = null;
     }
 
     private void resetElectionTimeout() {
@@ -411,11 +447,11 @@ public final class Raft {
         return leaderId != null && electionElapsed < options.electionTicks();
     }
 
-    private void receive(String from, RaftMessage message) {
+    private void receive(NodeId from, Message message) {
         if (message.term() > term) {
             boolean voteRequest = message instanceof PreVote || message instanceof RequestVote;
-            boolean transfer = message instanceof RequestVote vote && vote.leadershipTransfer();
-            if (voteRequest && !transfer && inLease()) {
+            boolean transferVote = message instanceof RequestVote vote && vote.leadershipTransfer();
+            if (voteRequest && !transferVote && inLease()) {
                 if (message instanceof PreVote) {
                     send(from, new PreVoteResponse(term, false));
                 }
@@ -423,11 +459,11 @@ public final class Raft {
             }
             boolean keepTerm = message instanceof PreVote || message instanceof PreVoteResponse response && response.granted();
             if (!keepTerm) {
-                becomeFollower(message.term(), leaderMessage(message) ? from : null);
+                becomeFollower(message.term(), message instanceof AppendEntries || message instanceof Heartbeat ? from : null);
             }
         } else if (message.term() < term) {
             switch (message) {
-                case AppendEntries _, Heartbeat _, InstallSnapshot _ -> send(from, new HeartbeatResponse(term, 0));
+                case AppendEntries _, Heartbeat _ -> send(from, new HeartbeatResponse(term, 0));
                 case PreVote _ -> send(from, new PreVoteResponse(term, false));
                 default -> {}
             }
@@ -441,8 +477,7 @@ public final class Raft {
             case RequestVoteResponse response -> handleRequestVoteResponse(from, response);
             case AppendEntries append -> handleAppendEntries(from, append);
             case Heartbeat heartbeat -> handleHeartbeat(from, heartbeat);
-            case InstallSnapshot snapshot -> handleInstallSnapshot(from, snapshot);
-            case RaftMessage.ReadIndex read -> handleForwardedRead(from, read);
+            case ReadIndexRequest read -> handleForwardedRead(from, read);
             case ReadIndexResponse response -> handleReadIndexResponse(from, response);
             case TimeoutNow _ -> handleTimeoutNow(from);
             case AppendAccepted accepted -> {
@@ -460,24 +495,20 @@ public final class Raft {
                     handleHeartbeatResponse(leader, from, response);
                 }
             }
-            case InstallSnapshotResponse response -> {
+            case SnapshotInstalled installed -> {
                 if (role instanceof Leader leader) {
-                    handleInstallSnapshotResponse(leader, from, response);
+                    handleSnapshotInstalled(leader, from, installed);
                 }
             }
         }
     }
 
-    private static boolean leaderMessage(RaftMessage message) {
-        return message instanceof AppendEntries || message instanceof Heartbeat || message instanceof InstallSnapshot;
-    }
-
-    private void handlePreVote(String from, PreVote vote) {
+    private void handlePreVote(NodeId from, PreVote vote) {
         boolean granted = vote.term() > term && isUpToDate(vote.lastLogIndex(), vote.lastLogTerm());
         send(from, new PreVoteResponse(granted ? vote.term() : term, granted));
     }
 
-    private void handlePreVoteResponse(String from, PreVoteResponse response) {
+    private void handlePreVoteResponse(NodeId from, PreVoteResponse response) {
         if (!(role instanceof PreCandidate(var votes)) || (response.granted() && response.term() != term + 1)) {
             return;
         }
@@ -489,7 +520,7 @@ public final class Raft {
         }
     }
 
-    private void handleRequestVote(String from, RequestVote vote) {
+    private void handleRequestVote(NodeId from, RequestVote vote) {
         boolean canVote = from.equals(votedFor) || (votedFor == null && leaderId == null);
         boolean granted = canVote && isUpToDate(vote.lastLogIndex(), vote.lastLogTerm());
         if (granted) {
@@ -499,7 +530,7 @@ public final class Raft {
         send(from, new RequestVoteResponse(term, granted));
     }
 
-    private void handleRequestVoteResponse(String from, RequestVoteResponse response) {
+    private void handleRequestVoteResponse(NodeId from, RequestVoteResponse response) {
         if (!(role instanceof Candidate(var votes))) {
             return;
         }
@@ -517,14 +548,14 @@ public final class Raft {
         return candidateLastTerm > lastTerm || (candidateLastTerm == lastTerm && candidateLastIndex >= lastIndex);
     }
 
-    private void followLeader(String from) {
+    private void followLeader(NodeId from) {
         if (!(role instanceof Follower) || !from.equals(leaderId)) {
             becomeFollower(term, from);
         }
         electionElapsed = 0;
     }
 
-    private void handleAppendEntries(String from, AppendEntries append) {
+    private void handleAppendEntries(NodeId from, AppendEntries append) {
         if (role instanceof Leader) {
             return;
         }
@@ -543,7 +574,7 @@ public final class Raft {
 
         long lastNewIndex = append.prevLogIndex() + append.entries().size();
         boolean conflicted = false;
-        for (RaftLogEntry entry : append.entries()) {
+        for (LogEntry entry : append.entries()) {
             if (conflicted || !matchesTerm(entry.index(), entry.term())) {
                 conflicted = true;
                 append(entry);
@@ -553,7 +584,7 @@ public final class Raft {
         send(from, new AppendAccepted(term, lastNewIndex));
     }
 
-    private void handleHeartbeat(String from, Heartbeat heartbeat) {
+    private void handleHeartbeat(NodeId from, Heartbeat heartbeat) {
         if (role instanceof Leader) {
             return;
         }
@@ -562,20 +593,26 @@ public final class Raft {
         send(from, new HeartbeatResponse(term, heartbeat.round()));
     }
 
-    private void handleInstallSnapshot(String from, InstallSnapshot install) {
+    private void installSnapshot(NodeId from, long snapshotTerm, SnapshotMetadata snapshot) {
+        if (snapshotTerm < term) {
+            send(from, new HeartbeatResponse(term, 0));
+            return;
+        }
+        if (snapshotTerm > term) {
+            becomeFollower(snapshotTerm, from);
+        }
         if (role instanceof Leader) {
             return;
         }
         followLeader(from);
 
-        var snapshot = install.snapshot();
         if (snapshot.index() <= commitIndex) {
-            send(from, new InstallSnapshotResponse(term, commitIndex));
+            send(from, new SnapshotInstalled(term, commitIndex));
             return;
         }
         if (matchesTerm(snapshot.index(), snapshot.term())) {
             commitTo(snapshot.index());
-            send(from, new InstallSnapshotResponse(term, commitIndex));
+            send(from, new SnapshotInstalled(term, commitIndex));
             return;
         }
 
@@ -585,11 +622,15 @@ public final class Raft {
         configurations.clear();
         configurations.put(snapshot.index(), snapshot.membership());
         refreshMembership();
-        send(from, new InstallSnapshotResponse(term, snapshot.index()));
+        send(from, new SnapshotInstalled(term, snapshot.index()));
     }
 
-    private void handleTimeoutNow(String from) {
-        if (from.equals(leaderId) && membership.isVoter(id)) {
+    private boolean promotable() {
+        return membership.isVoter(id) || membershipAt(commitIndex).isVoter(id);
+    }
+
+    private void handleTimeoutNow(NodeId from) {
+        if (from.equals(leaderId) && promotable()) {
             campaign(false, true);
         }
     }
@@ -600,7 +641,7 @@ public final class Raft {
         }
     }
 
-    private void handleAppendAccepted(Leader leader, String from, AppendAccepted accepted) {
+    private void handleAppendAccepted(Leader leader, NodeId from, AppendAccepted accepted) {
         var progress = leader.progress.get(from);
         if (progress == null) {
             return;
@@ -620,12 +661,12 @@ public final class Raft {
         if (updated) {
             maybeCommit(leader);
         }
-        if (from.equals(leader.transferTarget) && progress.match() == lastIndex()) {
+        if (transfer != null && from.equals(transfer.target()) && progress.match() == lastIndex()) {
             send(from, new TimeoutNow(term));
         }
     }
 
-    private void handleAppendRejected(Leader leader, String from, AppendRejected rejected) {
+    private void handleAppendRejected(Leader leader, NodeId from, AppendRejected rejected) {
         var progress = leader.progress.get(from);
         if (progress == null) {
             return;
@@ -639,7 +680,7 @@ public final class Raft {
         }
     }
 
-    private void handleHeartbeatResponse(Leader leader, String from, HeartbeatResponse response) {
+    private void handleHeartbeatResponse(Leader leader, NodeId from, HeartbeatResponse response) {
         var progress = leader.progress.get(from);
         if (progress == null) {
             return;
@@ -652,13 +693,13 @@ public final class Raft {
         acknowledgeReads(leader, from, response.round());
     }
 
-    private void handleInstallSnapshotResponse(Leader leader, String from, InstallSnapshotResponse response) {
+    private void handleSnapshotInstalled(Leader leader, NodeId from, SnapshotInstalled installed) {
         var progress = leader.progress.get(from);
         if (progress == null) {
             return;
         }
         progress.markActive();
-        boolean updated = progress.maybeUpdate(response.matchIndex());
+        boolean updated = progress.maybeUpdate(installed.matchIndex());
         if (progress.state() == Progress.State.SNAPSHOT) {
             progress.becomeProbe();
         }
@@ -667,7 +708,7 @@ public final class Raft {
         }
     }
 
-    private void snapshotSent(String peer) {
+    private void snapshotSent(NodeId peer) {
         if (role instanceof Leader leader && leader.progress.get(peer) instanceof Progress progress
             && progress.state() == Progress.State.SNAPSHOT) {
             progress.becomeProbe();
@@ -675,7 +716,7 @@ public final class Raft {
         }
     }
 
-    private void snapshotFailed(String peer) {
+    private void snapshotFailed(NodeId peer) {
         if (role instanceof Leader leader && leader.progress.get(peer) instanceof Progress progress
             && progress.state() == Progress.State.SNAPSHOT) {
             progress.abortSnapshot();
@@ -683,7 +724,7 @@ public final class Raft {
         }
     }
 
-    private void unreachable(String peer) {
+    private void unreachable(NodeId peer) {
         if (role instanceof Leader leader && leader.progress.get(peer) instanceof Progress progress
             && progress.state() == Progress.State.REPLICATE) {
             progress.becomeProbe();
@@ -700,7 +741,18 @@ public final class Raft {
             commitIndex = candidate;
             leader.commitAdvanced = true;
             releaseDeferredReads(leader);
+            if (!membership.isVoter(id) && !membershipPending()) {
+                handOff(leader);
+            }
         }
+    }
+
+    private void handOff(Leader leader) {
+        flush(leader);
+        membership.voters().stream()
+            .max(Comparator.comparingLong(voter -> leader.progress.get(voter) instanceof Progress progress ? progress.match() : 0))
+            .ifPresent(successor -> send(successor, new TimeoutNow(term)));
+        becomeFollower(term, null);
     }
 
     private void persisted(long index, long entryTerm) {
@@ -713,45 +765,53 @@ public final class Raft {
         }
     }
 
-    private void propose(long proposal, Bytes command) {
-        if (!(role instanceof Leader leader) || leader.transferTarget != null) {
-            proposals.add(new ProposalResult.Rejected(proposal));
-            return;
+    private Optional<Rejection> rejectUnlessLeader() {
+        if (!(role instanceof Leader)) {
+            return Optional.of(new Rejection.NotLeader(Optional.ofNullable(leaderId)));
         }
-        var entry = new RaftLogEntry.Command(lastIndex() + 1, term, command);
-        append(entry);
-        proposals.add(new ProposalResult.Accepted(proposal, entry.index(), term));
+        if (transfer != null) {
+            return Optional.of(new Rejection.TransferInProgress());
+        }
+        return Optional.empty();
     }
 
-    private void changeMembership(long proposal, MembershipChange change) {
-        if (!(role instanceof Leader leader)
-            || leader.transferTarget != null
-            || change.revokesVote(id)
-            || membershipPending()
-            || !committedInCurrentTerm()) {
-            proposals.add(new ProposalResult.Rejected(proposal));
+    private void propose(long request, Bytes command) {
+        var rejection = rejectUnlessLeader();
+        if (rejection.isPresent()) {
+            outcomes.add(new Outcome.Rejected(request, rejection.get()));
             return;
         }
-        RaftMembership next;
-        try {
-            next = membership.apply(change);
-        } catch (IllegalArgumentException e) {
-            proposals.add(new ProposalResult.Rejected(proposal));
-            return;
-        }
-        var entry = new RaftLogEntry.Membership(lastIndex() + 1, term, next);
+        var entry = new LogEntry.Command(lastIndex() + 1, term, command);
         append(entry);
-        proposals.add(new ProposalResult.Accepted(proposal, entry.index(), term));
+        outcomes.add(new Outcome.Appended(request, entry.index(), term));
     }
 
-    private void transferLeadership(String target) {
-        if (!(role instanceof Leader leader)
-            || target.equals(id)
-            || !membership.isVoter(target)
-            || target.equals(leader.transferTarget)) {
+    private void changeMembership(long request, MembershipChange change) {
+        var rejection = rejectUnlessLeader()
+            .or(() -> membershipPending() || !committedInCurrentTerm() ? Optional.of(new Rejection.ChangeInProgress()) : Optional.empty())
+            .or(() -> membership.check(change).map(Rejection.Invalid::new));
+        if (rejection.isPresent()) {
+            outcomes.add(new Outcome.Rejected(request, rejection.get()));
             return;
         }
-        leader.transferTarget = target;
+        var entry = new LogEntry.Configuration(lastIndex() + 1, term, membership.apply(change));
+        append(entry);
+        outcomes.add(new Outcome.Appended(request, entry.index(), term));
+    }
+
+    private void transferLeadership(long request, NodeId target) {
+        var rejection = rejectUnlessLeader()
+            .or(() -> membership.isVoter(target) ? Optional.empty() : Optional.of(new Rejection.Invalid(target + " is not a voter")));
+        if (rejection.isPresent()) {
+            outcomes.add(new Outcome.Rejected(request, rejection.get()));
+            return;
+        }
+        if (target.equals(id)) {
+            outcomes.add(new Outcome.Transferred(request));
+            return;
+        }
+        var leader = (Leader) role;
+        transfer = new Transfer(request, target, ticks);
         electionElapsed = 0;
         var progress = leader.progress.get(target);
         if (progress != null && progress.match() == lastIndex()) {
@@ -759,7 +819,7 @@ public final class Raft {
         }
     }
 
-    private List<RaftLogEntry> takeCommitted() {
+    private List<LogEntry> takeCommitted() {
         if (appliedIndex >= commitIndex) {
             return List.of();
         }
@@ -771,7 +831,7 @@ public final class Raft {
     private void flush(Leader leader) {
         boolean heartbeat = leader.heartbeatDue || leader.readRoundStarted;
         for (var entry : leader.progress.entrySet()) {
-            String peer = entry.getKey();
+            NodeId peer = entry.getKey();
             if (peer.equals(id)) {
                 continue;
             }
@@ -793,7 +853,7 @@ public final class Raft {
         leader.commitAdvanced = false;
     }
 
-    private boolean sendAppend(String peer, Progress progress, boolean force) {
+    private boolean sendAppend(NodeId peer, Progress progress, boolean force) {
         if (progress.state() == Progress.State.SNAPSHOT || (!force && progress.isPaused())) {
             return false;
         }
@@ -811,7 +871,7 @@ public final class Raft {
         return !entries.isEmpty();
     }
 
-    private void requestSnapshot(String peer, Progress progress) {
+    private void requestSnapshot(NodeId peer, Progress progress) {
         if (!progress.recentActive()) {
             return;
         }
@@ -819,53 +879,53 @@ public final class Raft {
         snapshotRequests.add(peer);
     }
 
-    private void readIndex(long read) {
+    private void readIndex(long request) {
         if (role instanceof Leader leader) {
-            confirmRead(leader, null, read);
+            confirmRead(leader, null, request);
         } else if (leaderId != null) {
-            forwardedReads.put(read, ticks);
-            send(leaderId, new RaftMessage.ReadIndex(term, read));
+            forwardedReads.put(request, ticks);
+            send(leaderId, new ReadIndexRequest(term, request));
         } else {
-            reads.add(new ReadResult.Rejected(read));
+            outcomes.add(new Outcome.Rejected(request, new Rejection.NotLeader(Optional.empty())));
         }
     }
 
-    private void handleForwardedRead(String from, RaftMessage.ReadIndex read) {
+    private void handleForwardedRead(NodeId from, ReadIndexRequest read) {
         if (role instanceof Leader leader) {
             confirmRead(leader, from, read.id());
         } else {
-            send(from, new ReadIndexResponse(term, read.id(), 0));
+            send(from, new ReadIndexResponse(term, read.id(), OptionalLong.empty()));
         }
     }
 
-    private void handleReadIndexResponse(String from, ReadIndexResponse response) {
+    private void handleReadIndexResponse(NodeId from, ReadIndexResponse response) {
         if (!from.equals(leaderId) || forwardedReads.remove(response.id()) == null) {
             return;
         }
-        reads.add(response.rejected()
-            ? new ReadResult.Rejected(response.id())
-            : new ReadResult.Confirmed(response.id(), response.readIndex()));
+        outcomes.add(response.readIndex().isPresent()
+            ? new Outcome.ReadReady(response.id(), response.readIndex().getAsLong())
+            : new Outcome.Rejected(response.id(), new Rejection.NotLeader(Optional.empty())));
     }
 
-    private void confirmRead(Leader leader, String requester, long read) {
+    private void confirmRead(Leader leader, NodeId requester, long request) {
         if (!committedInCurrentTerm()) {
-            leader.deferredReads.add(new PendingRead(requester, read, 0, 0, Set.of()));
+            leader.deferredReads.add(new PendingRead(requester, request, 0, 0, Set.of()));
             return;
         }
-        if (membership.quorum() == 1) {
-            completeRead(requester, read, commitIndex);
+        if (membership.quorum() == 1 && membership.isVoter(id)) {
+            completeRead(requester, request, commitIndex);
             return;
         }
         if (!leader.readRoundStarted) {
             leader.readRound++;
             leader.readRoundStarted = true;
         }
-        var acks = new HashSet<String>();
+        var acks = new HashSet<NodeId>();
         acks.add(id);
-        leader.pendingReads.add(new PendingRead(requester, read, commitIndex, leader.readRound, acks));
+        leader.pendingReads.add(new PendingRead(requester, request, commitIndex, leader.readRound, acks));
     }
 
-    private void acknowledgeReads(Leader leader, String from, long round) {
+    private void acknowledgeReads(Leader leader, NodeId from, long round) {
         if (!membership.isVoter(from)) {
             return;
         }
@@ -895,28 +955,36 @@ public final class Raft {
         }
     }
 
-    private void completeRead(String requester, long read, long index) {
+    private void completeRead(NodeId requester, long request, long index) {
         if (requester == null) {
-            reads.add(index == 0 ? new ReadResult.Rejected(read) : new ReadResult.Confirmed(read, index));
+            outcomes.add(new Outcome.ReadReady(request, index));
         } else {
-            send(requester, new ReadIndexResponse(term, read, index));
+            send(requester, new ReadIndexResponse(term, request, OptionalLong.of(index)));
         }
     }
 
-    private void rejectLeaderReads(Leader leader) {
+    private void rejectRead(NodeId requester, long request, Optional<NodeId> leader) {
+        if (requester == null) {
+            outcomes.add(new Outcome.Rejected(request, new Rejection.NotLeader(leader)));
+        } else {
+            send(requester, new ReadIndexResponse(term, request, OptionalLong.empty()));
+        }
+    }
+
+    private void rejectLeaderReads(Leader leader, Optional<NodeId> newLeader) {
         for (var pending : leader.pendingReads) {
-            completeRead(pending.requester(), pending.id(), 0);
+            rejectRead(pending.requester(), pending.id(), newLeader);
         }
         for (var deferred : leader.deferredReads) {
-            completeRead(deferred.requester(), deferred.id(), 0);
+            rejectRead(deferred.requester(), deferred.id(), newLeader);
         }
         leader.pendingReads.clear();
         leader.deferredReads.clear();
     }
 
-    private void rejectForwardedReads() {
+    private void rejectForwardedReads(Optional<NodeId> newLeader) {
         for (long read : forwardedReads.keySet()) {
-            reads.add(new ReadResult.Rejected(read));
+            outcomes.add(new Outcome.Rejected(read, new Rejection.NotLeader(newLeader)));
         }
         forwardedReads.clear();
     }
@@ -926,7 +994,7 @@ public final class Raft {
         while (iterator.hasNext()) {
             var read = iterator.next();
             if (ticks - read.getValue() >= 2L * options.electionTicks()) {
-                reads.add(new ReadResult.Rejected(read.getKey()));
+                outcomes.add(new Outcome.Rejected(read.getKey(), new Rejection.TimedOut()));
                 iterator.remove();
             }
         }
@@ -971,11 +1039,11 @@ public final class Raft {
         return 0;
     }
 
-    private List<RaftLogEntry> slice(long fromIndex, long toIndex, long maxBytes) {
+    private List<LogEntry> slice(long fromIndex, long toIndex, long maxBytes) {
         if (fromIndex >= toIndex) {
             return List.of();
         }
-        var result = new ArrayList<RaftLogEntry>();
+        var result = new ArrayList<LogEntry>();
         long stableEnd = Math.min(toIndex, unstable.offset());
         if (fromIndex < stableEnd) {
             var stable = log.entries(fromIndex, stableEnd, maxBytes);
@@ -984,8 +1052,8 @@ public final class Raft {
                 return result;
             }
         }
-        long bytes = result.stream().mapToLong(RaftLogEntry::payloadSize).sum();
-        for (RaftLogEntry entry : unstable.slice(Math.max(fromIndex, unstable.offset()), toIndex)) {
+        long bytes = result.stream().mapToLong(LogEntry::payloadSize).sum();
+        for (LogEntry entry : unstable.slice(Math.max(fromIndex, unstable.offset()), toIndex)) {
             if (!result.isEmpty() && bytes + entry.payloadSize() > maxBytes) {
                 break;
             }
@@ -995,7 +1063,7 @@ public final class Raft {
         return result;
     }
 
-    private void send(String to, RaftMessage message) {
+    private void send(NodeId to, Message message) {
         messages.add(new Envelope(id, to, message));
     }
 }

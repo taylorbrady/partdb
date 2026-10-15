@@ -31,7 +31,9 @@ public final class PartDbServer implements AutoCloseable {
             .addKeyValue("nodeId", config.nodeId())
             .log("Starting PartDB server");
         try {
-            var transport = new GrpcRaftTransport(config.nodeId(), config.raftPort(), config.raftPeerEndpoints());
+            var transport = new GrpcRaftTransport(
+                config.nodeConfig().raft().clusterId(), config.nodeId(), config.raftPort(), config.raftPeerEndpoints());
+            started.push(transport);
             PartDbNode node = PartDbNode.open(config.nodeConfig(), transport);
             started.push(node);
             var jmxRegistrations = new JmxRegistrations(node);

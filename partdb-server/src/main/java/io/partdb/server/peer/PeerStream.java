@@ -2,40 +2,47 @@ package io.partdb.server.peer;
 
 import io.grpc.stub.ClientCallStreamObserver;
 import io.grpc.stub.ClientResponseObserver;
-import io.partdb.raft.RaftMessage;
+import io.partdb.raft.Message;
+import io.partdb.raft.NodeId;
 import io.partdb.raft.runtime.RaftTransport;
-import io.partdb.server.peer.proto.RaftProto;
-import io.partdb.server.peer.proto.RaftServiceGrpc;
+import io.partdb.server.peer.proto.PeerMessage;
+import io.partdb.server.peer.proto.RaftPeerGrpc;
+import io.partdb.server.peer.proto.SendResponse;
 
 import java.util.ArrayDeque;
 import java.util.Queue;
 
 final class PeerStream {
 
-    private final String peer;
-    private final RaftServiceGrpc.RaftServiceStub stub;
+    private final NodeId peer;
+    private final RaftPeerGrpc.RaftPeerStub stub;
     private final RaftTransport.Receiver receiver;
-    private final int capacity;
-    private final Queue<RaftProto.RaftMessage> queue = new ArrayDeque<>();
-    private ClientCallStreamObserver<RaftProto.RaftMessage> stream;
+    private final long capacityBytes;
+    private final Queue<PeerMessage> queue = new ArrayDeque<>();
+    private long queuedBytes;
+    private ClientCallStreamObserver<PeerMessage> stream;
     private boolean closed;
 
-    PeerStream(String peer, RaftServiceGrpc.RaftServiceStub stub, RaftTransport.Receiver receiver, int capacity) {
+    PeerStream(NodeId peer, RaftPeerGrpc.RaftPeerStub stub, RaftTransport.Receiver receiver, long capacityBytes) {
         this.peer = peer;
         this.stub = stub;
         this.receiver = receiver;
-        this.capacity = capacity;
+        this.capacityBytes = capacityBytes;
     }
 
-    void send(RaftMessage message) {
+    void send(Message message) {
+        var proto = RaftProtoMapper.toProto(message);
         boolean overflow;
         synchronized (this) {
             if (closed) {
                 return;
             }
-            overflow = queue.size() >= capacity;
-            if (!overflow) {
-                queue.add(RaftProtoMapper.toProto(message));
+            overflow = queuedBytes + proto.getSerializedSize() > capacityBytes && !queue.isEmpty();
+            if (overflow) {
+                reset();
+            } else {
+                queue.add(proto);
+                queuedBytes += proto.getSerializedSize();
                 if (stream == null) {
                     open();
                 }
@@ -50,18 +57,28 @@ final class PeerStream {
     synchronized void close() {
         closed = true;
         queue.clear();
+        queuedBytes = 0;
         if (stream != null) {
             stream.onCompleted();
             stream = null;
         }
     }
 
+    private void reset() {
+        queue.clear();
+        queuedBytes = 0;
+        if (stream != null) {
+            stream.cancel("peer stream overflowed", null);
+            stream = null;
+        }
+    }
+
     private void open() {
-        stub.send(new ClientResponseObserver<RaftProto.RaftMessage, RaftProto.SendResponse>() {
-            private ClientCallStreamObserver<RaftProto.RaftMessage> call;
+        stub.send(new ClientResponseObserver<PeerMessage, SendResponse>() {
+            private ClientCallStreamObserver<PeerMessage> call;
 
             @Override
-            public void beforeStart(ClientCallStreamObserver<RaftProto.RaftMessage> requests) {
+            public void beforeStart(ClientCallStreamObserver<PeerMessage> requests) {
                 call = requests;
                 stream = requests;
                 requests.setOnReadyHandler(() -> {
@@ -74,7 +91,7 @@ final class PeerStream {
             }
 
             @Override
-            public void onNext(RaftProto.SendResponse value) {
+            public void onNext(SendResponse value) {
             }
 
             @Override
@@ -91,17 +108,20 @@ final class PeerStream {
 
     private void drain() {
         while (stream != null && stream.isReady() && !queue.isEmpty()) {
-            stream.onNext(queue.poll());
+            var next = queue.poll();
+            queuedBytes -= next.getSerializedSize();
+            stream.onNext(next);
         }
     }
 
-    private void disconnected(ClientCallStreamObserver<RaftProto.RaftMessage> call) {
+    private void disconnected(ClientCallStreamObserver<PeerMessage> call) {
         synchronized (this) {
             if (stream != call) {
                 return;
             }
             stream = null;
             queue.clear();
+            queuedBytes = 0;
         }
         receiver.unreachable(peer);
     }

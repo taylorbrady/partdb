@@ -20,7 +20,7 @@ final class JmxRegistrations implements AutoCloseable {
     JmxRegistrations(PartDbNode node) {
         this.mBeanServer = ManagementFactory.getPlatformMBeanServer();
         this.node = node;
-        String nodeId = node.cluster().status().nodeId();
+        String nodeId = node.cluster().status().nodeId().value();
         this.nodeObjectName = objectName("Node", nodeId);
         this.storageObjectName = objectName("Storage", nodeId);
         this.registered = false;
@@ -74,7 +74,7 @@ final class JmxRegistrations implements AutoCloseable {
     private record NodeMBean(PartDbNode node) implements PartDbNodeMXBean {
         @Override
         public String getNodeId() {
-            return node.cluster().status().nodeId();
+            return node.cluster().status().nodeId().value();
         }
 
         @Override
@@ -89,7 +89,7 @@ final class JmxRegistrations implements AutoCloseable {
 
         @Override
         public String getLeaderId() {
-            return node.cluster().status().leaderId().orElse("");
+            return node.cluster().status().leader().map(io.partdb.raft.NodeId::value).orElse("");
         }
 
         @Override

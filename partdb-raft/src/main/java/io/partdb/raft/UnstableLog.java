@@ -6,7 +6,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 
 final class UnstableLog {
-    private final List<RaftLogEntry> entries = new ArrayList<>();
+    private final List<LogEntry> entries = new ArrayList<>();
     private SnapshotMetadata snapshot;
     private boolean snapshotTaken;
     private long offset;
@@ -49,7 +49,7 @@ final class UnstableLog {
         return OptionalLong.of(entries.get(position(index)).term());
     }
 
-    List<RaftLogEntry> slice(long fromIndex, long toIndex) {
+    List<LogEntry> slice(long fromIndex, long toIndex) {
         long from = Math.max(fromIndex, offset);
         long to = Math.min(toIndex, offset + entries.size());
         if (from >= to) {
@@ -58,7 +58,7 @@ final class UnstableLog {
         return List.copyOf(entries.subList(position(from), position(to)));
     }
 
-    void append(RaftLogEntry entry) {
+    void append(LogEntry entry) {
         long index = entry.index();
         long end = offset + entries.size();
         if (index == end) {
@@ -107,7 +107,7 @@ final class UnstableLog {
         return Optional.of(snapshot);
     }
 
-    List<RaftLogEntry> takeEntries() {
+    List<LogEntry> takeEntries() {
         var taken = slice(takenThrough + 1, offset + entries.size());
         takenThrough = offset + entries.size() - 1;
         return taken;

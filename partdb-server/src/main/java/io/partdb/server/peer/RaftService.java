@@ -1,101 +1,80 @@
 package io.partdb.server.peer;
 
-import io.grpc.Context;
-import io.grpc.Contexts;
-import io.grpc.Metadata;
-import io.grpc.ServerCall;
-import io.grpc.ServerCallHandler;
-import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.partdb.raft.Envelope;
+import io.partdb.raft.NodeId;
 import io.partdb.raft.runtime.RaftTransport;
-import io.partdb.server.peer.proto.RaftProto;
-import io.partdb.server.peer.proto.RaftServiceGrpc;
+import io.partdb.server.peer.proto.InstallSnapshotRequest;
+import io.partdb.server.peer.proto.InstallSnapshotResponse;
+import io.partdb.server.peer.proto.PeerMessage;
+import io.partdb.server.peer.proto.RaftPeerGrpc;
+import io.partdb.server.peer.proto.SendResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 
-final class RaftService extends RaftServiceGrpc.RaftServiceImplBase {
+final class RaftService extends RaftPeerGrpc.RaftPeerImplBase {
 
     private static final Logger log = LoggerFactory.getLogger(RaftService.class);
-    static final Metadata.Key<String> SENDER_KEY = Metadata.Key.of("x-raft-sender-id", Metadata.ASCII_STRING_MARSHALLER);
-    private static final Context.Key<String> SENDER = Context.key("raft-sender");
 
-    private final String nodeId;
+    private final NodeId self;
     private final RaftTransport.Receiver receiver;
 
-    RaftService(String nodeId, RaftTransport.Receiver receiver) {
-        this.nodeId = nodeId;
+    RaftService(NodeId self, RaftTransport.Receiver receiver) {
+        this.self = self;
         this.receiver = receiver;
     }
 
-    static ServerInterceptor senderInterceptor() {
-        return new ServerInterceptor() {
-            @Override
-            public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
-                ServerCall<ReqT, RespT> call,
-                Metadata headers,
-                ServerCallHandler<ReqT, RespT> next
-            ) {
-                String sender = headers.get(SENDER_KEY);
-                if (sender == null || sender.isBlank()) {
-                    call.close(Status.UNAUTHENTICATED.withDescription("missing raft sender"), new Metadata());
-                    return new ServerCall.Listener<>() {};
-                }
-                return Contexts.interceptCall(Context.current().withValue(SENDER, sender), call, headers, next);
-            }
-        };
-    }
-
     @Override
-    public StreamObserver<RaftProto.RaftMessage> send(StreamObserver<RaftProto.SendResponse> responses) {
-        String from = SENDER.get();
+    public StreamObserver<PeerMessage> send(StreamObserver<SendResponse> responses) {
+        NodeId from = PeerHeaders.SENDER.get();
         return new StreamObserver<>() {
             @Override
-            public void onNext(RaftProto.RaftMessage message) {
-                receiver.receive(new Envelope(from, nodeId, RaftProtoMapper.fromProto(message)));
+            public void onNext(PeerMessage message) {
+                receiver.receive(new Envelope(from, self, RaftProtoMapper.fromProto(message)));
             }
 
             @Override
             public void onError(Throwable error) {
-                log.atDebug().addKeyValue("from", from).addKeyValue("error", error.getMessage()).log("Raft stream closed");
+                log.atDebug().addKeyValue("from", from).addKeyValue("error", error.getMessage()).log("Peer stream closed");
             }
 
             @Override
             public void onCompleted() {
-                responses.onNext(RaftProto.SendResponse.getDefaultInstance());
+                responses.onNext(SendResponse.getDefaultInstance());
                 responses.onCompleted();
             }
         };
     }
 
     @Override
-    public StreamObserver<RaftProto.InstallSnapshotRequest> installSnapshot(StreamObserver<RaftProto.InstallSnapshotResponse> responses) {
-        String from = SENDER.get();
+    public StreamObserver<InstallSnapshotRequest> installSnapshot(StreamObserver<InstallSnapshotResponse> responses) {
+        NodeId from = PeerHeaders.SENDER.get();
         return new StreamObserver<>() {
-            private RaftTransport.SnapshotReceiver snapshot;
+            private RaftTransport.SnapshotSink sink;
             private boolean failed;
 
             @Override
-            public void onNext(RaftProto.InstallSnapshotRequest request) {
+            public void onNext(InstallSnapshotRequest request) {
                 if (failed) {
                     return;
                 }
                 try {
                     switch (request.getPayloadCase()) {
                         case HEADER -> {
-                            if (snapshot != null) {
+                            if (sink != null) {
                                 throw new IllegalArgumentException("duplicate snapshot header");
                             }
-                            snapshot = receiver.receiveSnapshot(from, RaftProtoMapper.fromProto(request.getHeader()));
+                            var header = request.getHeader();
+                            sink = receiver.receiveSnapshot(from, header.getTerm(), RaftProtoMapper.fromProto(header));
                         }
                         case CHUNK -> {
-                            if (snapshot == null) {
+                            if (sink == null) {
                                 throw new IllegalArgumentException("snapshot chunk received before its header");
                             }
-                            snapshot.write(request.getChunk().asReadOnlyByteBuffer());
+                            sink.write(request.getChunk().asReadOnlyByteBuffer());
                         }
                         case PAYLOAD_NOT_SET -> throw new IllegalArgumentException("snapshot payload not set");
                     }
@@ -106,8 +85,8 @@ final class RaftService extends RaftServiceGrpc.RaftServiceImplBase {
 
             @Override
             public void onError(Throwable error) {
-                if (snapshot != null) {
-                    snapshot.abort();
+                if (sink != null) {
+                    sink.abort();
                 }
                 log.atDebug().addKeyValue("from", from).addKeyValue("error", error.getMessage()).log("Snapshot stream failed");
             }
@@ -117,24 +96,24 @@ final class RaftService extends RaftServiceGrpc.RaftServiceImplBase {
                 if (failed) {
                     return;
                 }
-                if (snapshot == null) {
+                if (sink == null) {
                     fail(new IllegalArgumentException("snapshot stream ended without a header"));
                     return;
                 }
                 try {
-                    snapshot.complete();
+                    sink.complete();
                 } catch (IOException | RuntimeException e) {
                     fail(e);
                     return;
                 }
-                responses.onNext(RaftProto.InstallSnapshotResponse.getDefaultInstance());
+                responses.onNext(InstallSnapshotResponse.getDefaultInstance());
                 responses.onCompleted();
             }
 
             private void fail(Exception error) {
                 failed = true;
-                if (snapshot != null) {
-                    snapshot.abort();
+                if (sink != null) {
+                    sink.abort();
                 }
                 log.atDebug().addKeyValue("from", from).addKeyValue("error", error.getMessage()).log("Snapshot install failed");
                 responses.onError(Status.INTERNAL.withDescription(error.getMessage()).withCause(error).asRuntimeException());

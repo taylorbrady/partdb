@@ -1,9 +1,9 @@
 package io.partdb.raft.runtime;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.raft.RaftHardState;
-import io.partdb.raft.RaftLogEntry;
-import io.partdb.raft.RaftMembership;
+import io.partdb.raft.HardState;
+import io.partdb.raft.LogEntry;
+import io.partdb.raft.Ids;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -28,12 +28,12 @@ class WriteAheadLogTest {
     @TempDir
     Path directory;
 
-    private static RaftLogEntry command(long index, long term, String value) {
-        return new RaftLogEntry.Command(index, term, Bytes.utf8(value));
+    private static LogEntry command(long index, long term, String value) {
+        return new LogEntry.Command(index, term, Bytes.utf8(value));
     }
 
-    private static RaftHardState state(long term, long commit) {
-        return new RaftHardState(term, Optional.of("n1"), commit);
+    private static HardState state(long term, long commit) {
+        return new HardState(term, Optional.of(Ids.id("n1")), commit);
     }
 
     private WriteAheadLog open(long segmentBytes) {
@@ -50,13 +50,13 @@ class WriteAheadLogTest {
     void replaysEntriesAndLatestHardState() {
         try (var wal = open(1 << 20)) {
             wal.append(Optional.of(state(1, 0)), List.of(command(1, 1, "a"), command(2, 1, "b")));
-            wal.append(Optional.of(state(1, 2)), List.of(new RaftLogEntry.NoOp(3, 1)));
+            wal.append(Optional.of(state(1, 2)), List.of(new LogEntry.NoOp(3, 1)));
         }
 
         try (var wal = open(1 << 20)) {
             var replay = wal.replay();
             assertEquals(state(1, 2), replay.hardState());
-            assertEquals(List.of(command(1, 1, "a"), command(2, 1, "b"), new RaftLogEntry.NoOp(3, 1)), replay.entries());
+            assertEquals(List.of(command(1, 1, "a"), command(2, 1, "b"), new LogEntry.NoOp(3, 1)), replay.entries());
             assertEquals(OptionalLong.empty(), replay.resetIndex());
         }
     }
@@ -75,15 +75,15 @@ class WriteAheadLogTest {
 
     @Test
     void roundTripsEveryEntryType() {
-        var membership = RaftMembership.of(Set.of("n1", "n2"), Set.of("n3"));
-        var entries = List.of(command(1, 1, "a"), new RaftLogEntry.NoOp(2, 1), new RaftLogEntry.Membership(3, 1, membership));
+        var membership = Ids.membership(Set.of("n1", "n2"), Set.of("n3"));
+        var entries = List.of(command(1, 1, "a"), new LogEntry.NoOp(2, 1), new LogEntry.Configuration(3, 1, membership));
         try (var wal = open(1 << 20)) {
-            wal.append(Optional.of(new RaftHardState(1, Optional.empty(), 0)), entries);
+            wal.append(Optional.of(new HardState(1, Optional.empty(), 0)), entries);
         }
 
         try (var wal = open(1 << 20)) {
             assertEquals(entries, wal.replay().entries());
-            assertEquals(new RaftHardState(1, Optional.empty(), 0), wal.replay().hardState());
+            assertEquals(new HardState(1, Optional.empty(), 0), wal.replay().hardState());
         }
     }
 

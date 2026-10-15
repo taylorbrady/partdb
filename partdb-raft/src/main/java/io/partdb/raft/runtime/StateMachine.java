@@ -6,10 +6,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public interface StateMachine {
+public interface StateMachine<R> {
     long appliedIndex();
 
-    Bytes apply(long index, Bytes command);
+    R apply(long index, Bytes command);
+
+    void skip(long index);
 
     long snapshot(OutputStream target) throws IOException;
 
