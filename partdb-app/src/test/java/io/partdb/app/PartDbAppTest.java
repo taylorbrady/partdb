@@ -1,13 +1,17 @@
 package io.partdb.app;
 
+import io.partdb.client.ReadConsistency;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -33,7 +37,7 @@ class PartDbAppTest {
     void parsesGetWithEndpointsAndConsistency() {
         var command = assertInstanceOf(ClientCommand.class, parse("kv", "get", "hello", "--endpoints", "[::1]:8101,localhost:9101", "--local"));
 
-        assertEquals(new ClientCommand.Action.Get("hello", io.partdb.client.ReadConsistency.LOCAL), command.action());
+        assertEquals(new ClientCommand.Action.Get("hello", ReadConsistency.LOCAL), command.action());
         assertEquals(List.of("[::1]:8101", "localhost:9101"), command.options().endpoints().stream().map(Object::toString).toList());
     }
 
@@ -49,7 +53,7 @@ class PartDbAppTest {
     void parsesScanBoundsAndLimit() {
         var command = assertInstanceOf(ClientCommand.class, parse("kv", "scan", "a", "m", "--limit", "5", "--output", "json"));
 
-        assertEquals(new ClientCommand.Action.Scan("a", Optional.of("m"), java.util.OptionalInt.of(5), io.partdb.client.ReadConsistency.LINEARIZABLE), command.action());
+        assertEquals(new ClientCommand.Action.Scan("a", Optional.of("m"), OptionalInt.of(5), ReadConsistency.LINEARIZABLE), command.action());
         assertEquals(OutputFormat.JSON, command.options().output());
     }
 
@@ -71,15 +75,15 @@ class PartDbAppTest {
             "server", "start", "--node-id", "node1", "--data-dir", "/tmp/partdb",
             "--peer", "node1=localhost:8100", "--peer", "node2=localhost:8200", "--client-port", "8101", "--snapshot-entries", "50"));
 
-        assertEquals(java.util.Optional.of(8100), command.config().raftPort());
+        assertEquals(Optional.of(8100), command.config().raftPort());
         assertEquals(50, command.config().node().raft().snapshots().logEntries());
     }
 
     @Test
     void writesEscapedJson() {
-        var value = new java.util.LinkedHashMap<String, Object>();
+        var value = new LinkedHashMap<String, Object>();
         value.put("a", "x\"y\n");
-        value.put("b", java.util.Arrays.asList(1, true, null));
+        value.put("b", Arrays.asList(1, true, null));
 
         assertEquals("{\"a\":\"x\\\"y\\n\",\"b\":[1,true,null]}", Json.write(value));
     }

@@ -1,5 +1,6 @@
 package io.partdb.raft;
 
+import io.partdb.bytes.Bytes;
 import io.partdb.raft.Message.AppendAccepted;
 import io.partdb.raft.Message.AppendEntries;
 import io.partdb.raft.Message.Heartbeat;
@@ -7,6 +8,7 @@ import io.partdb.raft.Message.RequestVote;
 import io.partdb.raft.Message.TimeoutNow;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -72,7 +74,7 @@ class RaftLeadershipTransferTest {
         node.propose(1, "a");
         node.step(transferTo(2, "n2"));
 
-        var output = node.step(new Input.Propose(3, io.partdb.bytes.Bytes.utf8("b")), transferTo(4, "n3"));
+        var output = node.step(new Input.Propose(3, Bytes.utf8("b")), transferTo(4, "n3"));
 
         assertEquals(List.of(
             new Outcome.Rejected(3, new Rejection.TransferInProgress()),
@@ -87,7 +89,7 @@ class RaftLeadershipTransferTest {
         node.propose(1, "a");
         node.step(transferTo(2, "n2"));
 
-        var outcomes = new java.util.ArrayList<Outcome>();
+        var outcomes = new ArrayList<Outcome>();
         for (int i = 0; i < TestNode.OPTIONS.electionTicks(); i++) {
             outcomes.addAll(node.tick(1).outcomes());
             node.receive("n3", new Message.HeartbeatResponse(1, 0));

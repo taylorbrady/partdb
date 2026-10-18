@@ -8,22 +8,23 @@ import io.partdb.raft.Message;
 import io.partdb.raft.NodeId;
 import io.partdb.raft.SnapshotMetadata;
 import io.partdb.raft.runtime.SnapshotInfo;
-import io.partdb.server.peer.proto.AppendAccepted;
-import io.partdb.server.peer.proto.AppendEntries;
-import io.partdb.server.peer.proto.AppendRejected;
-import io.partdb.server.peer.proto.Heartbeat;
-import io.partdb.server.peer.proto.HeartbeatResponse;
-import io.partdb.server.peer.proto.NoOp;
-import io.partdb.server.peer.proto.PeerMessage;
-import io.partdb.server.peer.proto.PreVote;
-import io.partdb.server.peer.proto.PreVoteResponse;
-import io.partdb.server.peer.proto.ReadIndexRequest;
-import io.partdb.server.peer.proto.ReadIndexResponse;
-import io.partdb.server.peer.proto.RequestVote;
-import io.partdb.server.peer.proto.RequestVoteResponse;
-import io.partdb.server.peer.proto.SnapshotHeader;
-import io.partdb.server.peer.proto.SnapshotInstalled;
-import io.partdb.server.peer.proto.TimeoutNow;
+import io.partdb.server.peer.proto.PeerProto;
+import io.partdb.server.peer.proto.PeerProto.AppendAccepted;
+import io.partdb.server.peer.proto.PeerProto.AppendEntries;
+import io.partdb.server.peer.proto.PeerProto.AppendRejected;
+import io.partdb.server.peer.proto.PeerProto.Heartbeat;
+import io.partdb.server.peer.proto.PeerProto.HeartbeatResponse;
+import io.partdb.server.peer.proto.PeerProto.NoOp;
+import io.partdb.server.peer.proto.PeerProto.PeerMessage;
+import io.partdb.server.peer.proto.PeerProto.PreVote;
+import io.partdb.server.peer.proto.PeerProto.PreVoteResponse;
+import io.partdb.server.peer.proto.PeerProto.ReadIndexRequest;
+import io.partdb.server.peer.proto.PeerProto.ReadIndexResponse;
+import io.partdb.server.peer.proto.PeerProto.RequestVote;
+import io.partdb.server.peer.proto.PeerProto.RequestVoteResponse;
+import io.partdb.server.peer.proto.PeerProto.SnapshotHeader;
+import io.partdb.server.peer.proto.PeerProto.SnapshotInstalled;
+import io.partdb.server.peer.proto.PeerProto.TimeoutNow;
 
 import java.util.OptionalLong;
 import java.util.stream.Collectors;
@@ -154,8 +155,8 @@ final class RaftProtoMapper {
         return new SnapshotInfo(metadata, proto.getSizeBytes(), proto.getCrc32C());
     }
 
-    private static io.partdb.server.peer.proto.LogEntry toProto(LogEntry entry) {
-        var builder = io.partdb.server.peer.proto.LogEntry.newBuilder().setIndex(entry.index()).setTerm(entry.term());
+    private static PeerProto.LogEntry toProto(LogEntry entry) {
+        var builder = PeerProto.LogEntry.newBuilder().setIndex(entry.index()).setTerm(entry.term());
         switch (entry) {
             case LogEntry.Command command -> builder.setCommand(UnsafeByteOperations.unsafeWrap(command.command().asReadOnlyByteBuffer()));
             case LogEntry.NoOp _ -> builder.setNoOp(NoOp.getDefaultInstance());
@@ -164,7 +165,7 @@ final class RaftProtoMapper {
         return builder.build();
     }
 
-    private static LogEntry fromProto(io.partdb.server.peer.proto.LogEntry proto) {
+    private static LogEntry fromProto(PeerProto.LogEntry proto) {
         return switch (proto.getEntryCase()) {
             case COMMAND -> new LogEntry.Command(proto.getIndex(), proto.getTerm(), Bytes.copyOf(proto.getCommand().asReadOnlyByteBuffer()));
             case NO_OP -> new LogEntry.NoOp(proto.getIndex(), proto.getTerm());
@@ -173,14 +174,14 @@ final class RaftProtoMapper {
         };
     }
 
-    private static io.partdb.server.peer.proto.Membership toProto(Membership membership) {
-        return io.partdb.server.peer.proto.Membership.newBuilder()
+    private static PeerProto.Membership toProto(Membership membership) {
+        return PeerProto.Membership.newBuilder()
             .addAllVoters(membership.voters().stream().map(NodeId::value).toList())
             .addAllLearners(membership.learners().stream().map(NodeId::value).toList())
             .build();
     }
 
-    private static Membership fromProto(io.partdb.server.peer.proto.Membership proto) {
+    private static Membership fromProto(PeerProto.Membership proto) {
         return Membership.of(
             proto.getVotersList().stream().map(NodeId::new).collect(Collectors.toSet()),
             proto.getLearnersList().stream().map(NodeId::new).collect(Collectors.toSet())

@@ -2,9 +2,9 @@ package io.partdb.client;
 
 import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
+import io.partdb.grpc.cluster.v1.ClusterProto.GetStatusRequest;
+import io.partdb.grpc.cluster.v1.ClusterProto.ListMembersRequest;
 import io.partdb.grpc.cluster.v1.ClusterServiceGrpc;
-import io.partdb.grpc.cluster.v1.GetStatusRequest;
-import io.partdb.grpc.cluster.v1.ListMembersRequest;
 
 import java.util.Objects;
 

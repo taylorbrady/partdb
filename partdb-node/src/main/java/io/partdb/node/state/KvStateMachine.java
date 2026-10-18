@@ -48,12 +48,7 @@ public final class KvStateMachine implements StateMachine<TxnResult>, AutoClosea
             store.apply(index, List.of());
             return new TxnResult.ConditionFailed();
         }
-        store.apply(index, txn.mutations().stream()
-            .<io.partdb.storage.Mutation>map(mutation -> switch (mutation) {
-                case Mutation.Put(var key, var value) -> io.partdb.storage.Mutation.put(key, value);
-                case Mutation.Delete(var key) -> io.partdb.storage.Mutation.delete(key);
-            })
-            .toList());
+        store.apply(index, txn.mutations().stream().map(KvStateMachine::storageMutation).toList());
         return new TxnResult.Committed(index);
     }
 
@@ -125,6 +120,13 @@ public final class KvStateMachine implements StateMachine<TxnResult>, AutoClosea
             case Condition.Missing _ -> current.isEmpty();
             case Condition.ValueEquals(_, var expected) -> current.map(Entry::value).filter(expected::equals).isPresent();
             case Condition.RevisionEquals(_, long expected) -> current.filter(entry -> entry.revision() == expected).isPresent();
+        };
+    }
+
+    private static io.partdb.storage.Mutation storageMutation(Mutation mutation) {
+        return switch (mutation) {
+            case Mutation.Put(var key, var value) -> io.partdb.storage.Mutation.put(key, value);
+            case Mutation.Delete(var key) -> io.partdb.storage.Mutation.delete(key);
         };
     }
 

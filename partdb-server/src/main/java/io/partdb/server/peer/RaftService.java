@@ -5,11 +5,11 @@ import io.grpc.stub.StreamObserver;
 import io.partdb.raft.Envelope;
 import io.partdb.raft.NodeId;
 import io.partdb.raft.runtime.RaftTransport;
-import io.partdb.server.peer.proto.InstallSnapshotRequest;
-import io.partdb.server.peer.proto.InstallSnapshotResponse;
-import io.partdb.server.peer.proto.PeerMessage;
+import io.partdb.server.peer.proto.PeerProto.InstallSnapshotRequest;
+import io.partdb.server.peer.proto.PeerProto.InstallSnapshotResponse;
+import io.partdb.server.peer.proto.PeerProto.PeerMessage;
+import io.partdb.server.peer.proto.PeerProto.SendResponse;
 import io.partdb.server.peer.proto.RaftPeerGrpc;
-import io.partdb.server.peer.proto.SendResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

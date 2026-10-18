@@ -2,7 +2,8 @@ syntax = "proto3";
 
 package partdb.kv.v1;
 
-option java_multiple_files = true;
+option java_multiple_files = false;
+option java_outer_classname = "KvProto";
 option java_package = "io.partdb.grpc.kv.v1";
 
 service KeyValueService {

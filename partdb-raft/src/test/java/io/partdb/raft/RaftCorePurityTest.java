@@ -3,8 +3,10 @@ package io.partdb.raft;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -44,7 +46,7 @@ class RaftCorePurityTest {
     private static List<String> violations(Path path) {
         try {
             String source = Files.readString(path);
-            var violations = new java.util.ArrayList<String>();
+            var violations = new ArrayList<String>();
 
             for (String prefix : FORBIDDEN_IMPORT_PREFIXES) {
                 if (source.contains(prefix)) {
@@ -60,7 +62,7 @@ class RaftCorePurityTest {
 
             return violations;
         } catch (IOException e) {
-            throw new java.io.UncheckedIOException(e);
+            throw new UncheckedIOException(e);
         }
     }
 

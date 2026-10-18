@@ -5,8 +5,8 @@ import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.NettyChannelBuilder;
 import io.netty.channel.ChannelOption;
+import io.partdb.grpc.cluster.v1.ClusterProto.GetStatusRequest;
 import io.partdb.grpc.cluster.v1.ClusterServiceGrpc;
-import io.partdb.grpc.cluster.v1.GetStatusRequest;
 
 import java.time.Duration;
 import java.util.List;

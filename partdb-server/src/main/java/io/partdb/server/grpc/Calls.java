@@ -3,6 +3,7 @@ package io.partdb.server.grpc;
 import com.google.protobuf.Any;
 import com.google.rpc.Code;
 import com.google.rpc.ErrorInfo;
+import com.google.rpc.Status;
 import io.grpc.Context;
 import io.grpc.Deadline;
 import io.grpc.StatusRuntimeException;
@@ -70,7 +71,7 @@ final class Calls {
     }
 
     private static StatusRuntimeException status(Code code, String message, String reason, Map<String, String> metadata) {
-        var status = com.google.rpc.Status.newBuilder().setCode(code.getNumber()).setMessage(message == null ? code.name() : message);
+        var status = Status.newBuilder().setCode(code.getNumber()).setMessage(message == null ? code.name() : message);
         if (reason != null) {
             status.addDetails(Any.pack(ErrorInfo.newBuilder().setReason(reason).setDomain(DOMAIN).putAllMetadata(metadata).build()));
         }

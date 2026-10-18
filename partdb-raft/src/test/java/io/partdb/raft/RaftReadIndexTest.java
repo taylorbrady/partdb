@@ -10,9 +10,11 @@ import io.partdb.raft.Message.ReadIndexResponse;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -138,7 +140,7 @@ class RaftReadIndexTest {
 
         @Test
         void learnersDoNotConfirmReads() {
-            var node = TestNode.create("n1", Ids.membership(java.util.Set.of("n1", "n2", "n3"), java.util.Set.of("n4")));
+            var node = TestNode.create("n1", Ids.membership(Set.of("n1", "n2", "n3"), Set.of("n4")));
             node.electAndCommit("n2", "n3");
             node.step(read(1));
 
@@ -217,7 +219,7 @@ class RaftReadIndexTest {
             var node = follower();
             node.step(read(1));
 
-            var rejected = new java.util.ArrayList<Outcome>();
+            var rejected = new ArrayList<Outcome>();
             for (int tick = 0; tick < 2 * TestNode.OPTIONS.electionTicks() && rejected.isEmpty(); tick++) {
                 node.follow("n2", 1);
                 rejected.addAll(node.tick(1).outcomes());

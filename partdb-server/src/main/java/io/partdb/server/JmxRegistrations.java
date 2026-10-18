@@ -1,14 +1,16 @@
 package io.partdb.server;
 
 import io.partdb.node.Node;
+import io.partdb.raft.NodeId;
 
+import java.lang.management.ManagementFactory;
+import java.time.Instant;
 import javax.management.InstanceNotFoundException;
 import javax.management.MBeanRegistrationException;
 import javax.management.MBeanServer;
 import javax.management.MalformedObjectNameException;
 import javax.management.ObjectName;
 import javax.management.StandardMBean;
-import java.lang.management.ManagementFactory;
 
 final class JmxRegistrations implements AutoCloseable {
     private final MBeanServer mBeanServer;
@@ -89,7 +91,7 @@ final class JmxRegistrations implements AutoCloseable {
 
         @Override
         public String getLeaderId() {
-            return node.cluster().status().leader().map(io.partdb.raft.NodeId::value).orElse("");
+            return node.cluster().status().leader().map(NodeId::value).orElse("");
         }
 
         @Override
@@ -110,7 +112,7 @@ final class JmxRegistrations implements AutoCloseable {
         @Override
         public long getLastLeaderChangeEpochMillis() {
             return node.cluster().status().lastLeaderChange()
-                .map(java.time.Instant::toEpochMilli)
+                .map(Instant::toEpochMilli)
                 .orElse(0L);
         }
 

@@ -1,5 +1,6 @@
 package io.partdb.client;
 
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.rpc.ErrorInfo;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -74,7 +75,7 @@ sealed interface Failure {
             if (detail.is(ErrorInfo.class)) {
                 try {
                     return Optional.of(detail.unpack(ErrorInfo.class));
-                } catch (com.google.protobuf.InvalidProtocolBufferException _) {
+                } catch (InvalidProtocolBufferException _) {
                     return Optional.empty();
                 }
             }

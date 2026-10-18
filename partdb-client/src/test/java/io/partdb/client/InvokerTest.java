@@ -9,15 +9,15 @@ import io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import io.partdb.bytes.Bytes;
+import io.partdb.grpc.cluster.v1.ClusterProto.GetStatusRequest;
+import io.partdb.grpc.cluster.v1.ClusterProto.NodeStatus;
+import io.partdb.grpc.cluster.v1.ClusterProto.RaftRole;
 import io.partdb.grpc.cluster.v1.ClusterServiceGrpc;
-import io.partdb.grpc.cluster.v1.GetStatusRequest;
-import io.partdb.grpc.cluster.v1.NodeStatus;
-import io.partdb.grpc.cluster.v1.RaftRole;
-import io.partdb.grpc.kv.v1.GetRequest;
-import io.partdb.grpc.kv.v1.GetResponse;
 import io.partdb.grpc.kv.v1.KeyValueServiceGrpc;
-import io.partdb.grpc.kv.v1.PutRequest;
-import io.partdb.grpc.kv.v1.PutResponse;
+import io.partdb.grpc.kv.v1.KvProto.GetRequest;
+import io.partdb.grpc.kv.v1.KvProto.GetResponse;
+import io.partdb.grpc.kv.v1.KvProto.PutRequest;
+import io.partdb.grpc.kv.v1.KvProto.PutResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -27,6 +27,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
@@ -172,7 +173,7 @@ class InvokerTest {
         String node = start(new FakeNode("n1", _ -> PutResponse.getDefaultInstance(), new AtomicInteger()));
 
         try (var client = client(node)) {
-            assertEquals(java.util.Optional.empty(), client.kv().get(Bytes.utf8("missing")).value());
+            assertEquals(Optional.empty(), client.kv().get(Bytes.utf8("missing")).value());
         }
     }
 }
