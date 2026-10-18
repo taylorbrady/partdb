@@ -18,7 +18,7 @@ final class InProcessCli {
             var out = new PrintStream(outBytes, true, StandardCharsets.UTF_8);
             var err = new PrintStream(errBytes, true, StandardCharsets.UTF_8)
         ) {
-            int exitCode = PartDbApp.parse(args, Map.of()).execute(out, err);
+            int exitCode = PartDbApp.parse(args, Map.of()).execute(out, err).code();
             return new CommandResult(exitCode, outBytes.toString(StandardCharsets.UTF_8), errBytes.toString(StandardCharsets.UTF_8));
         }
     }

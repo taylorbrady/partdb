@@ -37,6 +37,14 @@ final class Args {
         }
     }
 
+    int positiveInt(String option) {
+        int value = intValue(option);
+        if (value <= 0) {
+            throw new IllegalArgumentException(option + " must be positive");
+        }
+        return value;
+    }
+
     long longValue(String option) {
         String value = value(option);
         try {

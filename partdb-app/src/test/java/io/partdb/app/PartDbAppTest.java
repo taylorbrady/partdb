@@ -1,17 +1,18 @@
 package io.partdb.app;
 
+import io.partdb.bytes.Bytes;
+import io.partdb.client.KeyRange;
 import io.partdb.client.ReadConsistency;
+import io.partdb.client.ScanOptions;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalInt;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -27,33 +28,34 @@ class PartDbAppTest {
     void printsUsageWithoutArguments() {
         var out = new ByteArrayOutputStream();
 
-        int exitCode = parse().execute(new PrintStream(out, true, StandardCharsets.UTF_8), System.err);
+        var exit = parse().execute(new PrintStream(out, true, StandardCharsets.UTF_8), System.err);
 
-        assertEquals(AppCommand.OK, exitCode);
+        assertEquals(ExitCode.OK, exit);
         assertTrue(out.toString(StandardCharsets.UTF_8).contains("Usage: partdb <namespace> <command> [options]"));
     }
 
     @Test
     void parsesGetWithEndpointsAndConsistency() {
-        var command = assertInstanceOf(ClientCommand.class, parse("kv", "get", "hello", "--endpoints", "[::1]:8101,localhost:9101", "--local"));
+        var command = assertInstanceOf(KvCommand.class, parse("kv", "get", "hello", "--endpoints", "[::1]:8101,localhost:9101", "--local"));
 
-        assertEquals(new ClientCommand.Action.Get("hello", ReadConsistency.LOCAL), command.action());
+        assertEquals(new KvCommand.Operation.Get(Bytes.utf8("hello"), ReadConsistency.LOCAL), command.operation());
         assertEquals(List.of("[::1]:8101", "localhost:9101"), command.options().endpoints().stream().map(Object::toString).toList());
     }
 
     @Test
     void readsEndpointsFromTheEnvironment() {
-        var command = assertInstanceOf(ClientCommand.class,
+        var command = assertInstanceOf(ClusterCommand.class,
             PartDbApp.parse(new String[] {"cluster", "status"}, Map.of(ClientOptions.ENDPOINTS_VARIABLE, "a:1,b:2")));
 
+        assertEquals(ClusterCommand.Query.STATUS, command.query());
         assertEquals(2, command.options().endpoints().size());
     }
 
     @Test
     void parsesScanBoundsAndLimit() {
-        var command = assertInstanceOf(ClientCommand.class, parse("kv", "scan", "a", "m", "--limit", "5", "--output", "json"));
+        var command = assertInstanceOf(KvCommand.class, parse("kv", "scan", "a", "m", "--limit", "5", "--output", "json"));
 
-        assertEquals(new ClientCommand.Action.Scan("a", Optional.of("m"), OptionalInt.of(5), ReadConsistency.LINEARIZABLE), command.action());
+        assertEquals(new KvCommand.Operation.Scan(KeyRange.between(Bytes.utf8("a"), Bytes.utf8("m")), ScanOptions.DEFAULT.withLimit(5)), command.operation());
         assertEquals(OutputFormat.JSON, command.options().output());
     }
 
@@ -61,11 +63,15 @@ class PartDbAppTest {
     void reportsUsageErrorsWithExitCodeTwo() {
         var err = new ByteArrayOutputStream();
 
-        int exitCode = parse("kv", "put", "only-key").execute(System.out, new PrintStream(err, true, StandardCharsets.UTF_8));
+        var exit = parse("kv", "put", "only-key").execute(System.out, new PrintStream(err, true, StandardCharsets.UTF_8));
 
-        assertEquals(AppCommand.USAGE, exitCode);
+        assertEquals(ExitCode.USAGE, exit);
         assertTrue(err.toString(StandardCharsets.UTF_8).startsWith("Error: expected 2 argument(s), got 1"));
         assertInstanceOf(AppCommand.UsageError.class, parse("kv", "get", "key", "--bogus"));
+        assertInstanceOf(AppCommand.UsageError.class, parse("kv", "put", "key", "value", "--local"));
+        assertInstanceOf(AppCommand.UsageError.class, parse("kv", "scan", "z", "a"));
+        assertInstanceOf(AppCommand.UsageError.class, parse("kv", "scan", "--limit", "0"));
+        assertInstanceOf(AppCommand.UsageError.class, parse("cluster", "status", "extra"));
         assertInstanceOf(AppCommand.UsageError.class, parse("server", "start", "--node-id", "n1"));
     }
 
@@ -79,12 +85,12 @@ class PartDbAppTest {
         assertEquals(50, command.config().snapshots().logEntries());
     }
 
-    @Test
-    void writesEscapedJson() {
-        var value = new LinkedHashMap<String, Object>();
-        value.put("a", "x\"y\n");
-        value.put("b", Arrays.asList(1, true, null));
+    record Sample(String text, List<Object> values, Optional<String> missing, ExitCode exit) {}
 
-        assertEquals("{\"a\":\"x\\\"y\\n\",\"b\":[1,true,null]}", Json.write(value));
+    @Test
+    void writesRecordsAsEscapedJson() {
+        var sample = new Sample("x\"y\n", Arrays.asList(1, true, null), Optional.empty(), ExitCode.OK);
+
+        assertEquals("{\"text\":\"x\\\"y\\n\",\"values\":[1,true,null],\"missing\":null,\"exit\":\"OK\"}", Json.write(sample));
     }
 }

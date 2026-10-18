@@ -28,6 +28,7 @@ public record ServerConfig(
 ) {
     public static final int DEFAULT_CLIENT_PORT = 8101;
     public static final int DEFAULT_ADMIN_PORT = 8102;
+    public static final SnapshotPolicy DEFAULT_SNAPSHOTS = SnapshotPolicy.DEFAULT;
 
     public ServerConfig {
         Objects.requireNonNull(nodeId, "nodeId must not be null");
@@ -81,7 +82,7 @@ public record ServerConfig(
         private Optional<ClusterId> clusterId = Optional.empty();
         private int clientPort = DEFAULT_CLIENT_PORT;
         private int adminPort = DEFAULT_ADMIN_PORT;
-        private SnapshotPolicy snapshots = SnapshotPolicy.DEFAULT;
+        private SnapshotPolicy snapshots = DEFAULT_SNAPSHOTS;
 
         private Builder(NodeId nodeId, Path dataDirectory) {
             this.nodeId = nodeId;

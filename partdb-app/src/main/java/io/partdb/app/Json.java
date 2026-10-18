@@ -1,7 +1,8 @@
 package io.partdb.app;
 
+import java.lang.reflect.RecordComponent;
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
 
 final class Json {
 
@@ -20,20 +21,8 @@ final class Json {
             case String string -> string(out, string);
             case Number number -> out.append(number);
             case Boolean bool -> out.append(bool);
-            case Map<?, ?> map -> {
-                out.append('{');
-                boolean first = true;
-                for (var entry : map.entrySet()) {
-                    if (!first) {
-                        out.append(',');
-                    }
-                    first = false;
-                    string(out, String.valueOf(entry.getKey()));
-                    out.append(':');
-                    write(out, entry.getValue());
-                }
-                out.append('}');
-            }
+            case Enum<?> constant -> string(out, constant.name());
+            case Optional<?> optional -> write(out, optional.orElse(null));
             case List<?> list -> {
                 out.append('[');
                 for (int i = 0; i < list.size(); i++) {
@@ -44,7 +33,28 @@ final class Json {
                 }
                 out.append(']');
             }
+            case Record record -> {
+                out.append('{');
+                var components = record.getClass().getRecordComponents();
+                for (int i = 0; i < components.length; i++) {
+                    if (i > 0) {
+                        out.append(',');
+                    }
+                    string(out, components[i].getName());
+                    out.append(':');
+                    write(out, value(components[i], record));
+                }
+                out.append('}');
+            }
             default -> throw new IllegalArgumentException("cannot write " + value.getClass() + " as JSON");
+        }
+    }
+
+    private static Object value(RecordComponent component, Record record) {
+        try {
+            return component.getAccessor().invoke(record);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("cannot read " + component.getName() + " of " + record.getClass(), e);
         }
     }
 

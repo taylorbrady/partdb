@@ -1,6 +1,8 @@
 package io.partdb.app;
 
+import io.partdb.client.PartDbClient;
 import io.partdb.client.ServerEndpoint;
+import io.partdb.server.ServerConfig;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -12,7 +14,7 @@ import java.util.Objects;
 record ClientOptions(List<ServerEndpoint> endpoints, OutputFormat output, Duration timeout) {
 
     static final String ENDPOINTS_VARIABLE = "PARTDB_ENDPOINTS";
-    static final String DEFAULT_ENDPOINT = "localhost:8101";
+    static final String DEFAULT_ENDPOINT = "localhost:" + ServerConfig.DEFAULT_CLIENT_PORT;
     static final String USAGE = """
           -e, --endpoints <list>   Comma-separated server endpoints (default: $%s or %s)
               --timeout <seconds>  Request timeout in seconds (default: 10)
@@ -27,6 +29,10 @@ record ClientOptions(List<ServerEndpoint> endpoints, OutputFormat output, Durati
         if (endpoints.isEmpty()) {
             throw new IllegalArgumentException("at least one endpoint is required");
         }
+    }
+
+    PartDbClient connect() {
+        return PartDbClient.builder().endpoints(endpoints).requestTimeout(timeout).build();
     }
 
     static final class Parser {
@@ -47,13 +53,7 @@ record ClientOptions(List<ServerEndpoint> endpoints, OutputFormat output, Durati
                     case "json" -> OutputFormat.JSON;
                     case String other -> throw new IllegalArgumentException("unknown output format: " + other);
                 };
-                case "--timeout" -> {
-                    int seconds = args.intValue(option);
-                    if (seconds <= 0) {
-                        throw new IllegalArgumentException("--timeout must be positive");
-                    }
-                    timeout = Duration.ofSeconds(seconds);
-                }
+                case "--timeout" -> timeout = Duration.ofSeconds(args.positiveInt(option));
                 default -> {
                     return false;
                 }

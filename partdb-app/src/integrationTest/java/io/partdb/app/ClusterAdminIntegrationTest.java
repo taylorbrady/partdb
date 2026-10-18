@@ -80,7 +80,7 @@ class ClusterAdminIntegrationTest {
             assertEquals("value\n", get.stdout());
 
             var missing = InProcessCli.run("kv", "get", "missing", "--endpoint", cluster.endpoint(follower));
-            assertEquals(AppCommand.NOT_FOUND, missing.exitCode());
+            assertEquals(ExitCode.NOT_FOUND.code(), missing.exitCode());
         }
     }
 

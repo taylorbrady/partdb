@@ -34,7 +34,7 @@ class SingleNodeCliIntegrationTest {
 
             var delete = InProcessCli.run("kv", "delete", "hello", "--endpoint", endpoint);
             assertEquals(0, delete.exitCode(), delete.stderr());
-            assertEquals(AppCommand.NOT_FOUND, InProcessCli.run("kv", "get", "hello", "--endpoint", endpoint).exitCode());
+            assertEquals(ExitCode.NOT_FOUND.code(), InProcessCli.run("kv", "get", "hello", "--endpoint", endpoint).exitCode());
 
             var status = InProcessCli.run("cluster", "status", "--endpoint", endpoint);
             assertEquals(0, status.exitCode(), status.stderr());

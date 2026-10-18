@@ -22,11 +22,11 @@ record StartCommand(ServerConfig config) implements AppCommand {
           -d, --data-dir <path>          Directory for node data (required)
           -p, --peer <id=host:port>      Raft address of a cluster member, including this node
                                          (repeatable; omit for a single-node cluster)
-              --client-port <port>       Port for client gRPC traffic (default: 8101)
-              --admin-port <port>        Port for health checks (default: 8102)
+              --client-port <port>       Port for client gRPC traffic (default: %d)
+              --admin-port <port>        Port for health checks (default: %d)
               --cluster-id <id>          Cluster identifier (default: derived from the peers)
-              --snapshot-entries <n>     Log entries between snapshots (default: 10000)
-              --snapshot-bytes <n>       Log bytes between snapshots (default: 67108864)
+              --snapshot-entries <n>     Log entries between snapshots (default: %d)
+              --snapshot-bytes <n>       Log bytes between snapshots (default: %d)
           -h, --help                     Show this help message
 
         Examples:
@@ -36,7 +36,8 @@ record StartCommand(ServerConfig config) implements AppCommand {
                               --peer node1=10.0.0.1:8100 \\
                               --peer node2=10.0.0.2:8100 \\
                               --peer node3=10.0.0.3:8100
-        """;
+        """.formatted(
+        ServerConfig.DEFAULT_CLIENT_PORT, ServerConfig.DEFAULT_ADMIN_PORT, ServerConfig.DEFAULT_SNAPSHOTS.logEntries(), ServerConfig.DEFAULT_SNAPSHOTS.logBytes());
 
     StartCommand {
         Objects.requireNonNull(config, "config must not be null");
@@ -103,7 +104,7 @@ record StartCommand(ServerConfig config) implements AppCommand {
     }
 
     @Override
-    public int execute(PrintStream out, PrintStream err) {
+    public ExitCode execute(PrintStream out, PrintStream err) {
         var shutdownRequested = new CountDownLatch(1);
         var stopped = new CountDownLatch(1);
         Thread hook = Thread.ofPlatform().name("shutdown-hook").unstarted(() -> {
@@ -123,7 +124,7 @@ record StartCommand(ServerConfig config) implements AppCommand {
         }
     }
 
-    private int serve(PrintStream out, PrintStream err, CountDownLatch shutdownRequested) {
+    private ExitCode serve(PrintStream out, PrintStream err, CountDownLatch shutdownRequested) {
         try (var _ = PartDbServer.start(config)) {
             out.println("PartDB node '" + config.nodeId() + "' started");
             out.println("  Cluster:     " + config.clusterId());
@@ -139,11 +140,11 @@ record StartCommand(ServerConfig config) implements AppCommand {
         } catch (Exception e) {
             err.println("Failed to start server: " + e.getMessage());
             e.printStackTrace(err);
-            return FAILED;
+            return ExitCode.FAILED;
         }
         out.println("Server stopped");
         out.flush();
-        return OK;
+        return ExitCode.OK;
     }
 
     private static void awaitUninterruptibly(CountDownLatch latch) {
