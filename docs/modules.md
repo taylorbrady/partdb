@@ -192,13 +192,17 @@ This module exposes one blocking Java client, `PartDbClient`, with `kv()` and
 hints to the leader's endpoint (learned from each endpoint's status), retries
 reads and requests the server reports as not applied within one deadline, and
 reports any write that may have been applied as `OutcomeUnknown` instead of
-retrying it. Failures are one sealed `PartDbException` family.
+retrying it. Reads return the revision they read at (`Read<T>`,
+`ScanCursor.readRevision()`). Failures are one sealed `PartDbException` family.
+`cluster().status(endpoint)` is a diagnostic view of one node built from the
+wire format, so it reports Raft role, term, and indexes without depending on
+Raft.
 
 Allowed dependencies: `partdb-grpc`, `partdb-bytes`, gRPC/protobuf libraries.
 
-Must not own: server/node implementation details, Raft concepts, storage
-concepts, Raft peer transport endpoints, or generated-code leakage in public
-APIs.
+Must not own: server/node implementation details, Raft types or mechanics in
+the KV API, storage concepts, Raft peer transport endpoints, or generated-code
+leakage in public APIs.
 
 ### `partdb-server`
 
@@ -227,6 +231,9 @@ algorithm logic.
 Role: executable CLI.
 
 This module parses commands, starts servers, and acts as an operational client.
+Each command (`StartCommand`, `KvCommand`, `ClusterCommand`) owns its parsing
+and usage text; `PartDbApp` only routes namespaces. Server defaults come from
+`ServerConfig`, so the CLI never imports Raft or node types.
 Its test fixtures hold `TestCluster`, the shared driver for both cluster test
 suites.
 
