@@ -8,7 +8,6 @@ import io.partdb.grpc.kv.v1.GetRequest;
 import io.partdb.grpc.kv.v1.KeyValueServiceGrpc;
 import io.partdb.grpc.kv.v1.PutRequest;
 import io.partdb.grpc.kv.v1.ScanRequest;
-import io.partdb.grpc.kv.v1.WriteRequest;
 
 import java.util.List;
 import java.util.Objects;
@@ -52,13 +51,17 @@ public final class KvClient {
     }
 
     public long write(List<Mutation> mutations) {
-        Objects.requireNonNull(mutations, "mutations must not be null");
-        if (mutations.isEmpty()) {
-            throw new IllegalArgumentException("mutations must not be empty");
-        }
-        var request = WriteRequest.newBuilder().addAllMutations(mutations.stream().map(Protos::mutation).toList()).build();
-        return invoker.call(Invoker.Kind.WRITE, (channel, deadline) ->
-            KeyValueServiceGrpc.newBlockingStub(channel).withDeadline(deadline).write(request)).getRevision();
+        return switch (transact(Txn.of(mutations))) {
+            case TxnResult.Committed(long revision) -> revision;
+            case TxnResult.ConditionFailed() -> throw new PartDbException.Internal("the server failed an unconditional write on a condition", null);
+        };
+    }
+
+    public TxnResult transact(Txn txn) {
+        Objects.requireNonNull(txn, "txn must not be null");
+        var request = Protos.txn(txn);
+        return Protos.result(invoker.call(Invoker.Kind.WRITE, (channel, deadline) ->
+            KeyValueServiceGrpc.newBlockingStub(channel).withDeadline(deadline).txn(request)));
     }
 
     public ScanCursor scan(KeyRange range) {

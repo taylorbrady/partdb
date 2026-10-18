@@ -14,8 +14,12 @@ A revision is the durable ordering token for visible key-value changes.
   revision.
 - A failed conditional transaction does not mutate state and does not create a
   visible key-value revision.
-- Revisions are monotonically increasing and currently correspond to the
-  consensus log index that committed the write.
+- Revisions are monotonically increasing and are the consensus log index that
+  committed the write. They are sparse: leader no-ops, configuration changes,
+  and failed conditional transactions also occupy log indexes, so consecutive
+  changes rarely have consecutive revisions, and a read revision can advance
+  (for example after a leader election) without any visible change. Clients
+  should compare revisions, never count them.
 - Reads return the revision at which each key was last modified.
 
 ## Reads
@@ -66,6 +70,15 @@ Failed conditional transactions may still be committed in the consensus log so
 all replicas make the same decision, but they do not create a visible
 key-value revision.
 
+Over the public API a transaction is one `Txn` request carrying conditions and
+mutations; an unconditional `write` is a `Txn` without conditions. A failed
+condition is a normal `condition_failed` result, not an error status, and the
+Java client returns it as `TxnResult.ConditionFailed`. The usual
+compare-and-set reads a key, then writes with `revisionEquals` on the revision
+the read returned; `missing` creates a key only if it is absent. The CLI exposes
+this as `kv put --if-missing`, `kv put --if-revision <n>`, and
+`kv delete --if-revision <n>`, exiting with code 4 when a condition fails.
+
 ## Errors
 
 The public API reports failures as gRPC status codes. Where the reason matters
@@ -85,7 +98,10 @@ to a client, the status carries a `google.rpc.ErrorInfo` detail in the
 Clients may retry any request that failed with `NOT_LEADER` or `BUSY`, and
 any read. A write that timed out or lost its connection after it was sent has
 an unknown outcome; the Java client reports it as `OutcomeUnknown` rather than
-retrying, because PartDB does not yet deduplicate requests.
+retrying, because PartDB does not yet deduplicate requests. Retrying a
+conditional transaction yourself is safe in that it can never apply twice, but
+if the first attempt did apply, the retry reports `condition_failed` for your
+own write; read the key to find out which happened.
 
 ## Future Semantics
 
@@ -94,4 +110,3 @@ The next product-level semantics should build on revisions:
 - watches that resume from a revision
 - compaction that bounds historical watch state
 - leases and TTL-backed ephemeral keys
-- richer transaction operations if needed by control-plane workloads

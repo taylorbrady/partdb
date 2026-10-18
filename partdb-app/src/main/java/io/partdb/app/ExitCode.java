@@ -4,7 +4,8 @@ enum ExitCode {
     OK(0),
     FAILED(1),
     USAGE(2),
-    NOT_FOUND(3);
+    NOT_FOUND(3),
+    CONDITION_FAILED(4);
 
     private final int code;
 

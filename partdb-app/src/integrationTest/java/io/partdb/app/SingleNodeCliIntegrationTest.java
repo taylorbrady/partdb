@@ -33,6 +33,14 @@ class SingleNodeCliIntegrationTest {
             assertOutput(InProcessCli.run("kv", "scan", "he", "hf", "--endpoint", endpoint), "hello=world\nhelp=me\n");
             assertOutput(InProcessCli.run("kv", "scan", "he", "hf", "--limit", "1", "--endpoint", endpoint), "hello=world\n");
 
+            var conflict = InProcessCli.run("kv", "put", "hello", "again", "--if-missing", "--endpoint", endpoint);
+            assertEquals(ExitCode.CONDITION_FAILED.code(), conflict.exitCode());
+            assertEquals("Error: condition failed\n", conflict.stderr());
+            long revision = Long.parseLong(put.stdout().strip().substring("OK revision=".length()));
+            assertOutput(InProcessCli.run("kv", "put", "hello", "world", "--if-revision", Long.toString(revision), "--endpoint", endpoint), null);
+            assertEquals(ExitCode.CONDITION_FAILED.code(),
+                InProcessCli.run("kv", "delete", "hello", "--if-revision", Long.toString(revision), "--endpoint", endpoint).exitCode());
+
             var delete = InProcessCli.run("kv", "delete", "hello", "--endpoint", endpoint);
             assertEquals(0, delete.exitCode(), delete.stderr());
             assertEquals(ExitCode.NOT_FOUND.code(), InProcessCli.run("kv", "get", "hello", "--endpoint", endpoint).exitCode());

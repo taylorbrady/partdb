@@ -14,10 +14,13 @@ import io.partdb.grpc.kv.v1.PutRequest;
 import io.partdb.grpc.kv.v1.PutResponse;
 import io.partdb.grpc.kv.v1.ScanRequest;
 import io.partdb.grpc.kv.v1.ScanResponse;
-import io.partdb.grpc.kv.v1.WriteRequest;
-import io.partdb.grpc.kv.v1.WriteResponse;
+import io.partdb.grpc.kv.v1.TxnRequest;
+import io.partdb.grpc.kv.v1.TxnResponse;
+import io.partdb.node.Condition;
 import io.partdb.node.Node;
 import io.partdb.node.ReadConsistency;
+import io.partdb.node.Txn;
+import io.partdb.node.TxnResult;
 import io.partdb.storage.Cursor;
 import io.partdb.storage.KeyRange;
 import io.partdb.storage.KeyValue;
@@ -25,8 +28,7 @@ import io.partdb.storage.Mutation;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase {
 
@@ -64,20 +66,24 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
     }
 
     @Override
-    public void write(WriteRequest request, StreamObserver<WriteResponse> responses) {
+    public void txn(TxnRequest request, StreamObserver<TxnResponse> responses) {
         Calls.unary(responses, timeout -> {
-            var mutations = request.getMutationsList().stream().map(KeyValueService::mutation).toList();
-            return WriteResponse.newBuilder().setRevision(node.write(mutations, timeout)).build();
+            var txn = decoded(() -> new Txn(
+                request.getConditionsList().stream().map(KeyValueService::condition).toList(),
+                request.getMutationsList().stream().map(KeyValueService::mutation).toList()));
+            var response = TxnResponse.newBuilder();
+            switch (node.transact(txn, timeout)) {
+                case TxnResult.Committed(long revision) -> response.setCommitted(TxnResponse.Committed.newBuilder().setRevision(revision));
+                case TxnResult.ConditionFailed() -> response.setConditionFailed(TxnResponse.ConditionFailed.getDefaultInstance());
+            }
+            return response.build();
         });
     }
 
     @Override
     public void scan(ScanRequest request, StreamObserver<ScanResponse> responses) {
         var call = (ServerCallStreamObserver<ScanResponse>) responses;
-        var lock = new ReentrantLock();
-        var ready = lock.newCondition();
-        call.setOnReadyHandler(() -> signal(lock, ready));
-        call.setOnCancelHandler(() -> signal(lock, ready));
+        var flow = new FlowControl(call);
         Cursor cursor;
         try {
             if (request.getLimit() < 0) {
@@ -100,7 +106,7 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
                     batch.addEntries(entry);
                     remaining--;
                 }
-                if (!awaitReady(call, lock, ready)) {
+                if (!flow.awaitReady()) {
                     return;
                 }
                 call.onNext(batch.build());
@@ -114,31 +120,14 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
         }
     }
 
-    private static boolean awaitReady(ServerCallStreamObserver<ScanResponse> call, ReentrantLock lock, Condition ready) {
-        lock.lock();
-        try {
-            while (!call.isReady() && !call.isCancelled()) {
-                ready.awaitUninterruptibly();
-            }
-            return !call.isCancelled();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    private static void signal(ReentrantLock lock, Condition ready) {
-        lock.lock();
-        try {
-            ready.signalAll();
-        } finally {
-            lock.unlock();
-        }
-    }
-
     private static KeyRange range(ScanRequest request) {
         var end = request.hasEndKey() ? Optional.of(bytes(request.getEndKey())) : Optional.<Bytes>empty();
+        return decoded(() -> new KeyRange(bytes(request.getStartKey()), end));
+    }
+
+    private static <T> T decoded(Supplier<T> value) {
         try {
-            return new KeyRange(bytes(request.getStartKey()), end);
+            return value.get();
         } catch (IllegalArgumentException e) {
             throw Calls.invalid(e.getMessage());
         }
@@ -149,6 +138,16 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
             case READ_CONSISTENCY_UNSPECIFIED, READ_CONSISTENCY_LINEARIZABLE -> ReadConsistency.LINEARIZABLE;
             case READ_CONSISTENCY_LOCAL -> ReadConsistency.LOCAL;
             case UNRECOGNIZED -> throw Calls.invalid("unknown read consistency");
+        };
+    }
+
+    private static Condition condition(io.partdb.grpc.kv.v1.Condition proto) {
+        return switch (proto.getKindCase()) {
+            case EXISTS -> Condition.exists(bytes(proto.getExists().getKey()));
+            case MISSING -> Condition.missing(bytes(proto.getMissing().getKey()));
+            case VALUE_EQUALS -> Condition.valueEquals(bytes(proto.getValueEquals().getKey()), bytes(proto.getValueEquals().getValue()));
+            case REVISION_EQUALS -> Condition.revisionEquals(bytes(proto.getRevisionEquals().getKey()), proto.getRevisionEquals().getRevision());
+            case KIND_NOT_SET -> throw Calls.invalid("condition kind is not set");
         };
     }
 

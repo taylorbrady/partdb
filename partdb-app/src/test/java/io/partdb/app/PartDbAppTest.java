@@ -1,6 +1,7 @@
 package io.partdb.app;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.client.Condition;
 import io.partdb.client.KeyRange;
 import io.partdb.client.ReadConsistency;
 import io.partdb.client.ScanOptions;
@@ -72,7 +73,21 @@ class PartDbAppTest {
         assertInstanceOf(AppCommand.UsageError.class, parse("kv", "scan", "z", "a"));
         assertInstanceOf(AppCommand.UsageError.class, parse("kv", "scan", "--limit", "0"));
         assertInstanceOf(AppCommand.UsageError.class, parse("cluster", "status", "extra"));
+        assertInstanceOf(AppCommand.UsageError.class, parse("kv", "put", "k", "v", "--if-missing", "--if-revision", "3"));
+        assertInstanceOf(AppCommand.UsageError.class, parse("kv", "delete", "k", "--if-missing"));
+        assertInstanceOf(AppCommand.UsageError.class, parse("kv", "put", "k", "v", "--if-revision", "0"));
         assertInstanceOf(AppCommand.UsageError.class, parse("server", "start", "--node-id", "n1"));
+    }
+
+    @Test
+    void parsesConditionalWrites() {
+        var put = assertInstanceOf(KvCommand.class, parse("kv", "put", "k", "v", "--if-revision", "7"));
+        var delete = assertInstanceOf(KvCommand.class, parse("kv", "delete", "--if-revision", "9", "k"));
+        var create = assertInstanceOf(KvCommand.class, parse("kv", "put", "k", "v", "--if-missing"));
+
+        assertEquals(new KvCommand.Operation.Put(Bytes.utf8("k"), Bytes.utf8("v"), List.of(Condition.revisionEquals(Bytes.utf8("k"), 7))), put.operation());
+        assertEquals(new KvCommand.Operation.Delete(Bytes.utf8("k"), List.of(Condition.revisionEquals(Bytes.utf8("k"), 9))), delete.operation());
+        assertEquals(new KvCommand.Operation.Put(Bytes.utf8("k"), Bytes.utf8("v"), List.of(Condition.missing(Bytes.utf8("k")))), create.operation());
     }
 
     @Test

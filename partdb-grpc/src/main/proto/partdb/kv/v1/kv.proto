@@ -10,7 +10,7 @@ service KeyValueService {
   rpc Get(GetRequest) returns (GetResponse);
   rpc Put(PutRequest) returns (PutResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
-  rpc Write(WriteRequest) returns (WriteResponse);
+  rpc Txn(TxnRequest) returns (TxnResponse);
   rpc Scan(ScanRequest) returns (stream ScanResponse);
 }
 
@@ -69,12 +69,49 @@ message Mutation {
   }
 }
 
-message WriteRequest {
-  repeated Mutation mutations = 1;
+message Condition {
+  message Exists {
+    bytes key = 1;
+  }
+
+  message Missing {
+    bytes key = 1;
+  }
+
+  message ValueEquals {
+    bytes key = 1;
+    bytes value = 2;
+  }
+
+  message RevisionEquals {
+    bytes key = 1;
+    int64 revision = 2;
+  }
+
+  oneof kind {
+    Exists exists = 1;
+    Missing missing = 2;
+    ValueEquals value_equals = 3;
+    RevisionEquals revision_equals = 4;
+  }
 }
 
-message WriteResponse {
-  int64 revision = 1;
+message TxnRequest {
+  repeated Condition conditions = 1;
+  repeated Mutation mutations = 2;
+}
+
+message TxnResponse {
+  message Committed {
+    int64 revision = 1;
+  }
+
+  message ConditionFailed {}
+
+  oneof result {
+    Committed committed = 1;
+    ConditionFailed condition_failed = 2;
+  }
 }
 
 message ScanRequest {

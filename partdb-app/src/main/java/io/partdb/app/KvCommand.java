@@ -1,11 +1,15 @@
 package io.partdb.app;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.client.Condition;
 import io.partdb.client.KeyRange;
 import io.partdb.client.KeyValue;
+import io.partdb.client.Mutation;
 import io.partdb.client.PartDbClient;
 import io.partdb.client.ReadConsistency;
 import io.partdb.client.ScanOptions;
+import io.partdb.client.Txn;
+import io.partdb.client.TxnResult;
 
 import java.io.PrintStream;
 import java.util.ArrayList;
@@ -14,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -40,12 +45,15 @@ record KvCommand(Operation operation, ClientOptions options) implements ClientCo
         Usage: partdb kv put <key> <value> [options]
 
         Options:
+              --if-missing         Write only if the key does not exist
+              --if-revision <n>    Write only if the key was last modified at revision n
         """ + ClientOptions.USAGE;
 
     private static final String DELETE_USAGE = """
         Usage: partdb kv delete <key> [options]
 
         Options:
+              --if-revision <n>    Delete only if the key was last modified at revision n
         """ + ClientOptions.USAGE;
 
     private static final String SCAN_USAGE = """
@@ -61,9 +69,17 @@ record KvCommand(Operation operation, ClientOptions options) implements ClientCo
     sealed interface Operation {
         record Get(Bytes key, ReadConsistency consistency) implements Operation {}
 
-        record Put(Bytes key, Bytes value) implements Operation {}
+        record Put(Bytes key, Bytes value, List<Condition> conditions) implements Operation {
+            public Put {
+                conditions = List.copyOf(conditions);
+            }
+        }
 
-        record Delete(Bytes key) implements Operation {}
+        record Delete(Bytes key, List<Condition> conditions) implements Operation {
+            public Delete {
+                conditions = List.copyOf(conditions);
+            }
+        }
 
         record Scan(KeyRange range, ScanOptions options) implements Operation {}
     }
@@ -78,7 +94,7 @@ record KvCommand(Operation operation, ClientOptions options) implements ClientCo
 
     record Scanned(long readRevision, List<Entry> entries) {}
 
-    private enum Flag { LOCAL, LIMIT }
+    private enum Flag { LOCAL, LIMIT, IF_MISSING, IF_REVISION }
 
     KvCommand {
         Objects.requireNonNull(operation, "operation must not be null");
@@ -92,10 +108,14 @@ record KvCommand(Operation operation, ClientOptions options) implements ClientCo
         return switch (args.next()) {
             case "get" -> parse(args, environment, GET_USAGE, 1, 1, EnumSet.of(Flag.LOCAL), parsed ->
                 new Operation.Get(Bytes.utf8(parsed.positional(0)), parsed.consistency));
-            case "put" -> parse(args, environment, PUT_USAGE, 2, 2, EnumSet.noneOf(Flag.class), parsed ->
-                new Operation.Put(Bytes.utf8(parsed.positional(0)), Bytes.utf8(parsed.positional(1))));
-            case "delete" -> parse(args, environment, DELETE_USAGE, 1, 1, EnumSet.noneOf(Flag.class), parsed ->
-                new Operation.Delete(Bytes.utf8(parsed.positional(0))));
+            case "put" -> parse(args, environment, PUT_USAGE, 2, 2, EnumSet.of(Flag.IF_MISSING, Flag.IF_REVISION), parsed -> {
+                var key = Bytes.utf8(parsed.positional(0));
+                return new Operation.Put(key, Bytes.utf8(parsed.positional(1)), parsed.conditions(key));
+            });
+            case "delete" -> parse(args, environment, DELETE_USAGE, 1, 1, EnumSet.of(Flag.IF_REVISION), parsed -> {
+                var key = Bytes.utf8(parsed.positional(0));
+                return new Operation.Delete(key, parsed.conditions(key));
+            });
             case "scan" -> parse(args, environment, SCAN_USAGE, 0, 2, EnumSet.of(Flag.LOCAL, Flag.LIMIT), parsed -> new Operation.Scan(
                 new KeyRange(Bytes.utf8(parsed.positionals.isEmpty() ? "" : parsed.positional(0)),
                     parsed.positionals.size() < 2 ? Optional.empty() : Optional.of(Bytes.utf8(parsed.positional(1)))),
@@ -118,8 +138,10 @@ record KvCommand(Operation operation, ClientOptions options) implements ClientCo
                 print(out, found, found.value() + "\n");
                 yield ExitCode.OK;
             }
-            case Operation.Put(var key, var value) -> written(out, client.kv().put(key, value));
-            case Operation.Delete(var key) -> written(out, client.kv().delete(key));
+            case Operation.Put(var key, var value, var conditions) ->
+                committed(out, err, client.kv().transact(Txn.when(conditions, List.of(Mutation.put(key, value)))));
+            case Operation.Delete(var key, var conditions) ->
+                committed(out, err, client.kv().transact(Txn.when(conditions, List.of(Mutation.delete(key)))));
             case Operation.Scan(var range, var scanOptions) -> {
                 try (var cursor = client.kv().scan(range, scanOptions)) {
                     if (options.output() == OutputFormat.JSON) {
@@ -135,18 +157,38 @@ record KvCommand(Operation operation, ClientOptions options) implements ClientCo
         };
     }
 
-    private ExitCode written(PrintStream out, long revision) {
-        print(out, new Written(revision), "OK revision=" + revision + "\n");
-        return ExitCode.OK;
+    private ExitCode committed(PrintStream out, PrintStream err, TxnResult result) {
+        return switch (result) {
+            case TxnResult.Committed(long revision) -> {
+                print(out, new Written(revision), "OK revision=" + revision + "\n");
+                yield ExitCode.OK;
+            }
+            case TxnResult.ConditionFailed() -> {
+                err.println("Error: condition failed");
+                yield ExitCode.CONDITION_FAILED;
+            }
+        };
     }
 
     private static final class Parsed {
         private final List<String> positionals = new ArrayList<>();
         private ReadConsistency consistency = ReadConsistency.LINEARIZABLE;
         private ScanOptions scanOptions = ScanOptions.DEFAULT;
+        private boolean ifMissing;
+        private OptionalLong ifRevision = OptionalLong.empty();
 
         private String positional(int index) {
             return positionals.get(index);
+        }
+
+        private List<Condition> conditions(Bytes key) {
+            if (ifMissing && ifRevision.isPresent()) {
+                throw new IllegalArgumentException("--if-missing and --if-revision cannot be combined");
+            }
+            if (ifMissing) {
+                return List.of(Condition.missing(key));
+            }
+            return ifRevision.stream().mapToObj(revision -> (Condition) Condition.revisionEquals(key, revision)).toList();
         }
 
         private ScanOptions scan() {
@@ -175,6 +217,14 @@ record KvCommand(Operation operation, ClientOptions options) implements ClientCo
                     case "--local" -> {
                         allow(flags, Flag.LOCAL, arg);
                         parsed.consistency = ReadConsistency.LOCAL;
+                    }
+                    case "--if-missing" -> {
+                        allow(flags, Flag.IF_MISSING, arg);
+                        parsed.ifMissing = true;
+                    }
+                    case "--if-revision" -> {
+                        allow(flags, Flag.IF_REVISION, arg);
+                        parsed.ifRevision = OptionalLong.of(args.positiveLong(arg));
                     }
                     case "--limit" -> {
                         allow(flags, Flag.LIMIT, arg);

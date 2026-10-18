@@ -20,6 +20,7 @@ public final class PartDbApp {
         Examples:
           partdb server start --node-id node1 --data-dir ./data/node1
           partdb kv put hello world --endpoints localhost:8101
+          partdb kv put hello there --if-revision 7
           partdb kv get hello
           partdb kv scan a z --limit 10 --output json
           partdb cluster status

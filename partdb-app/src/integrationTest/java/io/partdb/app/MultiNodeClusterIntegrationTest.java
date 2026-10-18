@@ -2,10 +2,13 @@ package io.partdb.app;
 
 import io.partdb.app.testing.TestCluster;
 import io.partdb.bytes.Bytes;
+import io.partdb.client.Condition;
 import io.partdb.client.KeyRange;
 import io.partdb.client.Mutation;
 import io.partdb.client.PartDbClient;
 import io.partdb.client.ReadConsistency;
+import io.partdb.client.Txn;
+import io.partdb.client.TxnResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
@@ -17,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -33,6 +37,34 @@ class MultiNodeClusterIntegrationTest {
 
     private static String value(PartDbClient client, String key) {
         return client.kv().get(bytes(key)).value().orElseThrow().value().utf8();
+    }
+
+    @Test
+    void conditionalTransactionsCompareAndSetAgainstTheCluster() throws Exception {
+        try (var cluster = newCluster()) {
+            cluster.startAll();
+            cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+            var kv = cluster.client().kv();
+
+            var created = kv.transact(Txn.when(List.of(Condition.missing(bytes("config"))), List.of(Mutation.put(bytes("config"), bytes("v1")))));
+            long revision = assertInstanceOf(TxnResult.Committed.class, created).revision();
+            assertEquals(new TxnResult.ConditionFailed(),
+                kv.transact(Txn.when(List.of(Condition.missing(bytes("config"))), List.of(Mutation.put(bytes("config"), bytes("lost"))))));
+
+            var read = kv.get(bytes("config"));
+            assertEquals(revision, read.value().orElseThrow().revision());
+            assertTrue(read.revision() >= revision);
+
+            var swapped = kv.transact(Txn.when(
+                List.of(Condition.revisionEquals(bytes("config"), revision)),
+                List.of(Mutation.put(bytes("config"), bytes("v2")), Mutation.put(bytes("audit"), bytes("v1->v2")))));
+            long next = assertInstanceOf(TxnResult.Committed.class, swapped).revision();
+            assertTrue(next > revision);
+            assertEquals(new TxnResult.ConditionFailed(),
+                kv.transact(Txn.when(List.of(Condition.revisionEquals(bytes("config"), revision)), List.of(Mutation.delete(bytes("config"))))));
+            assertEquals("v2", value(cluster.client(), "config"));
+            assertEquals(next, kv.get(bytes("audit")).value().orElseThrow().revision());
+        }
     }
 
     @Test

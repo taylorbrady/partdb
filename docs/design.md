@@ -9,7 +9,9 @@ PartDB v0 supports:
 
 - durable key-value storage
 - static Raft clusters
-- linearizable `get`, `put`, `delete`, `scan`, and atomic multi-key `write`
+- linearizable `get`, `put`, `delete`, and `scan`
+- atomic multi-key transactions with conditions on key existence, value, or
+  revision (compare-and-set)
 - local reads (`LOCAL` consistency) where the caller explicitly asks for them
 - status and member inspection
 - snapshots and recovery for the replicated state machine
@@ -17,9 +19,6 @@ PartDB v0 supports:
 PartDB v0 does not support:
 
 - leases or TTLs
-- compare-and-swap or conditional writes over the public API (the node layer
-  implements conditional transactions, see [kv-semantics.md](kv-semantics.md),
-  but they are not exposed over gRPC yet)
 - dynamic cluster membership changes over the public API (the Raft core and
   runtime implement single-server changes and leader self-removal, but nodes
   are not addressable by the transport until they are configured as peers)
