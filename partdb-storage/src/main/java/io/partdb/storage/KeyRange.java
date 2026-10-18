@@ -3,48 +3,32 @@ package io.partdb.storage;
 import io.partdb.bytes.Bytes;
 
 import java.util.Objects;
+import java.util.Optional;
 
-public sealed interface KeyRange {
-
-    static KeyRange all() {
-        return All.INSTANCE;
-    }
-
-    static KeyRange from(Bytes startInclusive) {
-        return new From(startInclusive);
-    }
-
-    static KeyRange until(Bytes endExclusive) {
-        return new Until(endExclusive);
-    }
-
-    static KeyRange between(Bytes startInclusive, Bytes endExclusive) {
-        return new Between(startInclusive, endExclusive);
-    }
-
-    enum All implements KeyRange {
-        INSTANCE
-    }
-
-    record From(Bytes startInclusive) implements KeyRange {
-        public From {
-            Objects.requireNonNull(startInclusive, "startInclusive must not be null");
-        }
-    }
-
-    record Until(Bytes endExclusive) implements KeyRange {
-        public Until {
-            Objects.requireNonNull(endExclusive, "endExclusive must not be null");
-        }
-    }
-
-    record Between(Bytes startInclusive, Bytes endExclusive) implements KeyRange {
-        public Between {
-            Objects.requireNonNull(startInclusive, "startInclusive must not be null");
-            Objects.requireNonNull(endExclusive, "endExclusive must not be null");
-            if (startInclusive.compareTo(endExclusive) > 0) {
-                throw new IllegalArgumentException("startInclusive must be <= endExclusive");
+public record KeyRange(Bytes start, Optional<Bytes> end) {
+    public KeyRange {
+        Objects.requireNonNull(start, "start must not be null");
+        Objects.requireNonNull(end, "end must not be null");
+        end.ifPresent(limit -> {
+            if (start.compareTo(limit) > 0) {
+                throw new IllegalArgumentException("start must not be after end");
             }
-        }
+        });
+    }
+
+    public static KeyRange all() {
+        return new KeyRange(Bytes.EMPTY, Optional.empty());
+    }
+
+    public static KeyRange from(Bytes start) {
+        return new KeyRange(start, Optional.empty());
+    }
+
+    public static KeyRange until(Bytes end) {
+        return new KeyRange(Bytes.EMPTY, Optional.of(end));
+    }
+
+    public static KeyRange between(Bytes start, Bytes end) {
+        return new KeyRange(start, Optional.of(end));
     }
 }

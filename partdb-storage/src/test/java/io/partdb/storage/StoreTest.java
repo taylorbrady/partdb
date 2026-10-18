@@ -38,7 +38,7 @@ class StoreTest {
             store.apply(7, List.of(put("a", "two"), put("b", "bee")));
             store.apply(9, List.of(delete("b")));
 
-            Entry a = store.get(bytes("a")).orElseThrow();
+            KeyValue a = store.get(bytes("a")).orElseThrow();
             assertEquals("two", a.value().utf8());
             assertEquals(7, a.revision());
             assertTrue(store.get(bytes("b")).isEmpty());
@@ -166,7 +166,7 @@ class StoreTest {
                 store.apply(++index, List.of(put(i, "new-" + i)));
             }
 
-            List<Entry> entries = Fixtures.entries(store);
+            List<KeyValue> entries = Fixtures.entries(store);
             assertEquals(500, entries.size());
             for (int i = 0; i < 500; i++) {
                 assertEquals(Fixtures.key(i), entries.get(i).key().utf8());

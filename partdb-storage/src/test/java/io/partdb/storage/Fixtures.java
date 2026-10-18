@@ -72,8 +72,8 @@ final class Fixtures {
         return keys;
     }
 
-    static List<Entry> entries(Store store) {
-        List<Entry> entries = new ArrayList<>();
+    static List<KeyValue> entries(Store store) {
+        List<KeyValue> entries = new ArrayList<>();
         try (Snapshot snapshot = store.snapshot(); Cursor cursor = snapshot.scan(KeyRange.all())) {
             cursor.forEachRemaining(entries::add);
         }

@@ -126,7 +126,7 @@ This module owns the LSM engine, memtables, tables, manifests, compaction,
 block cache, streamed checkpoints, and storage-level tests/benchmarks.
 
 Its public surface is `Store` and a handful of values (`Snapshot`, `Cursor`,
-`Entry`, `Mutation`, `KeyRange`, `StoreOptions`, `StoreStats`,
+`KeyValue`, `Mutation`, `KeyRange`, `StoreOptions`, `StoreStats`,
 `StoreException`); everything else is package-private in `io.partdb.storage`.
 
 Contract with the replicated state machine:

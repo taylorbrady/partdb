@@ -148,7 +148,7 @@ class StoreConcurrencyTest {
     }
 
     private static void assertConsistent(Snapshot snapshot) {
-        List<Entry> entries = new ArrayList<>();
+        List<KeyValue> entries = new ArrayList<>();
         try (Cursor cursor = snapshot.scan(KeyRange.all())) {
             cursor.forEachRemaining(entries::add);
         }
@@ -159,7 +159,7 @@ class StoreConcurrencyTest {
         Bytes first = entries.getFirst().value();
         long revision = entries.getFirst().revision();
         assertTrue(revision <= snapshot.index());
-        for (Entry entry : entries) {
+        for (KeyValue entry : entries) {
             assertEquals(first, entry.value(), "batch torn at " + entry.key().utf8());
             assertEquals(revision, entry.revision());
             assertEquals(entry, snapshot.get(entry.key()).orElseThrow());

@@ -42,7 +42,7 @@ class CheckpointTest {
     @Test
     void restoreRoundTripsUnflushedAndFlushedState() {
         byte[] image;
-        List<Entry> expected;
+        List<KeyValue> expected;
         long index;
         try (Store source = Store.open(directory.resolve("source"), Fixtures.SMALL)) {
             index = Fixtures.fill(source, 0, 1_000, "v");

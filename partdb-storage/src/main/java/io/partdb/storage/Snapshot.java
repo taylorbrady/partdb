@@ -8,7 +8,7 @@ public sealed interface Snapshot extends AutoCloseable permits StoreSnapshot {
 
     long index();
 
-    Optional<Entry> get(Bytes key);
+    Optional<KeyValue> get(Bytes key);
 
     Cursor scan(KeyRange range);
 

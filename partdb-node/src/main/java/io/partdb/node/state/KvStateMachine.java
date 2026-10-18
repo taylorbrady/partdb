@@ -12,7 +12,6 @@ import io.partdb.node.kv.Txn;
 import io.partdb.node.kv.TxnResult;
 import io.partdb.raft.runtime.StateMachine;
 import io.partdb.storage.Cursor;
-import io.partdb.storage.Entry;
 import io.partdb.storage.Snapshot;
 import io.partdb.storage.Store;
 import io.partdb.storage.StoreOptions;
@@ -114,11 +113,11 @@ public final class KvStateMachine implements StateMachine<TxnResult>, AutoClosea
         }
     }
 
-    private static boolean matches(Optional<Entry> current, Condition condition) {
+    private static boolean matches(Optional<io.partdb.storage.KeyValue> current, Condition condition) {
         return switch (condition) {
             case Condition.Exists _ -> current.isPresent();
             case Condition.Missing _ -> current.isEmpty();
-            case Condition.ValueEquals(_, var expected) -> current.map(Entry::value).filter(expected::equals).isPresent();
+            case Condition.ValueEquals(_, var expected) -> current.map(io.partdb.storage.KeyValue::value).filter(expected::equals).isPresent();
             case Condition.RevisionEquals(_, long expected) -> current.filter(entry -> entry.revision() == expected).isPresent();
         };
     }
@@ -131,11 +130,7 @@ public final class KvStateMachine implements StateMachine<TxnResult>, AutoClosea
     }
 
     private static io.partdb.storage.KeyRange storageRange(KeyRange range) {
-        boolean open = range.start().isEmpty();
-        return switch (range.end().orElse(null)) {
-            case null -> open ? io.partdb.storage.KeyRange.all() : io.partdb.storage.KeyRange.from(range.start());
-            case Bytes end -> open ? io.partdb.storage.KeyRange.until(end) : io.partdb.storage.KeyRange.between(range.start(), end);
-        };
+        return new io.partdb.storage.KeyRange(range.start(), range.end());
     }
 
     private static final class StorageScan implements Scan {
@@ -173,7 +168,7 @@ public final class KvStateMachine implements StateMachine<TxnResult>, AutoClosea
                 throw new NoSuchElementException();
             }
             remaining--;
-            Entry entry = entries.next();
+            var entry = entries.next();
             return new KeyValue(entry.key(), entry.value(), entry.revision());
         }
 

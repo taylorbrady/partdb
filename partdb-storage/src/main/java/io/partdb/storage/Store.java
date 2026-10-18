@@ -105,7 +105,7 @@ public final class Store implements AutoCloseable {
         }
     }
 
-    public Optional<Entry> get(Bytes key) {
+    public Optional<KeyValue> get(Bytes key) {
         Objects.requireNonNull(key, "key must not be null");
         ReadState state = pin();
         try {

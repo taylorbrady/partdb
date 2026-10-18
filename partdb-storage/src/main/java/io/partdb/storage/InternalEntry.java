@@ -23,9 +23,9 @@ sealed interface InternalEntry {
         };
     }
 
-    static Optional<Entry> visible(InternalEntry entry) {
+    static Optional<KeyValue> visible(InternalEntry entry) {
         return switch (entry) {
-            case Value value -> Optional.of(value.toEntry());
+            case Value value -> Optional.of(value.toKeyValue());
             case Tombstone _ -> Optional.empty();
         };
     }
@@ -36,8 +36,8 @@ sealed interface InternalEntry {
             return Long.BYTES + userKey().length() + value.length() + 8;
         }
 
-        Entry toEntry() {
-            return new Entry(userKey().toBytes(), value.toBytes(), revision());
+        KeyValue toKeyValue() {
+            return new KeyValue(userKey().toBytes(), value.toBytes(), revision());
         }
     }
 

@@ -21,7 +21,7 @@ final class StoreSnapshot implements Snapshot {
     }
 
     @Override
-    public Optional<Entry> get(Bytes key) {
+    public Optional<KeyValue> get(Bytes key) {
         Objects.requireNonNull(key, "key must not be null");
         ensureOpen();
         return state.find(Slice.of(key)).flatMap(InternalEntry::visible);

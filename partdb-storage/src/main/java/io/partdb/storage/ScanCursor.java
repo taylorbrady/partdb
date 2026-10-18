@@ -15,6 +15,11 @@ final class ScanCursor implements Cursor {
     }
 
     @Override
+    public long revision() {
+        return state.index();
+    }
+
+    @Override
     public boolean hasNext() {
         if (closed) {
             throw new IllegalStateException("Cursor is closed");
@@ -23,12 +28,12 @@ final class ScanCursor implements Cursor {
     }
 
     @Override
-    public Entry next() {
+    public KeyValue next() {
         if (!hasNext()) {
             throw new NoSuchElementException();
         }
         return switch (entries.next()) {
-            case InternalEntry.Value value -> value.toEntry();
+            case InternalEntry.Value value -> value.toKeyValue();
             case InternalEntry.Tombstone tombstone -> throw new IllegalStateException("Scan surfaced tombstone " + tombstone);
         };
     }
