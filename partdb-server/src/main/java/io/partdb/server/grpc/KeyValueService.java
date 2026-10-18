@@ -5,18 +5,17 @@ import com.google.protobuf.UnsafeByteOperations;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.partdb.bytes.Bytes;
+import io.partdb.grpc.kv.v1.DeleteRequest;
+import io.partdb.grpc.kv.v1.DeleteResponse;
+import io.partdb.grpc.kv.v1.GetRequest;
+import io.partdb.grpc.kv.v1.GetResponse;
 import io.partdb.grpc.kv.v1.KeyValueServiceGrpc;
-import io.partdb.grpc.kv.v1.KvProto;
-import io.partdb.grpc.kv.v1.KvProto.DeleteRequest;
-import io.partdb.grpc.kv.v1.KvProto.DeleteResponse;
-import io.partdb.grpc.kv.v1.KvProto.GetRequest;
-import io.partdb.grpc.kv.v1.KvProto.GetResponse;
-import io.partdb.grpc.kv.v1.KvProto.PutRequest;
-import io.partdb.grpc.kv.v1.KvProto.PutResponse;
-import io.partdb.grpc.kv.v1.KvProto.ScanRequest;
-import io.partdb.grpc.kv.v1.KvProto.ScanResponse;
-import io.partdb.grpc.kv.v1.KvProto.WriteRequest;
-import io.partdb.grpc.kv.v1.KvProto.WriteResponse;
+import io.partdb.grpc.kv.v1.PutRequest;
+import io.partdb.grpc.kv.v1.PutResponse;
+import io.partdb.grpc.kv.v1.ScanRequest;
+import io.partdb.grpc.kv.v1.ScanResponse;
+import io.partdb.grpc.kv.v1.WriteRequest;
+import io.partdb.grpc.kv.v1.WriteResponse;
 import io.partdb.node.Node;
 import io.partdb.node.kv.KeyRange;
 import io.partdb.node.kv.KeyValue;
@@ -139,7 +138,7 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
         }
     }
 
-    private static ReadConsistency consistency(KvProto.ReadConsistency consistency) {
+    private static ReadConsistency consistency(io.partdb.grpc.kv.v1.ReadConsistency consistency) {
         return switch (consistency) {
             case READ_CONSISTENCY_UNSPECIFIED, READ_CONSISTENCY_LINEARIZABLE -> ReadConsistency.LINEARIZABLE;
             case READ_CONSISTENCY_LOCAL -> ReadConsistency.LOCAL;
@@ -147,7 +146,7 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
         };
     }
 
-    private static Mutation mutation(KvProto.Mutation proto) {
+    private static Mutation mutation(io.partdb.grpc.kv.v1.Mutation proto) {
         return switch (proto.getKindCase()) {
             case PUT -> Mutation.put(bytes(proto.getPut().getKey()), bytes(proto.getPut().getValue()));
             case DELETE -> Mutation.delete(bytes(proto.getDelete().getKey()));
@@ -155,8 +154,8 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
         };
     }
 
-    private static KvProto.KeyValue proto(KeyValue entry) {
-        return KvProto.KeyValue.newBuilder()
+    private static io.partdb.grpc.kv.v1.KeyValue proto(KeyValue entry) {
+        return io.partdb.grpc.kv.v1.KeyValue.newBuilder()
             .setKey(bytes(entry.key()))
             .setValue(bytes(entry.value()))
             .setRevision(entry.revision())

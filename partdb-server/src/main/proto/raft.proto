@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package partdb.peer.v1;
 
-option java_multiple_files = false;
+option java_multiple_files = true;
 option java_outer_classname = "PeerProto";
 option java_package = "io.partdb.server.peer.proto";
 

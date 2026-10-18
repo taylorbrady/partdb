@@ -2,8 +2,7 @@ package io.partdb.client;
 
 import io.grpc.Context;
 import io.grpc.StatusRuntimeException;
-import io.partdb.grpc.kv.v1.KvProto;
-import io.partdb.grpc.kv.v1.KvProto.ScanResponse;
+import io.partdb.grpc.kv.v1.ScanResponse;
 
 import java.util.Collections;
 import java.util.Iterator;
@@ -14,7 +13,7 @@ public final class ScanCursor implements Iterator<KeyValue>, AutoCloseable {
     private final Context.CancellableContext context;
     private final Iterator<ScanResponse> responses;
     private final long readRevision;
-    private Iterator<KvProto.KeyValue> batch;
+    private Iterator<io.partdb.grpc.kv.v1.KeyValue> batch;
     private boolean closed;
 
     ScanCursor(Context.CancellableContext context, Iterator<ScanResponse> responses, ScanResponse first) {

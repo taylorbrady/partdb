@@ -1,14 +1,14 @@
 package io.partdb.server.grpc;
 
 import io.grpc.stub.StreamObserver;
-import io.partdb.grpc.cluster.v1.ClusterProto.GetStatusRequest;
-import io.partdb.grpc.cluster.v1.ClusterProto.ListMembersRequest;
-import io.partdb.grpc.cluster.v1.ClusterProto.ListMembersResponse;
-import io.partdb.grpc.cluster.v1.ClusterProto.Member;
-import io.partdb.grpc.cluster.v1.ClusterProto.MemberRole;
-import io.partdb.grpc.cluster.v1.ClusterProto.NodeStatus;
-import io.partdb.grpc.cluster.v1.ClusterProto.RaftRole;
 import io.partdb.grpc.cluster.v1.ClusterServiceGrpc;
+import io.partdb.grpc.cluster.v1.GetStatusRequest;
+import io.partdb.grpc.cluster.v1.ListMembersRequest;
+import io.partdb.grpc.cluster.v1.ListMembersResponse;
+import io.partdb.grpc.cluster.v1.Member;
+import io.partdb.grpc.cluster.v1.MemberRole;
+import io.partdb.grpc.cluster.v1.NodeStatus;
+import io.partdb.grpc.cluster.v1.RaftRole;
 import io.partdb.node.Node;
 import io.partdb.raft.NodeId;
 import io.partdb.raft.Role;

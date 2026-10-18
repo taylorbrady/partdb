@@ -3,12 +3,12 @@ package io.partdb.client;
 import io.grpc.Context;
 import io.grpc.StatusRuntimeException;
 import io.partdb.bytes.Bytes;
+import io.partdb.grpc.kv.v1.DeleteRequest;
+import io.partdb.grpc.kv.v1.GetRequest;
 import io.partdb.grpc.kv.v1.KeyValueServiceGrpc;
-import io.partdb.grpc.kv.v1.KvProto.DeleteRequest;
-import io.partdb.grpc.kv.v1.KvProto.GetRequest;
-import io.partdb.grpc.kv.v1.KvProto.PutRequest;
-import io.partdb.grpc.kv.v1.KvProto.ScanRequest;
-import io.partdb.grpc.kv.v1.KvProto.WriteRequest;
+import io.partdb.grpc.kv.v1.PutRequest;
+import io.partdb.grpc.kv.v1.ScanRequest;
+import io.partdb.grpc.kv.v1.WriteRequest;
 
 import java.util.List;
 import java.util.Objects;

@@ -11,10 +11,10 @@ import io.partdb.raft.Envelope;
 import io.partdb.raft.NodeId;
 import io.partdb.raft.runtime.ClusterId;
 import io.partdb.raft.runtime.RaftTransport;
-import io.partdb.server.peer.proto.PeerProto.InstallSnapshotRequest;
-import io.partdb.server.peer.proto.PeerProto.InstallSnapshotResponse;
-import io.partdb.server.peer.proto.PeerProto.SnapshotHeader;
+import io.partdb.server.peer.proto.InstallSnapshotRequest;
+import io.partdb.server.peer.proto.InstallSnapshotResponse;
 import io.partdb.server.peer.proto.RaftPeerGrpc;
+import io.partdb.server.peer.proto.SnapshotHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

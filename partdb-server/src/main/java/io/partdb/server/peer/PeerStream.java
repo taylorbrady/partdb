@@ -5,9 +5,9 @@ import io.grpc.stub.ClientResponseObserver;
 import io.partdb.raft.Message;
 import io.partdb.raft.NodeId;
 import io.partdb.raft.runtime.RaftTransport;
-import io.partdb.server.peer.proto.PeerProto.PeerMessage;
-import io.partdb.server.peer.proto.PeerProto.SendResponse;
+import io.partdb.server.peer.proto.PeerMessage;
 import io.partdb.server.peer.proto.RaftPeerGrpc;
+import io.partdb.server.peer.proto.SendResponse;
 
 import java.util.ArrayDeque;
 import java.util.Queue;
