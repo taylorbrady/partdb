@@ -1,7 +1,7 @@
 package io.partdb.server;
 
 import io.partdb.node.Node;
-import io.partdb.raft.NodeId;
+import io.partdb.node.NodeException;
 import io.partdb.raft.Role;
 import io.partdb.raft.runtime.RaftTransport;
 import io.partdb.server.grpc.GrpcServer;
@@ -90,17 +90,11 @@ public final class PartDbServer implements AutoCloseable {
         if (node.cluster().status().role() != Role.LEADER) {
             return;
         }
-        NodeId self = config.nodeId();
-        node.cluster().membership().voters().stream()
-            .filter(voter -> !voter.equals(self))
-            .findFirst()
-            .ifPresent(target -> {
-                try {
-                    node.cluster().transferLeadership(target, HAND_OFF_TIMEOUT);
-                } catch (RuntimeException e) {
-                    log.atInfo().addKeyValue("target", target).addKeyValue("reason", e.getMessage()).log("Leadership hand-off skipped");
-                }
-            });
+        try {
+            node.cluster().stepDown(HAND_OFF_TIMEOUT);
+        } catch (NodeException e) {
+            log.atInfo().addKeyValue("reason", e.getMessage()).log("Leadership hand-off skipped");
+        }
     }
 
     private static RuntimeException closeAll(Deque<AutoCloseable> resources) {

@@ -14,7 +14,6 @@ import io.partdb.node.kv.TxnResult;
 import io.partdb.node.state.KvStateMachine;
 import io.partdb.node.state.TxnCodec;
 import io.partdb.raft.Membership;
-import io.partdb.raft.NodeId;
 import io.partdb.raft.runtime.RaftRuntime;
 import io.partdb.raft.runtime.RaftStatus;
 import io.partdb.raft.runtime.RaftTransport;
@@ -196,8 +195,8 @@ public final class Node implements AutoCloseable {
         }
 
         @Override
-        public void transferLeadership(NodeId target, Duration timeout) {
-            await(raft.transferLeadership(target), timeout, Kind.READ);
+        public void stepDown(Duration timeout) {
+            await(raft.stepDown(), timeout, Kind.READ);
         }
     }
 }

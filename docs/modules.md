@@ -87,7 +87,9 @@ The module has two packages:
   (probe, replicate with an inflight window, snapshot), confirms reads with
   heartbeat rounds, and supports pre-vote, check-quorum, learners,
   single-server membership changes that take effect when appended, leader
-  self-removal with hand-off once the change commits, and leadership transfer.
+  self-removal with hand-off once the change commits, and leadership transfer,
+  either to a named voter or, on step-down, to the recently active voter with
+  the most replicated log.
   Nodes are named by `NodeId`. It is deterministic and side-effect free;
   `RaftCorePurityTest` keeps JDK IO, clocks, threads, and runtime imports out
   of it.
@@ -206,7 +208,7 @@ This is the one place gRPC is implemented on the server side:
 
 - `io.partdb.server` assembles the process: create a node, wire the Raft
   transport, start public gRPC, expose health endpoints, register JMX, and
-  shut everything down in order.
+  shut everything down in order, stepping down first when the node leads.
 - `io.partdb.server.grpc` implements the public KV and cluster services.
 - `io.partdb.server.peer` implements `RaftTransport` over a private gRPC
   protocol (`raft.proto`, package `partdb.peer.v1`): one long-lived,

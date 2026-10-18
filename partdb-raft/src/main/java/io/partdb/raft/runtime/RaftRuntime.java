@@ -128,6 +128,11 @@ public final class RaftRuntime<R> implements AutoCloseable {
         return submit(pending, id -> new Input.TransferLeadership(id, target));
     }
 
+    public CompletionStage<Void> stepDown() {
+        var pending = new Requests.Pending.Transfer(new CompletableFuture<>());
+        return submit(pending, Input.StepDown::new);
+    }
+
     public RaftStatus status() {
         return status;
     }

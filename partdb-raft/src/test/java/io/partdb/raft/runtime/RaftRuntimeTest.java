@@ -240,6 +240,19 @@ class RaftRuntimeTest {
     }
 
     @Test
+    void stepsDownToAnotherVoter() throws Exception {
+        startAll(THREE);
+        var leader = leader();
+        join(leader.propose(Bytes.utf8("a")));
+
+        join(leader.stepDown());
+
+        await(() -> leader.status().role() != Role.LEADER && leader.status().leader().isPresent());
+        var successor = runtimes.get(leader.status().leader().orElseThrow().value());
+        assertEquals(Bytes.utf8("b"), join(successor.propose(Bytes.utf8("b"))));
+    }
+
+    @Test
     void rejectsTransferToANonVoter() throws Exception {
         startAll(THREE);
         var leader = leader();

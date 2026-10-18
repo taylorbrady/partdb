@@ -116,6 +116,29 @@ class RaftLeadershipTransferTest {
     }
 
     @Test
+    void stepDownHandsLeadershipToTheMostCaughtUpVoter() {
+        var node = TestNode.create("n1", "n1", "n2", "n3");
+        node.electAndCommit("n2", "n3");
+        node.propose(1, "a");
+        node.receive("n3", new AppendAccepted(1, 2));
+
+        var output = node.step(new Input.StepDown(2));
+
+        assertEquals(new TimeoutNow(1), output.singleTo("n3", TimeoutNow.class));
+        assertTrue(output.sentTo("n2", TimeoutNow.class).isEmpty());
+    }
+
+    @Test
+    void stepDownIsRejectedWithoutAnotherVoter() {
+        var node = TestNode.create("n1", "n1");
+        node.campaign();
+
+        var output = node.step(new Input.StepDown(1));
+
+        assertEquals(List.of(new Outcome.Rejected(1, new Rejection.Invalid("no other voter can take over leadership"))), output.outcomes());
+    }
+
+    @Test
     void followerRejectsTransfer() {
         var node = TestNode.create("n1", "n1", "n2", "n3");
 

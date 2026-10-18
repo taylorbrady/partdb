@@ -180,6 +180,7 @@ public final class Raft {
             case Input.ReadIndex(long request) -> readIndex(request);
             case Input.ChangeMembership(long request, MembershipChange change) -> changeMembership(request, change);
             case Input.TransferLeadership(long request, NodeId target) -> transferLeadership(request, target);
+            case Input.StepDown(long request) -> stepDown(request);
             case Input.Receive(NodeId from, Message message) -> receive(from, message);
             case Input.InstallSnapshot(NodeId from, long snapshotTerm, SnapshotMetadata snapshot) ->
                 installSnapshot(from, snapshotTerm, snapshot);
@@ -817,6 +818,24 @@ public final class Raft {
         if (progress != null && progress.match() == lastIndex()) {
             send(target, new TimeoutNow(term));
         }
+    }
+
+    private void stepDown(long request) {
+        var rejection = rejectUnlessLeader();
+        if (rejection.isPresent()) {
+            outcomes.add(new Outcome.Rejected(request, rejection.get()));
+            return;
+        }
+        var leader = (Leader) role;
+        Comparator<NodeId> readiness = Comparator.comparing((NodeId voter) -> leader.progress.get(voter).recentActive())
+            .thenComparingLong(voter -> leader.progress.get(voter).match())
+            .thenComparing(Comparator.reverseOrder());
+        membership.voters().stream()
+            .filter(voter -> !voter.equals(id) && leader.progress.containsKey(voter))
+            .max(readiness)
+            .ifPresentOrElse(
+                successor -> transferLeadership(request, successor),
+                () -> outcomes.add(new Outcome.Rejected(request, new Rejection.Invalid("no other voter can take over leadership"))));
     }
 
     private List<LogEntry> takeCommitted() {

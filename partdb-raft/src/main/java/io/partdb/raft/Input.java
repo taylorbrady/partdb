@@ -27,6 +27,8 @@ public sealed interface Input {
         }
     }
 
+    record StepDown(long id) implements Input {}
+
     record Receive(NodeId from, Message message) implements Input {
         public Receive {
             Objects.requireNonNull(from, "from must not be null");
