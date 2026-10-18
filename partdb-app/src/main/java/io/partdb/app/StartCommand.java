@@ -23,7 +23,7 @@ record StartCommand(ServerConfig config) implements AppCommand {
           -p, --peer <id=host:port>      Raft address of a cluster member, including this node
                                          (repeatable; omit for a single-node cluster)
               --client-port <port>       Port for client gRPC traffic (default: %d)
-              --admin-port <port>        Port for health checks (default: %d)
+              --admin-port <port>        Port for health checks and metrics (default: %d)
               --cluster-id <id>          Cluster identifier (default: derived from the peers)
               --snapshot-entries <n>     Log entries between snapshots (default: %d)
               --snapshot-bytes <n>       Log bytes between snapshots (default: %d)

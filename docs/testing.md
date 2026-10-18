@@ -123,7 +123,7 @@ Use this suite for:
 - snapshot install over the peer transport
 - CLI commands against a live cluster
 
-Health endpoint and JMX behavior for a single server are covered by
+Health endpoints and Prometheus metrics for a single server are covered by
 `partdb-server` unit tests; startup configuration validation is covered by
 `ServerConfigTest`. The client's retry, redirect, and outcome-unknown rules are
 covered by `InvokerTest` against fake gRPC services.

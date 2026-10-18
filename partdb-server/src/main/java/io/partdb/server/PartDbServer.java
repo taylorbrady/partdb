@@ -45,15 +45,12 @@ public final class PartDbServer implements AutoCloseable {
             }
             var node = Node.open(config.node(), transport);
             resources.push(node);
-            var jmx = new JmxRegistrations(node);
-            resources.push(jmx);
             var grpc = new GrpcServer(node, config.clientPort());
             resources.push(grpc);
             grpc.start();
             var admin = new AdminHttpServer(node, config.adminPort());
             resources.push(admin);
             admin.start();
-            jmx.register();
             log.atInfo()
                 .addKeyValue("nodeId", config.nodeId())
                 .addKeyValue("clientPort", config.clientPort())

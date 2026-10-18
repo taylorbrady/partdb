@@ -170,8 +170,8 @@ log format.
 
 Allowed dependencies: `partdb-raft`, `partdb-storage`, `partdb-bytes`.
 
-Must not own: gRPC service implementations, CLI parsing, process ports, JMX
-registration, or transport endpoint parsing.
+Must not own: gRPC service implementations, CLI parsing, process ports, metrics
+exposition, or transport endpoint parsing.
 
 ### `partdb-grpc`
 
@@ -215,8 +215,9 @@ Role: the PartDB server process.
 This is the one place gRPC is implemented on the server side:
 
 - `io.partdb.server` assembles the process: create a node, wire the Raft
-  transport, start public gRPC, expose health endpoints, register JMX, and
-  shut everything down in order, stepping down first when the node leads.
+  transport, start public gRPC, serve health checks and Prometheus metrics on
+  the admin port, and shut everything down in order, stepping down first when
+  the node leads.
 - `io.partdb.server.grpc` implements the public KV and cluster services.
 - `io.partdb.server.peer` implements `RaftTransport` over a private gRPC
   protocol (`raft.proto`, package `partdb.peer.v1`): one long-lived,
