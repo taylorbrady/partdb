@@ -16,7 +16,7 @@ public final class PartDbClient implements AutoCloseable {
         this.connections = new Connections(builder.endpoints, builder.connectTimeout);
         var invoker = new Invoker(connections, builder.requestTimeout, builder.retry);
         this.kv = new KvClient(invoker);
-        this.cluster = new ClusterClient(connections, invoker, builder.requestTimeout);
+        this.cluster = new ClusterClient(connections, invoker);
     }
 
     public static Builder builder() {

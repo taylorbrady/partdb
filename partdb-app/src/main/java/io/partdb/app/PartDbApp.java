@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 public final class PartDbApp {
 
@@ -155,7 +156,7 @@ public final class PartDbApp {
 
     private static final class Flags {
         private ReadConsistency consistency = ReadConsistency.LINEARIZABLE;
-        private int limit;
+        private OptionalInt limit = OptionalInt.empty();
     }
 
     @FunctionalInterface
@@ -176,10 +177,11 @@ public final class PartDbApp {
                     }
                     case "--local" -> flags.consistency = ReadConsistency.LOCAL;
                     case "--limit" -> {
-                        flags.limit = args.intValue("--limit");
-                        if (flags.limit < 0) {
-                            throw new IllegalArgumentException("--limit must not be negative");
+                        int limit = args.intValue("--limit");
+                        if (limit <= 0) {
+                            throw new IllegalArgumentException("--limit must be positive");
                         }
+                        flags.limit = OptionalInt.of(limit);
                     }
                     default -> {
                         if (!options.accept(arg, args)) {

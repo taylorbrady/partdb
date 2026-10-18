@@ -172,7 +172,7 @@ class InvokerTest {
         String node = start(new FakeNode("n1", _ -> PutResponse.getDefaultInstance(), new AtomicInteger()));
 
         try (var client = client(node)) {
-            assertEquals(java.util.Optional.empty(), client.kv().get(Bytes.utf8("missing")));
+            assertEquals(java.util.Optional.empty(), client.kv().get(Bytes.utf8("missing")).value());
         }
     }
 }

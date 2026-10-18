@@ -5,7 +5,7 @@ import io.partdb.client.KeyRange;
 import io.partdb.client.KeyValue;
 import io.partdb.client.Member;
 import io.partdb.client.MemberRole;
-import io.partdb.client.Members;
+import io.partdb.client.Membership;
 import io.partdb.client.NodeStatus;
 import io.partdb.client.PartDbClient;
 import io.partdb.client.PartDbException;
@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 record ClientCommand(Action action, ClientOptions options) implements AppCommand {
 
@@ -28,7 +29,7 @@ record ClientCommand(Action action, ClientOptions options) implements AppCommand
 
         record Delete(String key) implements Action {}
 
-        record Scan(String start, Optional<String> end, int limit, ReadConsistency consistency) implements Action {}
+        record Scan(String start, Optional<String> end, OptionalInt limit, ReadConsistency consistency) implements Action {}
 
         record Status() implements Action {}
 
@@ -54,7 +55,7 @@ record ClientCommand(Action action, ClientOptions options) implements AppCommand
         boolean json = options.output() == OutputFormat.JSON;
         switch (action) {
             case Action.Get(var key, var consistency) -> {
-                var entry = client.kv().get(Bytes.utf8(key), consistency);
+                var entry = client.kv().get(Bytes.utf8(key), consistency).value();
                 if (entry.isEmpty()) {
                     err.println("Error: key not found: " + key);
                     return NOT_FOUND;
@@ -63,7 +64,7 @@ record ClientCommand(Action action, ClientOptions options) implements AppCommand
             }
             case Action.Put(var key, var value) -> written(out, json, client.kv().put(Bytes.utf8(key), Bytes.utf8(value)));
             case Action.Delete(var key) -> written(out, json, client.kv().delete(Bytes.utf8(key)));
-            case Action.Scan(var start, var end, int limit, var consistency) -> {
+            case Action.Scan(var start, var end, var limit, var consistency) -> {
                 var range = new KeyRange(Bytes.utf8(start), end.map(Bytes::utf8));
                 try (var cursor = client.kv().scan(range, new ScanOptions(limit, consistency))) {
                     var entries = new ArrayList<Map<String, Object>>();
@@ -85,7 +86,7 @@ record ClientCommand(Action action, ClientOptions options) implements AppCommand
                 out.print(json ? Json.write(status(status)) + "\n" : text(status));
             }
             case Action.Members() -> {
-                var members = client.cluster().members();
+                var members = client.cluster().membership();
                 out.print(json ? Json.write(members(members)) + "\n" : text(members));
             }
         }
@@ -112,7 +113,7 @@ record ClientCommand(Action action, ClientOptions options) implements AppCommand
         );
     }
 
-    private static Map<String, Object> members(Members members) {
+    private static Map<String, Object> members(Membership members) {
         var list = members.members().stream()
             .map(member -> (Object) map(
                 "nodeId", member.nodeId(),
@@ -136,7 +137,7 @@ record ClientCommand(Action action, ClientOptions options) implements AppCommand
             status.commitIndex(), status.appliedIndex(), status.snapshotIndex());
     }
 
-    private static String text(Members members) {
+    private static String text(Membership members) {
         var text = new StringBuilder();
         for (Member member : members.members()) {
             boolean leader = members.leaderId().map(member.nodeId()::equals).orElse(false);

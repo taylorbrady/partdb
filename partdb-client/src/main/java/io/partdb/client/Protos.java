@@ -51,8 +51,8 @@ final class Protos {
         );
     }
 
-    static Members members(ListMembersResponse proto) {
-        return new Members(
+    static Membership membership(ListMembersResponse proto) {
+        return new Membership(
             proto.getMembersList().stream().map(member -> new Member(member.getNodeId(), memberRole(member.getRole()))).toList(),
             proto.hasLeaderId() ? java.util.Optional.of(proto.getLeaderId()) : java.util.Optional.empty()
         );

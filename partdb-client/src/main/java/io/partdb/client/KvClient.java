@@ -22,17 +22,18 @@ public final class KvClient {
         this.invoker = invoker;
     }
 
-    public Optional<KeyValue> get(Bytes key) {
+    public Read<Optional<KeyValue>> get(Bytes key) {
         return get(key, ReadConsistency.LINEARIZABLE);
     }
 
-    public Optional<KeyValue> get(Bytes key, ReadConsistency consistency) {
+    public Read<Optional<KeyValue>> get(Bytes key, ReadConsistency consistency) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(consistency, "consistency must not be null");
         var request = GetRequest.newBuilder().setKey(Protos.bytes(key)).setConsistency(Protos.consistency(consistency)).build();
         var response = invoker.call(Invoker.Kind.READ, (channel, deadline) ->
             KeyValueServiceGrpc.newBlockingStub(channel).withDeadline(deadline).get(request));
-        return response.hasEntry() ? Optional.of(Protos.keyValue(response.getEntry())) : Optional.empty();
+        var entry = response.hasEntry() ? Optional.of(Protos.keyValue(response.getEntry())) : Optional.<KeyValue>empty();
+        return new Read<>(entry, response.getReadRevision());
     }
 
     public long put(Bytes key, Bytes value) {
@@ -69,7 +70,7 @@ public final class KvClient {
         Objects.requireNonNull(options, "options must not be null");
         var request = ScanRequest.newBuilder()
             .setStartKey(Protos.bytes(range.start()))
-            .setLimit(options.limit())
+            .setLimit(options.limit().orElse(0))
             .setConsistency(Protos.consistency(options.consistency()));
         range.end().ifPresent(end -> request.setEndKey(Protos.bytes(end)));
         return invoker.call(Invoker.Kind.READ, (channel, deadline) -> {

@@ -49,7 +49,7 @@ class PartDbAppTest {
     void parsesScanBoundsAndLimit() {
         var command = assertInstanceOf(ClientCommand.class, parse("kv", "scan", "a", "m", "--limit", "5", "--output", "json"));
 
-        assertEquals(new ClientCommand.Action.Scan("a", Optional.of("m"), 5, io.partdb.client.ReadConsistency.LINEARIZABLE), command.action());
+        assertEquals(new ClientCommand.Action.Scan("a", Optional.of("m"), java.util.OptionalInt.of(5), io.partdb.client.ReadConsistency.LINEARIZABLE), command.action());
         assertEquals(OutputFormat.JSON, command.options().output());
     }
 

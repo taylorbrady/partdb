@@ -1,7 +1,7 @@
 package io.partdb.app.testing;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.client.Members;
+import io.partdb.client.Membership;
 import io.partdb.client.NodeStatus;
 import io.partdb.client.PartDbClient;
 import io.partdb.client.ReadConsistency;
@@ -119,8 +119,8 @@ public final class TestCluster<N extends TestClusterNode> implements AutoCloseab
         return probe(nodeId).cluster().status(node(nodeId).endpoint());
     }
 
-    public Members members(String nodeId) {
-        return probe(nodeId).cluster().members();
+    public Membership members(String nodeId) {
+        return probe(nodeId).cluster().membership();
     }
 
     public N awaitStableLeader(Duration timeout) throws InterruptedException {
@@ -138,7 +138,7 @@ public final class TestCluster<N extends TestClusterNode> implements AutoCloseab
         });
     }
 
-    public Members awaitMembersLeader(String nodeId, String leaderId, Duration timeout) throws InterruptedException {
+    public Membership awaitMembersLeader(String nodeId, String leaderId, Duration timeout) throws InterruptedException {
         return await(timeout, "members on " + nodeId + " to report leader " + leaderId, () -> {
             var members = members(nodeId);
             return members.leaderId().filter(leaderId::equals).map(_ -> members);
@@ -157,7 +157,7 @@ public final class TestCluster<N extends TestClusterNode> implements AutoCloseab
     public void awaitNodeValue(String nodeId, String key, String expected, Duration timeout) throws InterruptedException {
         var value = Bytes.utf8(expected);
         await(timeout, nodeId + " to observe " + key + "=" + expected, () ->
-            probe(nodeId).kv().get(Bytes.utf8(key), ReadConsistency.LOCAL).filter(entry -> entry.value().equals(value)));
+            probe(nodeId).kv().get(Bytes.utf8(key), ReadConsistency.LOCAL).value().filter(entry -> entry.value().equals(value)));
     }
 
     @Override

@@ -33,7 +33,7 @@ class MultiNodeClusterIntegrationTest {
     }
 
     private static String value(PartDbClient client, String key) {
-        return client.kv().get(bytes(key)).orElseThrow().value().utf8();
+        return client.kv().get(bytes(key)).value().orElseThrow().value().utf8();
     }
 
     @Test
@@ -51,7 +51,7 @@ class MultiNodeClusterIntegrationTest {
                 long second = client.kv().write(List.of(Mutation.put(bytes("b"), bytes("two")), Mutation.put(bytes("c"), bytes("three"))));
 
                 assertTrue(second > first);
-                var entry = client.kv().get(bytes("b")).orElseThrow();
+                var entry = client.kv().get(bytes("b")).value().orElseThrow();
                 assertEquals(second, entry.revision());
                 assertEquals("three", value(client, "c"));
             }
@@ -95,7 +95,7 @@ class MultiNodeClusterIntegrationTest {
             cluster.startNode(follower);
             cluster.awaitCaughtUp(follower, CLUSTER_TIMEOUT);
             for (int i = 0; i < BURST; i++) {
-                assertEquals("value-" + i, cluster.client().kv().get(bytes("burst-" + i), ReadConsistency.LINEARIZABLE).orElseThrow().value().utf8());
+                assertEquals("value-" + i, cluster.client().kv().get(bytes("burst-" + i), ReadConsistency.LINEARIZABLE).value().orElseThrow().value().utf8());
             }
             cluster.awaitNodeValue(follower, "burst-" + (BURST - 1), "value-" + (BURST - 1), CLUSTER_TIMEOUT);
         }
