@@ -40,15 +40,15 @@ final class Invoker {
                 case Failure.Busy _ -> {}
                 case Failure.Unreachable(boolean sent, _) when kind == Kind.READ || !sent -> connections.rotate(endpoint);
                 case Failure.Unreachable unreachable ->
-                    throw new PartDbClientException.OutcomeUnknown("the connection to " + endpoint + " failed during a write", unreachable.cause());
+                    throw new PartDbException.OutcomeUnknown("the connection to " + endpoint + " failed during a write", unreachable.cause());
                 case Failure.DeadlineExceeded exceeded when kind == Kind.WRITE ->
-                    throw new PartDbClientException.OutcomeUnknown("the write did not finish before its deadline", exceeded.cause());
+                    throw new PartDbException.OutcomeUnknown("the write did not finish before its deadline", exceeded.cause());
                 case Failure.DeadlineExceeded exceeded ->
-                    throw new PartDbClientException.Timeout("the read did not finish before its deadline", exceeded.cause());
-                case Failure.Invalid invalid -> throw new PartDbClientException.InvalidRequest(invalid.message(), invalid.cause());
-                case Failure.OutcomeUnknown unknown -> throw new PartDbClientException.OutcomeUnknown(unknown.message(), unknown.cause());
-                case Failure.Cancelled cancelled -> throw new PartDbClientException.Cancelled(cancelled.message(), cancelled.cause());
-                case Failure.Internal internal -> throw new PartDbClientException.Internal(internal.message(), internal.cause());
+                    throw new PartDbException.Timeout("the read did not finish before its deadline", exceeded.cause());
+                case Failure.Invalid invalid -> throw new PartDbException.InvalidRequest(invalid.message(), invalid.cause());
+                case Failure.OutcomeUnknown unknown -> throw new PartDbException.OutcomeUnknown(unknown.message(), unknown.cause());
+                case Failure.Cancelled cancelled -> throw new PartDbException.Cancelled(cancelled.message(), cancelled.cause());
+                case Failure.Internal internal -> throw new PartDbException.Internal(internal.message(), internal.cause());
             }
             boolean moved = !connections.preferred().equals(endpoint);
             if (!moved || attempt >= connections.endpoints().size()) {
@@ -57,13 +57,13 @@ final class Invoker {
         }
     }
 
-    private static PartDbClientException exhausted(Kind kind, Failure last) {
+    private static PartDbException exhausted(Kind kind, Failure last) {
         var cause = last == null ? null : last.cause();
         String message = last == null ? "the request deadline expired" : "no node accepted the request before its deadline: " + last.message();
         return switch (last) {
-            case Failure.Unreachable(boolean sent, _) when kind == Kind.WRITE && sent -> new PartDbClientException.OutcomeUnknown(message, cause);
-            case null -> new PartDbClientException.Timeout(message, null);
-            default -> new PartDbClientException.Unavailable(message, cause);
+            case Failure.Unreachable(boolean sent, _) when kind == Kind.WRITE && sent -> new PartDbException.OutcomeUnknown(message, cause);
+            case null -> new PartDbException.Timeout(message, null);
+            default -> new PartDbException.Unavailable(message, cause);
         };
     }
 
@@ -76,7 +76,7 @@ final class Invoker {
             Thread.sleep(Duration.ofNanos(nanos));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new PartDbClientException.Cancelled("interrupted while retrying", null);
+            throw new PartDbException.Cancelled("interrupted while retrying", null);
         }
     }
 }

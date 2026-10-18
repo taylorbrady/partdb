@@ -58,13 +58,13 @@ final class Protos {
         );
     }
 
-    private static Role role(io.partdb.grpc.cluster.v1.Role role) {
+    private static RaftRole role(io.partdb.grpc.cluster.v1.RaftRole role) {
         return switch (role) {
-            case ROLE_FOLLOWER -> Role.FOLLOWER;
-            case ROLE_PRE_CANDIDATE -> Role.PRE_CANDIDATE;
-            case ROLE_CANDIDATE -> Role.CANDIDATE;
-            case ROLE_LEADER -> Role.LEADER;
-            case ROLE_UNSPECIFIED, UNRECOGNIZED -> throw new PartDbClientException.Internal("the server reported an unknown role: " + role, null);
+            case RAFT_ROLE_FOLLOWER -> RaftRole.FOLLOWER;
+            case RAFT_ROLE_PRE_CANDIDATE -> RaftRole.PRE_CANDIDATE;
+            case RAFT_ROLE_CANDIDATE -> RaftRole.CANDIDATE;
+            case RAFT_ROLE_LEADER -> RaftRole.LEADER;
+            case RAFT_ROLE_UNSPECIFIED, UNRECOGNIZED -> throw new PartDbException.Internal("the server reported an unknown role: " + role, null);
         };
     }
 
@@ -73,7 +73,7 @@ final class Protos {
             case MEMBER_ROLE_VOTER -> MemberRole.VOTER;
             case MEMBER_ROLE_LEARNER -> MemberRole.LEARNER;
             case MEMBER_ROLE_UNSPECIFIED, UNRECOGNIZED ->
-                throw new PartDbClientException.Internal("the server reported an unknown member role: " + role, null);
+                throw new PartDbException.Internal("the server reported an unknown member role: " + role, null);
         };
     }
 }

@@ -44,7 +44,7 @@ public final class ScanCursor implements Iterator<KeyValue>, AutoCloseable {
             return true;
         } catch (StatusRuntimeException error) {
             close();
-            throw new PartDbClientException.Unavailable("the scan stream failed after it started", error);
+            throw new PartDbException.Unavailable("the scan stream failed after it started", error);
         }
     }
 

@@ -45,7 +45,7 @@ final class Connections implements AutoCloseable {
 
     ManagedChannel channel(ServerEndpoint endpoint) {
         if (closed) {
-            throw new PartDbClientException.Closed();
+            throw new PartDbException.Closed();
         }
         return channels.computeIfAbsent(endpoint, this::open);
     }

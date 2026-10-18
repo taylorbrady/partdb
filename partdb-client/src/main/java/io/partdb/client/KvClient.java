@@ -77,15 +77,15 @@ public final class KvClient {
             try {
                 var responses = context.call(() -> KeyValueServiceGrpc.newBlockingStub(channel).withDeadline(deadline).scan(request.build()));
                 if (!responses.hasNext()) {
-                    throw new PartDbClientException.Internal("the server ended the scan without a response", null);
+                    throw new PartDbException.Internal("the server ended the scan without a response", null);
                 }
                 return new ScanCursor(context, responses, responses.next());
-            } catch (StatusRuntimeException | PartDbClientException e) {
+            } catch (StatusRuntimeException | PartDbException e) {
                 context.cancel(null);
                 throw e;
             } catch (Exception e) {
                 context.cancel(null);
-                throw new PartDbClientException.Internal("failed to start the scan", e);
+                throw new PartDbException.Internal("failed to start the scan", e);
             }
         });
     }

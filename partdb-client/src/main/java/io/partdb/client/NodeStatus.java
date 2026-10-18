@@ -5,7 +5,7 @@ import java.util.Optional;
 
 public record NodeStatus(
     String nodeId,
-    Role role,
+    RaftRole role,
     long term,
     Optional<String> leaderId,
     long commitIndex,

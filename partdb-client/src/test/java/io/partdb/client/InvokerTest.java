@@ -12,7 +12,7 @@ import io.partdb.bytes.Bytes;
 import io.partdb.grpc.cluster.v1.ClusterServiceGrpc;
 import io.partdb.grpc.cluster.v1.GetStatusRequest;
 import io.partdb.grpc.cluster.v1.NodeStatus;
-import io.partdb.grpc.cluster.v1.Role;
+import io.partdb.grpc.cluster.v1.RaftRole;
 import io.partdb.grpc.kv.v1.GetRequest;
 import io.partdb.grpc.kv.v1.GetResponse;
 import io.partdb.grpc.kv.v1.KeyValueServiceGrpc;
@@ -69,7 +69,7 @@ class InvokerTest {
             .addService(new ClusterServiceGrpc.ClusterServiceImplBase() {
                 @Override
                 public void getStatus(GetStatusRequest request, StreamObserver<NodeStatus> responses) {
-                    responses.onNext(NodeStatus.newBuilder().setNodeId(node.id()).setRole(Role.ROLE_FOLLOWER).build());
+                    responses.onNext(NodeStatus.newBuilder().setNodeId(node.id()).setRole(RaftRole.RAFT_ROLE_FOLLOWER).build());
                     responses.onCompleted();
                 }
             })
@@ -140,7 +140,7 @@ class InvokerTest {
         String node = start(new FakeNode("n1", _ -> Status.UNAVAILABLE.withDescription("connection reset").asRuntimeException(), puts));
 
         try (var client = client(node)) {
-            assertThrows(PartDbClientException.OutcomeUnknown.class, () -> client.kv().put(Bytes.utf8("k"), Bytes.utf8("v")));
+            assertThrows(PartDbException.OutcomeUnknown.class, () -> client.kv().put(Bytes.utf8("k"), Bytes.utf8("v")));
         }
         assertEquals(1, puts.get());
     }
@@ -152,8 +152,8 @@ class InvokerTest {
         String invalid = start(new FakeNode("n2", _ -> failure(Code.INVALID_ARGUMENT, null, Map.of()), puts));
 
         try (var first = client(unknown); var second = client(invalid)) {
-            assertThrows(PartDbClientException.OutcomeUnknown.class, () -> first.kv().put(Bytes.utf8("k"), Bytes.utf8("v")));
-            assertThrows(PartDbClientException.InvalidRequest.class, () -> second.kv().put(Bytes.utf8("k"), Bytes.utf8("v")));
+            assertThrows(PartDbException.OutcomeUnknown.class, () -> first.kv().put(Bytes.utf8("k"), Bytes.utf8("v")));
+            assertThrows(PartDbException.InvalidRequest.class, () -> second.kv().put(Bytes.utf8("k"), Bytes.utf8("v")));
         }
     }
 
@@ -163,7 +163,7 @@ class InvokerTest {
         String node = start(new FakeNode("n1", _ -> failure(Code.UNAVAILABLE, "NOT_LEADER", Map.of()), puts));
 
         try (var client = PartDbClient.builder().endpoints(node).requestTimeout(Duration.ofMillis(300)).build()) {
-            assertThrows(PartDbClientException.Unavailable.class, () -> client.kv().put(Bytes.utf8("k"), Bytes.utf8("v")));
+            assertThrows(PartDbException.Unavailable.class, () -> client.kv().put(Bytes.utf8("k"), Bytes.utf8("v")));
         }
     }
 

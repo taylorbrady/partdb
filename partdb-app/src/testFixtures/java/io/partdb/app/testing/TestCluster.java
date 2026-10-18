@@ -5,7 +5,7 @@ import io.partdb.client.Members;
 import io.partdb.client.NodeStatus;
 import io.partdb.client.PartDbClient;
 import io.partdb.client.ReadConsistency;
-import io.partdb.client.Role;
+import io.partdb.client.RaftRole;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -193,7 +193,7 @@ public final class TestCluster<N extends TestClusterNode> implements AutoCloseab
                 statuses.put(nodeId, status(nodeId));
             }
             var leaders = statuses.entrySet().stream()
-                .filter(entry -> entry.getValue().role() == Role.LEADER)
+                .filter(entry -> entry.getValue().role() == RaftRole.LEADER)
                 .map(Map.Entry::getKey)
                 .toList();
             if (leaders.size() != 1 || leaders.getFirst().equals(excluded)) {

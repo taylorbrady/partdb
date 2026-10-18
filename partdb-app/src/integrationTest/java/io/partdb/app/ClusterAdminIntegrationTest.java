@@ -2,7 +2,7 @@ package io.partdb.app;
 
 import io.partdb.app.testing.TestCluster;
 import io.partdb.client.MemberRole;
-import io.partdb.client.Role;
+import io.partdb.client.RaftRole;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
@@ -30,7 +30,7 @@ class ClusterAdminIntegrationTest {
             for (String nodeId : cluster.startedNodeIds()) {
                 var status = cluster.awaitStatusLeader(nodeId, leaderId, CLUSTER_TIMEOUT);
                 assertEquals(nodeId, status.nodeId());
-                assertEquals(nodeId.equals(leaderId), status.role() == Role.LEADER);
+                assertEquals(nodeId.equals(leaderId), status.role() == RaftRole.LEADER);
 
                 var members = cluster.awaitMembersLeader(nodeId, leaderId, CLUSTER_TIMEOUT);
                 assertEquals(3, members.members().size());

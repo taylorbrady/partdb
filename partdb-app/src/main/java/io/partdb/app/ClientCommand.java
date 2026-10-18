@@ -8,7 +8,7 @@ import io.partdb.client.MemberRole;
 import io.partdb.client.Members;
 import io.partdb.client.NodeStatus;
 import io.partdb.client.PartDbClient;
-import io.partdb.client.PartDbClientException;
+import io.partdb.client.PartDbException;
 import io.partdb.client.ReadConsistency;
 import io.partdb.client.ScanOptions;
 
@@ -44,7 +44,7 @@ record ClientCommand(Action action, ClientOptions options) implements AppCommand
     public int execute(PrintStream out, PrintStream err) {
         try (var client = PartDbClient.builder().endpoints(options.endpoints()).requestTimeout(options.timeout()).build()) {
             return run(client, out, err);
-        } catch (PartDbClientException e) {
+        } catch (PartDbException e) {
             err.println("Error: " + describe(e));
             return FAILED;
         }
@@ -152,15 +152,15 @@ record ClientCommand(Action action, ClientOptions options) implements AppCommand
         };
     }
 
-    private static String describe(PartDbClientException error) {
+    private static String describe(PartDbException error) {
         String kind = switch (error) {
-            case PartDbClientException.Unavailable _ -> "unavailable";
-            case PartDbClientException.Timeout _ -> "timed out";
-            case PartDbClientException.InvalidRequest _ -> "invalid request";
-            case PartDbClientException.OutcomeUnknown _ -> "outcome unknown";
-            case PartDbClientException.Internal _ -> "server error";
-            case PartDbClientException.Cancelled _ -> "cancelled";
-            case PartDbClientException.Closed _ -> "client closed";
+            case PartDbException.Unavailable _ -> "unavailable";
+            case PartDbException.Timeout _ -> "timed out";
+            case PartDbException.InvalidRequest _ -> "invalid request";
+            case PartDbException.OutcomeUnknown _ -> "outcome unknown";
+            case PartDbException.Internal _ -> "server error";
+            case PartDbException.Cancelled _ -> "cancelled";
+            case PartDbException.Closed _ -> "client closed";
         };
         return kind + ": " + error.getMessage();
     }

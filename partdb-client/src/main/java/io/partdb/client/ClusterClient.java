@@ -38,11 +38,11 @@ public final class ClusterClient {
         } catch (StatusRuntimeException error) {
             var failure = Failure.of(error);
             throw switch (failure) {
-                case Failure.DeadlineExceeded _ -> new PartDbClientException.Timeout(failure.message(), error);
-                case Failure.Unreachable _, Failure.NotLeader _, Failure.Busy _ -> new PartDbClientException.Unavailable(failure.message(), error);
-                case Failure.Invalid _ -> new PartDbClientException.InvalidRequest(failure.message(), error);
-                case Failure.Cancelled _ -> new PartDbClientException.Cancelled(failure.message(), error);
-                case Failure.OutcomeUnknown _, Failure.Internal _ -> new PartDbClientException.Internal(failure.message(), error);
+                case Failure.DeadlineExceeded _ -> new PartDbException.Timeout(failure.message(), error);
+                case Failure.Unreachable _, Failure.NotLeader _, Failure.Busy _ -> new PartDbException.Unavailable(failure.message(), error);
+                case Failure.Invalid _ -> new PartDbException.InvalidRequest(failure.message(), error);
+                case Failure.Cancelled _ -> new PartDbException.Cancelled(failure.message(), error);
+                case Failure.OutcomeUnknown _, Failure.Internal _ -> new PartDbException.Internal(failure.message(), error);
             };
         }
     }

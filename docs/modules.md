@@ -190,7 +190,7 @@ This module exposes one blocking Java client, `PartDbClient`, with `kv()` and
 hints to the leader's endpoint (learned from each endpoint's status), retries
 reads and requests the server reports as not applied within one deadline, and
 reports any write that may have been applied as `OutcomeUnknown` instead of
-retrying it. Failures are one sealed `PartDbClientException` family.
+retrying it. Failures are one sealed `PartDbException` family.
 
 Allowed dependencies: `partdb-grpc`, `partdb-bytes`, gRPC/protobuf libraries.
 

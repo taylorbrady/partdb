@@ -8,6 +8,7 @@ import io.partdb.grpc.cluster.v1.ListMembersResponse;
 import io.partdb.grpc.cluster.v1.Member;
 import io.partdb.grpc.cluster.v1.MemberRole;
 import io.partdb.grpc.cluster.v1.NodeStatus;
+import io.partdb.grpc.cluster.v1.RaftRole;
 import io.partdb.node.Node;
 import io.partdb.raft.NodeId;
 import io.partdb.raft.Role;
@@ -52,12 +53,12 @@ final class ClusterService extends ClusterServiceGrpc.ClusterServiceImplBase {
         return Member.newBuilder().setNodeId(node.value()).setRole(role).build();
     }
 
-    private static io.partdb.grpc.cluster.v1.Role role(Role role) {
+    private static RaftRole role(Role role) {
         return switch (role) {
-            case FOLLOWER -> io.partdb.grpc.cluster.v1.Role.ROLE_FOLLOWER;
-            case PRE_CANDIDATE -> io.partdb.grpc.cluster.v1.Role.ROLE_PRE_CANDIDATE;
-            case CANDIDATE -> io.partdb.grpc.cluster.v1.Role.ROLE_CANDIDATE;
-            case LEADER -> io.partdb.grpc.cluster.v1.Role.ROLE_LEADER;
+            case FOLLOWER -> RaftRole.RAFT_ROLE_FOLLOWER;
+            case PRE_CANDIDATE -> RaftRole.RAFT_ROLE_PRE_CANDIDATE;
+            case CANDIDATE -> RaftRole.RAFT_ROLE_CANDIDATE;
+            case LEADER -> RaftRole.RAFT_ROLE_LEADER;
         };
     }
 }
