@@ -178,6 +178,9 @@ class NodeTest {
             assertThrows(NodeException.InvalidRequest.class, () -> node.kv().put(Bytes.EMPTY, bytes("v"), TIMEOUT));
             assertThrows(NodeException.InvalidRequest.class, () -> node.kv().write(List.of(
                 Mutation.put(bytes("a"), bytes("1")), Mutation.put(bytes("b"), bytes("2")), Mutation.put(bytes("c"), bytes("3"))), TIMEOUT));
+            assertThrows(NodeException.InvalidRequest.class, () -> node.kv().write(List.of(), TIMEOUT));
+            assertThrows(NodeException.InvalidRequest.class, () -> node.kv().write(List.of(
+                Mutation.put(bytes("a"), bytes("1")), Mutation.delete(bytes("a"))), TIMEOUT));
             assertEquals(0, node.metrics().proposals());
         }
     }

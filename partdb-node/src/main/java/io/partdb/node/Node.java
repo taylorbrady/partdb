@@ -5,6 +5,7 @@ import io.partdb.node.kv.KeyRange;
 import io.partdb.node.kv.KeyValue;
 import io.partdb.node.kv.KeyValueStore;
 import io.partdb.node.kv.KvLimits;
+import io.partdb.node.kv.Mutation;
 import io.partdb.node.kv.Read;
 import io.partdb.node.kv.ReadConsistency;
 import io.partdb.node.kv.Scan;
@@ -19,6 +20,7 @@ import io.partdb.raft.runtime.RaftStatus;
 import io.partdb.raft.runtime.RaftTransport;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletionStage;
@@ -143,6 +145,34 @@ public final class Node implements AutoCloseable {
                 failedProposals.incrementAndGet();
                 throw e;
             }
+        }
+
+        @Override
+        public long put(Bytes key, Bytes value, Duration timeout) {
+            return commit(List.of(Mutation.put(key, value)), timeout);
+        }
+
+        @Override
+        public long delete(Bytes key, Duration timeout) {
+            return commit(List.of(Mutation.delete(key)), timeout);
+        }
+
+        @Override
+        public long write(List<Mutation> mutations, Duration timeout) {
+            return commit(mutations, timeout);
+        }
+
+        private long commit(List<Mutation> mutations, Duration timeout) {
+            Txn txn;
+            try {
+                txn = Txn.of(mutations);
+            } catch (IllegalArgumentException e) {
+                throw new NodeException.InvalidRequest(e.getMessage(), e);
+            }
+            return switch (transact(txn, timeout)) {
+                case TxnResult.Committed(long revision) -> revision;
+                case TxnResult.ConditionFailed() -> throw new IllegalStateException("an unconditional transaction failed a condition");
+            };
         }
 
         private static void guard(Runnable check) {
