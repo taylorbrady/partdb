@@ -87,11 +87,11 @@ public final class PartDbServer implements AutoCloseable {
     }
 
     private void handOffLeadership() {
-        if (node.cluster().status().role() != Role.LEADER) {
+        if (node.status().role() != Role.LEADER) {
             return;
         }
         try {
-            node.cluster().stepDown(HAND_OFF_TIMEOUT);
+            node.stepDown(HAND_OFF_TIMEOUT);
         } catch (NodeException e) {
             log.atInfo().addKeyValue("reason", e.getMessage()).log("Leadership hand-off skipped");
         }

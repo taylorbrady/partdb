@@ -24,7 +24,7 @@ final class ClusterService extends ClusterServiceGrpc.ClusterServiceImplBase {
     @Override
     public void getStatus(GetStatusRequest request, StreamObserver<NodeStatus> responses) {
         Calls.unary(responses, _ -> {
-            var status = node.cluster().status();
+            var status = node.status();
             var response = NodeStatus.newBuilder()
                 .setNodeId(status.nodeId().value())
                 .setRole(role(status.role()))
@@ -40,11 +40,11 @@ final class ClusterService extends ClusterServiceGrpc.ClusterServiceImplBase {
     @Override
     public void listMembers(ListMembersRequest request, StreamObserver<ListMembersResponse> responses) {
         Calls.unary(responses, _ -> {
-            var membership = node.cluster().membership();
+            var membership = node.membership();
             var response = ListMembersResponse.newBuilder();
             membership.voters().forEach(voter -> response.addMembers(member(voter, MemberRole.MEMBER_ROLE_VOTER)));
             membership.learners().forEach(learner -> response.addMembers(member(learner, MemberRole.MEMBER_ROLE_LEARNER)));
-            node.cluster().status().leader().map(NodeId::value).ifPresent(response::setLeaderId);
+            node.status().leader().map(NodeId::value).ifPresent(response::setLeaderId);
             return response.build();
         });
     }

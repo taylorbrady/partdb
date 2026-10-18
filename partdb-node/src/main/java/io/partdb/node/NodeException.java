@@ -36,7 +36,7 @@ public abstract sealed class NodeException extends RuntimeException {
     public static final class NotLeader extends NodeException {
         private final NodeId leader;
 
-        public NotLeader(Optional<NodeId> leader, Throwable cause) {
+        NotLeader(Optional<NodeId> leader, Throwable cause) {
             super(leader.map(id -> "not the leader; the leader is " + id).orElse("not the leader; the leader is unknown"), cause);
             this.leader = leader.orElse(null);
         }
@@ -47,43 +47,43 @@ public abstract sealed class NodeException extends RuntimeException {
     }
 
     public static final class Busy extends NodeException {
-        public Busy(String message, Throwable cause) {
+        Busy(String message, Throwable cause) {
             super(message, cause);
         }
     }
 
     public static final class Unavailable extends NodeException {
-        public Unavailable(String message, Throwable cause) {
+        Unavailable(String message, Throwable cause) {
             super(message, cause);
         }
     }
 
     public static final class InvalidRequest extends NodeException {
-        public InvalidRequest(String message, Throwable cause) {
+        InvalidRequest(String message, Throwable cause) {
             super(message, cause);
         }
     }
 
     public static final class Timeout extends NodeException {
-        public Timeout(String message) {
+        Timeout(String message) {
             super(message, null);
         }
     }
 
     public static final class OutcomeUnknown extends NodeException {
-        public OutcomeUnknown(String message, Throwable cause) {
+        OutcomeUnknown(String message, Throwable cause) {
             super(message, cause);
         }
     }
 
     public static final class Cancelled extends NodeException {
-        public Cancelled(String message) {
+        Cancelled(String message) {
             super(message, null);
         }
     }
 
     public static final class Internal extends NodeException {
-        public Internal(String message, Throwable cause) {
+        Internal(String message, Throwable cause) {
             super(message, cause);
         }
     }

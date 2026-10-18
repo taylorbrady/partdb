@@ -1,4 +1,4 @@
-package io.partdb.node.kv;
+package io.partdb.node;
 
 public sealed interface TxnResult {
     record Committed(long revision) implements TxnResult {}

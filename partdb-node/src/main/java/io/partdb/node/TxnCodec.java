@@ -1,15 +1,13 @@
-package io.partdb.node.state;
+package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.kv.Condition;
-import io.partdb.node.kv.Mutation;
-import io.partdb.node.kv.Txn;
+import io.partdb.storage.Mutation;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 
-public final class TxnCodec {
+final class TxnCodec {
 
     private static final byte VERSION = 1;
     private static final byte EXISTS = 1;
@@ -19,7 +17,7 @@ public final class TxnCodec {
     private static final byte PUT = 1;
     private static final byte DELETE = 2;
 
-    public static final class CorruptCommand extends RuntimeException {
+    static final class CorruptCommand extends RuntimeException {
         CorruptCommand(String message) {
             super(message);
         }
@@ -28,7 +26,7 @@ public final class TxnCodec {
     private TxnCodec() {
     }
 
-    public static Bytes encode(Txn txn) {
+    static Bytes encode(Txn txn) {
         var buffer = ByteBuffer.allocate(size(txn)).order(ByteOrder.LITTLE_ENDIAN);
         buffer.put(VERSION);
         buffer.putInt(txn.conditions().size());
@@ -50,7 +48,7 @@ public final class TxnCodec {
         return Bytes.copyOf(buffer.array());
     }
 
-    public static Txn decode(Bytes encoded) {
+    static Txn decode(Bytes encoded) {
         var buffer = encoded.asReadOnlyByteBuffer().order(ByteOrder.LITTLE_ENDIAN);
         byte version = readByte(buffer);
         if (version != VERSION) {

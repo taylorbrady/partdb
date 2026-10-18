@@ -1,6 +1,7 @@
-package io.partdb.node.kv;
+package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.storage.Mutation;
 
 public record KvLimits(int maxKeyBytes, int maxValueBytes, int maxMutations, int maxConditions, int maxTxnBytes) {
     public static final KvLimits DEFAULT = new KvLimits(4 << 10, 1 << 20, 1024, 1024, 4 << 20);
@@ -11,7 +12,7 @@ public record KvLimits(int maxKeyBytes, int maxValueBytes, int maxMutations, int
         }
     }
 
-    public void check(Txn txn) {
+    Txn check(Txn txn) {
         if (txn.mutations().size() > maxMutations) {
             throw new IllegalArgumentException("a transaction may have at most " + maxMutations + " mutations");
         }
@@ -20,13 +21,13 @@ public record KvLimits(int maxKeyBytes, int maxValueBytes, int maxMutations, int
         }
         long bytes = 0;
         for (Condition condition : txn.conditions()) {
-            bytes += checkKey(condition.key());
+            bytes += checkKey(condition.key()).size();
             if (condition instanceof Condition.ValueEquals(_, var value)) {
                 bytes += checkValue(value);
             }
         }
         for (Mutation mutation : txn.mutations()) {
-            bytes += checkKey(mutation.key());
+            bytes += checkKey(mutation.key()).size();
             if (mutation instanceof Mutation.Put(_, var value)) {
                 bytes += checkValue(value);
             }
@@ -34,20 +35,17 @@ public record KvLimits(int maxKeyBytes, int maxValueBytes, int maxMutations, int
         if (bytes > maxTxnBytes) {
             throw new IllegalArgumentException("a transaction may carry at most " + maxTxnBytes + " bytes of keys and values");
         }
+        return txn;
     }
 
-    public void checkKey(Bytes key, String name) {
+    Bytes checkKey(Bytes key) {
         if (key.isEmpty()) {
-            throw new IllegalArgumentException(name + " must not be empty");
+            throw new IllegalArgumentException("key must not be empty");
         }
         if (key.size() > maxKeyBytes) {
-            throw new IllegalArgumentException(name + " exceeds " + maxKeyBytes + " bytes");
+            throw new IllegalArgumentException("key exceeds " + maxKeyBytes + " bytes");
         }
-    }
-
-    private long checkKey(Bytes key) {
-        checkKey(key, "key");
-        return key.size();
+        return key;
     }
 
     private long checkValue(Bytes value) {

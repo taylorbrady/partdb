@@ -152,17 +152,21 @@ encoding.
 
 Role: replicated PartDB node domain.
 
-This module composes the Raft runtime with the PartDB KV state machine. It
-owns node-facing domain APIs: blocking KV operations with explicit timeouts,
-cluster status, and metrics. Every write is one `Txn` (conditions plus
-mutations); `put`, `delete`, and `write` are unconditional transactions. Reads
-return the revision they read at. Failures are one sealed `NodeException`
-family that callers can switch over exhaustively. `KvLimits` are enforced
-before a command is proposed, so oversized or invalid commands never reach the
-log. Packages: `io.partdb.node` (`Node`, `NodeConfig`, `NodeException`,
-cluster view, metrics), `io.partdb.node.kv` (KV API types), and
-`io.partdb.node.state` (`KvStateMachine` and the versioned, strictly decoded
-`TxnCodec`).
+This module composes the Raft runtime with the PartDB KV state machine and adds
+what replication means for keys: transactions, conditions, read consistency,
+limits, and the replicated command format. `Node` is the whole API: blocking
+`get`, `scan`, `write`, and `transact` with explicit timeouts, plus `status`,
+`membership`, `stepDown`, and `metrics`. It speaks storage's key-value
+vocabulary (`KeyValue`, `Mutation`, `KeyRange`, `Cursor`, `StoreStats`) and
+Raft's cluster vocabulary as-is. Every write is one `Txn` (conditions plus
+mutations); `write` is an unconditional transaction. Reads return the revision
+they read at, and a scan is a lazy `Cursor` the caller stops when it has
+enough. Failures are one sealed `NodeException` family that callers switch
+over but never construct. `KvLimits` are enforced before a command is
+proposed, so oversized or invalid commands never reach the log. Everything is
+in `io.partdb.node`; `KvStateMachine` and the versioned, strictly decoded
+`TxnCodec` are package-private, so nothing outside the module can touch the
+log format.
 
 Allowed dependencies: `partdb-raft`, `partdb-storage`, `partdb-bytes`.
 
@@ -262,6 +266,9 @@ Must not own: product code.
   consumer other than the server.
 - `partdb-node` stays separate from `partdb-server` so protocol types cannot
   reach the KV state machine.
+- `partdb-node` uses storage's key-value types the way it uses Raft's cluster
+  types; it does not keep its own copies. Only `partdb-client`, which cannot
+  depend on the engine, models them again.
 - Do not add a type per layer for a concept another layer already models.
 - Do not introduce more modules until a responsibility cannot be expressed by a
   package boundary inside an existing module.

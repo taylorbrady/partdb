@@ -1,21 +1,17 @@
 package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.kv.Condition;
-import io.partdb.node.kv.KeyRange;
-import io.partdb.node.kv.KeyValue;
-import io.partdb.node.kv.KvLimits;
-import io.partdb.node.kv.Mutation;
-import io.partdb.node.kv.ReadConsistency;
-import io.partdb.node.kv.Txn;
-import io.partdb.node.kv.TxnResult;
 import io.partdb.raft.Membership;
 import io.partdb.raft.NodeId;
 import io.partdb.raft.Options;
 import io.partdb.raft.Role;
 import io.partdb.raft.runtime.ClusterId;
 import io.partdb.raft.runtime.RaftConfig;
+import io.partdb.raft.runtime.RaftTransport;
 import io.partdb.raft.runtime.SnapshotPolicy;
+import io.partdb.storage.KeyRange;
+import io.partdb.storage.KeyValue;
+import io.partdb.storage.Mutation;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -52,10 +48,18 @@ class NodeTest {
         return config(directory.resolve("node-1"), SnapshotPolicy.DEFAULT, KvLimits.DEFAULT);
     }
 
+    private static long put(Node node, Bytes key, Bytes value) {
+        return node.write(List.of(Mutation.put(key, value)), TIMEOUT);
+    }
+
+    private static long delete(Node node, Bytes key) {
+        return node.write(List.of(Mutation.delete(key)), TIMEOUT);
+    }
+
     private static Node leader(NodeConfig config) throws InterruptedException {
-        var node = Node.standalone(config);
+        var node = Node.open(config, RaftTransport.standalone());
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (node.cluster().status().role() != Role.LEADER) {
+        while (node.status().role() != Role.LEADER) {
             if (System.nanoTime() > deadline) {
                 node.close();
                 throw new AssertionError("node did not become leader");
@@ -68,9 +72,9 @@ class NodeTest {
     @Test
     void readsItsOwnWritesWithRevisions() throws Exception {
         try (var node = leader(config())) {
-            long revision = node.kv().put(bytes("key"), bytes("value"), TIMEOUT);
+            long revision = put(node, bytes("key"), bytes("value"));
 
-            var read = node.kv().get(bytes("key"), ReadConsistency.LINEARIZABLE, TIMEOUT);
+            var read = node.get(bytes("key"), ReadConsistency.LINEARIZABLE, TIMEOUT);
 
             assertEquals(new KeyValue(bytes("key"), bytes("value"), revision), read.value().orElseThrow());
             assertTrue(read.revision() >= revision);
@@ -80,30 +84,30 @@ class NodeTest {
     @Test
     void deleteRemovesTheKey() throws Exception {
         try (var node = leader(config())) {
-            long put = node.kv().put(bytes("key"), bytes("value"), TIMEOUT);
-            long delete = node.kv().delete(bytes("key"), TIMEOUT);
+            long put = put(node, bytes("key"), bytes("value"));
+            long delete = delete(node, bytes("key"));
 
             assertTrue(delete > put);
-            assertTrue(node.kv().get(bytes("key"), ReadConsistency.LOCAL, TIMEOUT).value().isEmpty());
+            assertTrue(node.get(bytes("key"), ReadConsistency.LOCAL, TIMEOUT).value().isEmpty());
         }
     }
 
     @Test
     void writeAppliesAllMutationsAtOneRevision() throws Exception {
         try (var node = leader(config())) {
-            long revision = node.kv().write(List.of(Mutation.put(bytes("a"), bytes("1")), Mutation.put(bytes("b"), bytes("2"))), TIMEOUT);
+            long revision = node.write(List.of(Mutation.put(bytes("a"), bytes("1")), Mutation.put(bytes("b"), bytes("2"))), TIMEOUT);
 
-            assertEquals(revision, node.kv().get(bytes("a"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().revision());
-            assertEquals(revision, node.kv().get(bytes("b"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().revision());
+            assertEquals(revision, node.get(bytes("a"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().revision());
+            assertEquals(revision, node.get(bytes("b"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().revision());
         }
     }
 
     @Test
     void transactionAppliesWhenEveryConditionHolds() throws Exception {
         try (var node = leader(config())) {
-            long guard = node.kv().put(bytes("guard"), bytes("expected"), TIMEOUT);
+            long guard = put(node, bytes("guard"), bytes("expected"));
 
-            var result = node.kv().transact(Txn.when(
+            var result = node.transact(Txn.when(
                 List.of(
                     Condition.exists(bytes("guard")),
                     Condition.valueEquals(bytes("guard"), bytes("expected")),
@@ -115,23 +119,23 @@ class NodeTest {
 
             var committed = assertInstanceOf(TxnResult.Committed.class, result);
             assertTrue(committed.revision() > guard);
-            assertEquals(bytes("value"), node.kv().get(bytes("key"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().value());
-            assertTrue(node.kv().get(bytes("guard"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().isEmpty());
+            assertEquals(bytes("value"), node.get(bytes("key"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().value());
+            assertTrue(node.get(bytes("guard"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().isEmpty());
         }
     }
 
     @Test
     void transactionWritesNothingWhenAConditionFails() throws Exception {
         try (var node = leader(config())) {
-            node.kv().put(bytes("guard"), bytes("actual"), TIMEOUT);
+            put(node, bytes("guard"), bytes("actual"));
 
-            var result = node.kv().transact(Txn.when(
+            var result = node.transact(Txn.when(
                 List.of(Condition.valueEquals(bytes("guard"), bytes("expected"))),
                 List.of(Mutation.put(bytes("key"), bytes("value")))
             ), TIMEOUT);
 
             assertInstanceOf(TxnResult.ConditionFailed.class, result);
-            assertTrue(node.kv().get(bytes("key"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().isEmpty());
+            assertTrue(node.get(bytes("key"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().isEmpty());
         }
     }
 
@@ -139,13 +143,13 @@ class NodeTest {
     void scanReturnsAConsistentRangeWithItsReadRevision() throws Exception {
         try (var node = leader(config())) {
             for (String key : List.of("a", "b", "c", "d")) {
-                node.kv().put(bytes(key), bytes(key + "-value"), TIMEOUT);
+                put(node, bytes(key), bytes(key + "-value"));
             }
 
             var keys = new ArrayList<String>();
             long revision;
-            try (var scan = node.kv().scan(KeyRange.between(bytes("b"), bytes("d")), 0, ReadConsistency.LINEARIZABLE, TIMEOUT)) {
-                revision = scan.readRevision();
+            try (var scan = node.scan(KeyRange.between(bytes("b"), bytes("d")), ReadConsistency.LINEARIZABLE, TIMEOUT)) {
+                revision = scan.revision();
                 scan.forEachRemaining(entry -> keys.add(entry.key().utf8()));
             }
 
@@ -155,31 +159,16 @@ class NodeTest {
     }
 
     @Test
-    void scanHonoursItsLimit() throws Exception {
-        try (var node = leader(config())) {
-            for (String key : List.of("a", "b", "c")) {
-                node.kv().put(bytes(key), bytes("v"), TIMEOUT);
-            }
-
-            try (var scan = node.kv().scan(KeyRange.all(), 2, ReadConsistency.LINEARIZABLE, TIMEOUT)) {
-                var keys = new ArrayList<String>();
-                scan.forEachRemaining(entry -> keys.add(entry.key().utf8()));
-                assertEquals(List.of("a", "b"), keys);
-            }
-        }
-    }
-
-    @Test
     void rejectsRequestsOutsideTheLimitsBeforeProposing() throws Exception {
         var limits = new KvLimits(4, 8, 2, 2, 64);
         try (var node = leader(config(directory.resolve("node-1"), SnapshotPolicy.DEFAULT, limits))) {
-            assertThrows(NodeException.InvalidRequest.class, () -> node.kv().put(bytes("too-long"), bytes("v"), TIMEOUT));
-            assertThrows(NodeException.InvalidRequest.class, () -> node.kv().put(bytes("k"), bytes("value-too-long"), TIMEOUT));
-            assertThrows(NodeException.InvalidRequest.class, () -> node.kv().put(Bytes.EMPTY, bytes("v"), TIMEOUT));
-            assertThrows(NodeException.InvalidRequest.class, () -> node.kv().write(List.of(
+            assertThrows(NodeException.InvalidRequest.class, () -> put(node, bytes("too-long"), bytes("v")));
+            assertThrows(NodeException.InvalidRequest.class, () -> put(node, bytes("k"), bytes("value-too-long")));
+            assertThrows(NodeException.InvalidRequest.class, () -> put(node, Bytes.EMPTY, bytes("v")));
+            assertThrows(NodeException.InvalidRequest.class, () -> node.write(List.of(
                 Mutation.put(bytes("a"), bytes("1")), Mutation.put(bytes("b"), bytes("2")), Mutation.put(bytes("c"), bytes("3"))), TIMEOUT));
-            assertThrows(NodeException.InvalidRequest.class, () -> node.kv().write(List.of(), TIMEOUT));
-            assertThrows(NodeException.InvalidRequest.class, () -> node.kv().write(List.of(
+            assertThrows(NodeException.InvalidRequest.class, () -> node.write(List.of(), TIMEOUT));
+            assertThrows(NodeException.InvalidRequest.class, () -> node.write(List.of(
                 Mutation.put(bytes("a"), bytes("1")), Mutation.delete(bytes("a"))), TIMEOUT));
             assertEquals(0, node.metrics().proposals());
         }
@@ -189,12 +178,12 @@ class NodeTest {
     void restartReplaysTheLogIntoFreshStorage() throws Exception {
         var config = config();
         try (var node = leader(config)) {
-            node.kv().put(bytes("key"), bytes("value"), TIMEOUT);
+            put(node, bytes("key"), bytes("value"));
         }
         deleteRecursively(config.dataDirectory().resolve("db"));
 
         try (var recovered = leader(config)) {
-            assertEquals(bytes("value"), recovered.kv().get(bytes("key"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().value());
+            assertEquals(bytes("value"), recovered.get(bytes("key"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().value());
         }
     }
 
@@ -203,18 +192,18 @@ class NodeTest {
         var config = config(directory.resolve("node-1"), SnapshotPolicy.everyEntries(5), KvLimits.DEFAULT);
         try (var node = leader(config)) {
             for (int i = 0; i < 23; i++) {
-                node.kv().put(bytes("k" + i), bytes("v" + i), TIMEOUT);
+                put(node, bytes("k" + i), bytes("v" + i));
             }
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (node.cluster().status().snapshotIndex() == 0 && System.nanoTime() < deadline) {
+            while (node.status().snapshotIndex() == 0 && System.nanoTime() < deadline) {
                 Thread.sleep(2);
             }
-            assertTrue(node.cluster().status().snapshotIndex() > 0);
+            assertTrue(node.status().snapshotIndex() > 0);
         }
 
         try (var recovered = leader(config)) {
             for (int i = 0; i < 23; i++) {
-                assertEquals(bytes("v" + i), recovered.kv().get(bytes("k" + i), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().value());
+                assertEquals(bytes("v" + i), recovered.get(bytes("k" + i), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().value());
             }
         }
     }
@@ -223,29 +212,29 @@ class NodeTest {
     void snapshotsAdvancePastEntriesThatChangeNothing() throws Exception {
         var config = config(directory.resolve("node-1"), SnapshotPolicy.everyEntries(5), KvLimits.DEFAULT);
         try (var node = leader(config)) {
-            long write = node.kv().put(bytes("guard"), bytes("actual"), TIMEOUT);
+            long write = put(node, bytes("guard"), bytes("actual"));
             for (int i = 0; i < 20; i++) {
-                var result = node.kv().transact(Txn.when(
+                var result = node.transact(Txn.when(
                     List.of(Condition.valueEquals(bytes("guard"), bytes("expected"))),
                     List.of(Mutation.put(bytes("never"), bytes("written")))
                 ), TIMEOUT);
                 assertInstanceOf(TxnResult.ConditionFailed.class, result);
             }
-            long applied = node.cluster().status().appliedIndex();
+            long applied = node.status().appliedIndex();
 
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (node.cluster().status().snapshotIndex() <= write + 5 && System.nanoTime() < deadline) {
+            while (node.status().snapshotIndex() <= write + 5 && System.nanoTime() < deadline) {
                 Thread.sleep(2);
             }
 
-            assertTrue(node.cluster().status().snapshotIndex() > write + 5,
-                "snapshot index " + node.cluster().status().snapshotIndex() + " stayed near the last real write " + write);
+            assertTrue(node.status().snapshotIndex() > write + 5,
+                "snapshot index " + node.status().snapshotIndex() + " stayed near the last real write " + write);
             assertTrue(applied >= write + 20);
         }
 
         try (var recovered = leader(config)) {
-            assertEquals(bytes("actual"), recovered.kv().get(bytes("guard"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().value());
-            assertTrue(recovered.kv().get(bytes("never"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().isEmpty());
+            assertEquals(bytes("actual"), recovered.get(bytes("guard"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().orElseThrow().value());
+            assertTrue(recovered.get(bytes("never"), ReadConsistency.LINEARIZABLE, TIMEOUT).value().isEmpty());
         }
     }
 

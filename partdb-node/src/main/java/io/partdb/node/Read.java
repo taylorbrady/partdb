@@ -1,4 +1,4 @@
-package io.partdb.node.kv;
+package io.partdb.node;
 
 import java.util.Objects;
 

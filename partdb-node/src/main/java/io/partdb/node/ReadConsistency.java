@@ -1,4 +1,4 @@
-package io.partdb.node.kv;
+package io.partdb.node;
 
 public enum ReadConsistency {
     LOCAL,

@@ -1,6 +1,5 @@
 package io.partdb.node;
 
-import io.partdb.node.kv.KvLimits;
 import io.partdb.raft.runtime.RaftConfig;
 
 import java.nio.file.Path;
@@ -11,9 +10,5 @@ public record NodeConfig(Path dataDirectory, RaftConfig raft, KvLimits limits) {
         Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
         Objects.requireNonNull(raft, "raft must not be null");
         Objects.requireNonNull(limits, "limits must not be null");
-    }
-
-    public static NodeConfig of(Path dataDirectory, RaftConfig raft) {
-        return new NodeConfig(dataDirectory, raft, KvLimits.DEFAULT);
     }
 }

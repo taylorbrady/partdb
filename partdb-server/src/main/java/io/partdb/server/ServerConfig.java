@@ -1,7 +1,7 @@
 package io.partdb.server;
 
+import io.partdb.node.KvLimits;
 import io.partdb.node.NodeConfig;
-import io.partdb.node.kv.KvLimits;
 import io.partdb.raft.Membership;
 import io.partdb.raft.NodeId;
 import io.partdb.raft.Options;

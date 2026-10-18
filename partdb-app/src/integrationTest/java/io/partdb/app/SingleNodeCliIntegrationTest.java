@@ -31,6 +31,7 @@ class SingleNodeCliIntegrationTest {
             assertOutput(InProcessCli.run("kv", "get", "hello", "--endpoint", endpoint), "world\n");
             assertOutput(InProcessCli.run("kv", "put", "help", "me", "--endpoint", endpoint, "--output", "json"), null);
             assertOutput(InProcessCli.run("kv", "scan", "he", "hf", "--endpoint", endpoint), "hello=world\nhelp=me\n");
+            assertOutput(InProcessCli.run("kv", "scan", "he", "hf", "--limit", "1", "--endpoint", endpoint), "hello=world\n");
 
             var delete = InProcessCli.run("kv", "delete", "hello", "--endpoint", endpoint);
             assertEquals(0, delete.exitCode(), delete.stderr());

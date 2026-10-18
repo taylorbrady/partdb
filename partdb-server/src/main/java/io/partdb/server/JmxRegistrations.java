@@ -22,7 +22,7 @@ final class JmxRegistrations implements AutoCloseable {
     JmxRegistrations(Node node) {
         this.mBeanServer = ManagementFactory.getPlatformMBeanServer();
         this.node = node;
-        String nodeId = node.cluster().status().nodeId().value();
+        String nodeId = node.status().nodeId().value();
         this.nodeObjectName = objectName("Node", nodeId);
         this.storageObjectName = objectName("Storage", nodeId);
         this.registered = false;
@@ -76,42 +76,42 @@ final class JmxRegistrations implements AutoCloseable {
     private record NodeMBean(Node node) implements NodeMXBean {
         @Override
         public String getNodeId() {
-            return node.cluster().status().nodeId().value();
+            return node.status().nodeId().value();
         }
 
         @Override
         public boolean isRunning() {
-            return node.cluster().status().running();
+            return node.status().running();
         }
 
         @Override
         public String getRole() {
-            return node.cluster().status().role().name();
+            return node.status().role().name();
         }
 
         @Override
         public String getLeaderId() {
-            return node.cluster().status().leader().map(NodeId::value).orElse("");
+            return node.status().leader().map(NodeId::value).orElse("");
         }
 
         @Override
         public long getCurrentTerm() {
-            return node.cluster().status().term();
+            return node.status().term();
         }
 
         @Override
         public long getCommitIndex() {
-            return node.cluster().status().commitIndex();
+            return node.status().commitIndex();
         }
 
         @Override
         public long getAppliedIndex() {
-            return node.cluster().status().appliedIndex();
+            return node.status().appliedIndex();
         }
 
         @Override
         public long getLastLeaderChangeEpochMillis() {
-            return node.cluster().status().lastLeaderChange()
+            return node.status().lastLeaderChange()
                 .map(Instant::toEpochMilli)
                 .orElse(0L);
         }
@@ -140,12 +140,12 @@ final class JmxRegistrations implements AutoCloseable {
 
         @Override
         public int getSstableCount() {
-            return node.metrics().storage().sstableCount();
+            return node.metrics().storage().tableCount();
         }
 
         @Override
         public long getTotalSstableBytes() {
-            return node.metrics().storage().totalSstableBytes();
+            return node.metrics().storage().tableBytes();
         }
 
         @Override

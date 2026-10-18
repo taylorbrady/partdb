@@ -17,12 +17,13 @@ import io.partdb.grpc.kv.v1.ScanResponse;
 import io.partdb.grpc.kv.v1.WriteRequest;
 import io.partdb.grpc.kv.v1.WriteResponse;
 import io.partdb.node.Node;
-import io.partdb.node.kv.KeyRange;
-import io.partdb.node.kv.KeyValue;
-import io.partdb.node.kv.Mutation;
-import io.partdb.node.kv.ReadConsistency;
-import io.partdb.node.kv.Scan;
+import io.partdb.node.ReadConsistency;
+import io.partdb.storage.Cursor;
+import io.partdb.storage.KeyRange;
+import io.partdb.storage.KeyValue;
+import io.partdb.storage.Mutation;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -41,7 +42,7 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
     @Override
     public void get(GetRequest request, StreamObserver<GetResponse> responses) {
         Calls.unary(responses, timeout -> {
-            var read = node.kv().get(bytes(request.getKey()), consistency(request.getConsistency()), timeout);
+            var read = node.get(bytes(request.getKey()), consistency(request.getConsistency()), timeout);
             var response = GetResponse.newBuilder().setReadRevision(read.revision());
             read.value().ifPresent(entry -> response.setEntry(proto(entry)));
             return response.build();
@@ -51,14 +52,14 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
     @Override
     public void put(PutRequest request, StreamObserver<PutResponse> responses) {
         Calls.unary(responses, timeout -> PutResponse.newBuilder()
-            .setRevision(node.kv().put(bytes(request.getKey()), bytes(request.getValue()), timeout))
+            .setRevision(node.write(List.of(Mutation.put(bytes(request.getKey()), bytes(request.getValue()))), timeout))
             .build());
     }
 
     @Override
     public void delete(DeleteRequest request, StreamObserver<DeleteResponse> responses) {
         Calls.unary(responses, timeout -> DeleteResponse.newBuilder()
-            .setRevision(node.kv().delete(bytes(request.getKey()), timeout))
+            .setRevision(node.write(List.of(Mutation.delete(bytes(request.getKey()))), timeout))
             .build());
     }
 
@@ -66,7 +67,7 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
     public void write(WriteRequest request, StreamObserver<WriteResponse> responses) {
         Calls.unary(responses, timeout -> {
             var mutations = request.getMutationsList().stream().map(KeyValueService::mutation).toList();
-            return WriteResponse.newBuilder().setRevision(node.kv().write(mutations, timeout)).build();
+            return WriteResponse.newBuilder().setRevision(node.write(mutations, timeout)).build();
         });
     }
 
@@ -77,22 +78,27 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
         var ready = lock.newCondition();
         call.setOnReadyHandler(() -> signal(lock, ready));
         call.setOnCancelHandler(() -> signal(lock, ready));
-        Scan scan;
+        Cursor cursor;
         try {
-            scan = node.kv().scan(range(request), request.getLimit(), consistency(request.getConsistency()), Calls.timeout());
+            if (request.getLimit() < 0) {
+                throw Calls.invalid("limit must not be negative");
+            }
+            cursor = node.scan(range(request), consistency(request.getConsistency()), Calls.timeout());
         } catch (RuntimeException e) {
             responses.onError(Calls.toStatus(e));
             return;
         }
-        try (scan) {
+        int remaining = request.getLimit() == 0 ? Integer.MAX_VALUE : request.getLimit();
+        try (cursor) {
             boolean first = true;
-            while (first || scan.hasNext()) {
-                var batch = ScanResponse.newBuilder().setReadRevision(scan.readRevision());
+            while (first || (remaining > 0 && cursor.hasNext())) {
+                var batch = ScanResponse.newBuilder().setReadRevision(cursor.revision());
                 int bytes = 0;
-                while (scan.hasNext() && batch.getEntriesCount() < BATCH_ENTRIES && bytes < BATCH_BYTES) {
-                    var entry = proto(scan.next());
+                while (remaining > 0 && cursor.hasNext() && batch.getEntriesCount() < BATCH_ENTRIES && bytes < BATCH_BYTES) {
+                    var entry = proto(cursor.next());
                     bytes += entry.getSerializedSize();
                     batch.addEntries(entry);
+                    remaining--;
                 }
                 if (!awaitReady(call, lock, ready)) {
                     return;

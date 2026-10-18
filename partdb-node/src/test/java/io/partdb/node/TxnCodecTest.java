@@ -1,9 +1,7 @@
-package io.partdb.node.state;
+package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
-import io.partdb.node.kv.Condition;
-import io.partdb.node.kv.Mutation;
-import io.partdb.node.kv.Txn;
+import io.partdb.storage.Mutation;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
