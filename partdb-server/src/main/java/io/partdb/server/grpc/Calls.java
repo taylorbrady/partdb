@@ -51,6 +51,7 @@ final class Calls {
 
     static StatusRuntimeException toStatus(RuntimeException error) {
         return switch (error) {
+            case StatusRuntimeException status -> status;
             case NodeException.NotLeader notLeader -> status(Code.UNAVAILABLE, notLeader.getMessage(), "NOT_LEADER",
                 notLeader.leader().map(leader -> Map.of("leader_id", leader.value())).orElse(Map.of()));
             case NodeException.Busy busy -> status(Code.UNAVAILABLE, busy.getMessage(), "BUSY", Map.of());
@@ -60,9 +61,12 @@ final class Calls {
             case NodeException.OutcomeUnknown unknown -> status(Code.UNKNOWN, unknown.getMessage(), "OUTCOME_UNKNOWN", Map.of());
             case NodeException.Cancelled cancelled -> status(Code.CANCELLED, cancelled.getMessage(), null, Map.of());
             case NodeException.Internal internal -> internal(internal);
-            case IllegalArgumentException invalid -> status(Code.INVALID_ARGUMENT, invalid.getMessage(), null, Map.of());
             default -> internal(error);
         };
+    }
+
+    static StatusRuntimeException invalid(String message) {
+        return status(Code.INVALID_ARGUMENT, message, null, Map.of());
     }
 
     private static StatusRuntimeException internal(RuntimeException error) {

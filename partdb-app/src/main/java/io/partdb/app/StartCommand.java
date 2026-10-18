@@ -1,21 +1,17 @@
 package io.partdb.app;
 
-import io.partdb.raft.runtime.ClusterId;
-import io.partdb.raft.runtime.SnapshotPolicy;
 import io.partdb.server.PartDbServer;
 import io.partdb.server.ServerConfig;
 
 import java.io.PrintStream;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.Objects;
-import java.util.Optional;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.function.Consumer;
 
 record StartCommand(ServerConfig config) implements AppCommand {
-    private static final int DEFAULT_CLIENT_PORT = 8101;
-    private static final int DEFAULT_ADMIN_PORT = 8102;
-
     private static final String USAGE = """
         Usage: partdb server start [options]
 
@@ -49,12 +45,7 @@ record StartCommand(ServerConfig config) implements AppCommand {
     static AppCommand parse(Args args) {
         String nodeId = null;
         Path dataDir = null;
-        var peers = new LinkedHashMap<String, String>();
-        int clientPort = DEFAULT_CLIENT_PORT;
-        int adminPort = DEFAULT_ADMIN_PORT;
-        Optional<ClusterId> clusterId = Optional.empty();
-        long snapshotEntries = SnapshotPolicy.DEFAULT.logEntries();
-        long snapshotBytes = SnapshotPolicy.DEFAULT.logBytes();
+        List<Consumer<ServerConfig.Builder>> settings = new ArrayList<>();
         try {
             while (args.hasNext()) {
                 String arg = args.next();
@@ -70,13 +61,30 @@ record StartCommand(ServerConfig config) implements AppCommand {
                         if (separator <= 0 || separator == peer.length() - 1) {
                             throw new IllegalArgumentException("--peer must look like id=host:port, got: " + peer);
                         }
-                        peers.put(peer.substring(0, separator).trim(), peer.substring(separator + 1).trim());
+                        String id = peer.substring(0, separator).trim();
+                        String address = peer.substring(separator + 1).trim();
+                        settings.add(builder -> builder.peer(id, address));
                     }
-                    case "--client-port" -> clientPort = args.intValue(arg);
-                    case "--admin-port" -> adminPort = args.intValue(arg);
-                    case "--cluster-id" -> clusterId = Optional.of(ClusterId.of(args.value(arg)));
-                    case "--snapshot-entries" -> snapshotEntries = args.longValue(arg);
-                    case "--snapshot-bytes" -> snapshotBytes = args.longValue(arg);
+                    case "--client-port" -> {
+                        int port = args.intValue(arg);
+                        settings.add(builder -> builder.clientPort(port));
+                    }
+                    case "--admin-port" -> {
+                        int port = args.intValue(arg);
+                        settings.add(builder -> builder.adminPort(port));
+                    }
+                    case "--cluster-id" -> {
+                        String clusterId = args.value(arg);
+                        settings.add(builder -> builder.clusterId(clusterId));
+                    }
+                    case "--snapshot-entries" -> {
+                        long entries = args.longValue(arg);
+                        settings.add(builder -> builder.snapshotLogEntries(entries));
+                    }
+                    case "--snapshot-bytes" -> {
+                        long bytes = args.longValue(arg);
+                        settings.add(builder -> builder.snapshotLogBytes(bytes));
+                    }
                     default -> throw new IllegalArgumentException("unknown option: " + arg);
                 }
             }
@@ -86,8 +94,9 @@ record StartCommand(ServerConfig config) implements AppCommand {
             if (dataDir == null) {
                 throw new IllegalArgumentException("--data-dir is required");
             }
-            return new StartCommand(ServerConfig.create(
-                nodeId, peers, dataDir, clientPort, adminPort, clusterId, new SnapshotPolicy(snapshotEntries, snapshotBytes)));
+            var builder = ServerConfig.builder(nodeId, dataDir);
+            settings.forEach(setting -> setting.accept(builder));
+            return new StartCommand(builder.build());
         } catch (IllegalArgumentException e) {
             return new UsageError(e.getMessage(), USAGE);
         }
@@ -115,16 +124,15 @@ record StartCommand(ServerConfig config) implements AppCommand {
     }
 
     private int serve(PrintStream out, PrintStream err, CountDownLatch shutdownRequested) {
-        try (var server = new PartDbServer(config)) {
-            server.start();
+        try (var _ = PartDbServer.start(config)) {
             out.println("PartDB node '" + config.nodeId() + "' started");
-            out.println("  Cluster:     " + config.node().raft().clusterId());
+            out.println("  Cluster:     " + config.clusterId());
             out.println("  Client port: " + config.clientPort());
             out.println("  Admin port:  " + config.adminPort());
             config.raftPort().ifPresentOrElse(
                 port -> out.println("  Raft port:   " + port + " (" + config.peers().size() + " members)"),
                 () -> out.println("  Mode:        single-node"));
-            out.println("  Data dir:    " + config.node().dataDirectory().toAbsolutePath());
+            out.println("  Data dir:    " + config.dataDirectory().toAbsolutePath());
             shutdownRequested.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

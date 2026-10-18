@@ -20,38 +20,38 @@ public final class PartDbServer implements AutoCloseable {
     private static final Duration HAND_OFF_TIMEOUT = Duration.ofSeconds(2);
 
     private final ServerConfig config;
-    private final Deque<AutoCloseable> started = new ArrayDeque<>();
-    private Node node;
-    private AdminHttpServer admin;
-    private boolean startCalled;
+    private final Node node;
+    private final AdminHttpServer admin;
+    private final Deque<AutoCloseable> resources;
+    private boolean closed;
 
-    public PartDbServer(ServerConfig config) {
-        this.config = Objects.requireNonNull(config, "config must not be null");
+    private PartDbServer(ServerConfig config, Node node, AdminHttpServer admin, Deque<AutoCloseable> resources) {
+        this.config = config;
+        this.node = node;
+        this.admin = admin;
+        this.resources = resources;
     }
 
-    public void start() throws IOException {
-        if (startCalled) {
-            throw new IllegalStateException("the server is already started");
-        }
-        startCalled = true;
+    public static PartDbServer start(ServerConfig config) throws IOException {
+        Objects.requireNonNull(config, "config must not be null");
         log.atInfo().addKeyValue("nodeId", config.nodeId()).log("Starting PartDB server");
+        var resources = new ArrayDeque<AutoCloseable>();
         try {
             RaftTransport transport = RaftTransport.standalone();
             if (!config.peers().isEmpty()) {
-                var grpcTransport = new GrpcRaftTransport(
-                    config.node().raft().clusterId(), config.nodeId(), config.raftPort().orElseThrow(), config.peers());
-                started.push(grpcTransport);
-                transport = grpcTransport;
+                var peers = new GrpcRaftTransport(config.clusterId(), config.nodeId(), config.raftPort().orElseThrow(), config.peers());
+                resources.push(peers);
+                transport = peers;
             }
-            node = Node.open(config.node(), transport);
-            started.push(node);
+            var node = Node.open(config.node(), transport);
+            resources.push(node);
             var jmx = new JmxRegistrations(node);
-            started.push(jmx);
+            resources.push(jmx);
             var grpc = new GrpcServer(node, config.clientPort());
-            started.push(grpc);
+            resources.push(grpc);
             grpc.start();
-            admin = new AdminHttpServer(node, config.adminPort());
-            started.push(admin);
+            var admin = new AdminHttpServer(node, config.adminPort());
+            resources.push(admin);
             admin.start();
             jmx.register();
             log.atInfo()
@@ -60,37 +60,26 @@ public final class PartDbServer implements AutoCloseable {
                 .addKeyValue("raftPort", config.raftPort().orElse(null))
                 .addKeyValue("adminPort", config.adminPort())
                 .log("PartDB server started");
-        } catch (Exception e) {
-            close();
-            if (e instanceof IOException io) {
-                throw io;
+            return new PartDbServer(config, node, admin, resources);
+        } catch (IOException | RuntimeException e) {
+            var failure = closeAll(resources);
+            if (failure != null) {
+                e.addSuppressed(failure);
             }
-            if (e instanceof RuntimeException runtime) {
-                throw runtime;
-            }
-            throw new IOException("failed to start the PartDB server", e);
+            throw e;
         }
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         log.atInfo().addKeyValue("nodeId", config.nodeId()).log("Shutting down PartDB server");
-        if (admin != null) {
-            admin.drain();
-        }
+        admin.drain();
         handOffLeadership();
-        RuntimeException failure = null;
-        while (!started.isEmpty()) {
-            try {
-                started.pop().close();
-            } catch (Exception e) {
-                if (failure == null) {
-                    failure = e instanceof RuntimeException runtime ? runtime : new IllegalStateException(e);
-                } else {
-                    failure.addSuppressed(e);
-                }
-            }
-        }
+        var failure = closeAll(resources);
         log.atInfo().addKeyValue("nodeId", config.nodeId()).log("PartDB server shut down");
         if (failure != null) {
             throw failure;
@@ -98,7 +87,7 @@ public final class PartDbServer implements AutoCloseable {
     }
 
     private void handOffLeadership() {
-        if (node == null || node.cluster().status().role() != Role.LEADER) {
+        if (node.cluster().status().role() != Role.LEADER) {
             return;
         }
         NodeId self = config.nodeId();
@@ -112,5 +101,21 @@ public final class PartDbServer implements AutoCloseable {
                     log.atInfo().addKeyValue("target", target).addKeyValue("reason", e.getMessage()).log("Leadership hand-off skipped");
                 }
             });
+    }
+
+    private static RuntimeException closeAll(Deque<AutoCloseable> resources) {
+        RuntimeException failure = null;
+        while (!resources.isEmpty()) {
+            try {
+                resources.pop().close();
+            } catch (Exception e) {
+                if (failure == null) {
+                    failure = e instanceof RuntimeException runtime ? runtime : new IllegalStateException(e);
+                } else {
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        return failure;
     }
 }

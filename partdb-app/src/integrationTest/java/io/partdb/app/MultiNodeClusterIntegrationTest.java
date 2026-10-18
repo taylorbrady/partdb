@@ -6,7 +6,6 @@ import io.partdb.client.KeyRange;
 import io.partdb.client.Mutation;
 import io.partdb.client.PartDbClient;
 import io.partdb.client.ReadConsistency;
-import io.partdb.raft.runtime.SnapshotPolicy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
@@ -124,7 +123,7 @@ class MultiNodeClusterIntegrationTest {
 
     @Test
     void restartedFollowerInstallsSnapshotOverThePeerTransport() throws Exception {
-        try (var cluster = TestCluster.create(3, spec -> new InProcessNode(tempDir, spec, SnapshotPolicy.everyEntries(8)))) {
+        try (var cluster = TestCluster.create(3, spec -> new InProcessNode(tempDir, spec, config -> config.snapshotLogEntries(8)))) {
             cluster.startAll();
             var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
             String follower = anyFollower(cluster, leader.nodeId());

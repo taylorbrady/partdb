@@ -80,8 +80,7 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
         call.setOnCancelHandler(() -> signal(lock, ready));
         Scan scan;
         try {
-            var range = new KeyRange(bytes(request.getStartKey()), request.hasEndKey() ? Optional.of(bytes(request.getEndKey())) : Optional.empty());
-            scan = node.kv().scan(range, request.getLimit(), consistency(request.getConsistency()), Calls.timeout());
+            scan = node.kv().scan(range(request), request.getLimit(), consistency(request.getConsistency()), Calls.timeout());
         } catch (RuntimeException e) {
             responses.onError(Calls.toStatus(e));
             return;
@@ -131,11 +130,20 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
         }
     }
 
+    private static KeyRange range(ScanRequest request) {
+        var end = request.hasEndKey() ? Optional.of(bytes(request.getEndKey())) : Optional.<Bytes>empty();
+        try {
+            return new KeyRange(bytes(request.getStartKey()), end);
+        } catch (IllegalArgumentException e) {
+            throw Calls.invalid(e.getMessage());
+        }
+    }
+
     private static ReadConsistency consistency(KvProto.ReadConsistency consistency) {
         return switch (consistency) {
             case READ_CONSISTENCY_UNSPECIFIED, READ_CONSISTENCY_LINEARIZABLE -> ReadConsistency.LINEARIZABLE;
             case READ_CONSISTENCY_LOCAL -> ReadConsistency.LOCAL;
-            case UNRECOGNIZED -> throw new IllegalArgumentException("unknown read consistency");
+            case UNRECOGNIZED -> throw Calls.invalid("unknown read consistency");
         };
     }
 
@@ -143,7 +151,7 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
         return switch (proto.getKindCase()) {
             case PUT -> Mutation.put(bytes(proto.getPut().getKey()), bytes(proto.getPut().getValue()));
             case DELETE -> Mutation.delete(bytes(proto.getDelete().getKey()));
-            case KIND_NOT_SET -> throw new IllegalArgumentException("mutation kind is not set");
+            case KIND_NOT_SET -> throw Calls.invalid("mutation kind is not set");
         };
     }
 

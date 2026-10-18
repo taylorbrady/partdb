@@ -1,6 +1,5 @@
 package io.partdb.server;
 
-import io.partdb.raft.runtime.SnapshotPolicy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -10,8 +9,6 @@ import java.lang.management.ManagementFactory;
 import java.net.ServerSocket;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,14 +22,13 @@ class ServerObservabilityTest {
 
     @Test
     void startRegistersNodeAndStorageMxBeans() throws Exception {
-        var config = ServerConfig.create("node1", Map.of(), tempDir.resolve("node1"), freePort(), freePort(), Optional.empty(), SnapshotPolicy.DEFAULT);
+        var config = ServerConfig.builder("node1", tempDir.resolve("node1")).clientPort(freePort()).adminPort(freePort()).build();
 
         MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
         ObjectName nodeObjectName = new ObjectName("io.partdb:type=Node,nodeId=\"node1\"");
         ObjectName storageObjectName = new ObjectName("io.partdb:type=Storage,nodeId=\"node1\"");
 
-        try (var server = new PartDbServer(config)) {
-            server.start();
+        try (var _ = PartDbServer.start(config)) {
 
             assertTrue(mBeanServer.isRegistered(nodeObjectName));
             assertTrue(mBeanServer.isRegistered(storageObjectName));

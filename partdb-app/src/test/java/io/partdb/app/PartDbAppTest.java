@@ -76,7 +76,7 @@ class PartDbAppTest {
             "--peer", "node1=localhost:8100", "--peer", "node2=localhost:8200", "--client-port", "8101", "--snapshot-entries", "50"));
 
         assertEquals(Optional.of(8100), command.config().raftPort());
-        assertEquals(50, command.config().node().raft().snapshots().logEntries());
+        assertEquals(50, command.config().snapshots().logEntries());
     }
 
     @Test

@@ -1,6 +1,5 @@
 package io.partdb.server;
 
-import io.partdb.raft.runtime.SnapshotPolicy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -12,8 +11,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Map;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -28,10 +25,9 @@ class ServerHealthTest {
     void livezAndReadyzReportHealthySingleNodeLeader() throws Exception {
         int clientPort = freePort();
         int adminPort = freePort();
-        var config = ServerConfig.create("node1", Map.of(), tempDir.resolve("node1"), clientPort, adminPort, Optional.empty(), SnapshotPolicy.DEFAULT);
+        var config = ServerConfig.builder("node1", tempDir.resolve("node1")).clientPort(clientPort).adminPort(adminPort).build();
 
-        try (var server = new PartDbServer(config)) {
-            server.start();
+        try (var _ = PartDbServer.start(config)) {
 
             awaitHealth(adminPort, "/livez", 200, "ok\n");
             awaitHealth(adminPort, "/readyz", 200, "ok\n");
@@ -43,22 +39,15 @@ class ServerHealthTest {
         int raftPort = freePort();
         int clientPort = freePort();
         int adminPort = freePort();
-        var config = ServerConfig.create(
-            "node1",
-            Map.of(
-                "node1", "localhost:" + raftPort,
-                "node2", "localhost:" + freePort(),
-                "node3", "localhost:" + freePort()
-            ),
-            tempDir.resolve("node1"),
-            clientPort,
-            adminPort,
-            Optional.empty(),
-            SnapshotPolicy.DEFAULT
-        );
+        var config = ServerConfig.builder("node1", tempDir.resolve("node1"))
+            .peer("node1", "localhost:" + raftPort)
+            .peer("node2", "localhost:" + freePort())
+            .peer("node3", "localhost:" + freePort())
+            .clientPort(clientPort)
+            .adminPort(adminPort)
+            .build();
 
-        try (var server = new PartDbServer(config)) {
-            server.start();
+        try (var _ = PartDbServer.start(config)) {
 
             awaitHealth(adminPort, "/livez", 200, "ok\n");
             HealthResponse response = awaitHealth(adminPort, "/readyz", 503, null);
