@@ -113,6 +113,25 @@ class StoreTest {
     }
 
     @Test
+    void flushMakesTheAppliedRevisionDurable() throws Exception {
+        try (Store store = Store.open(directory, StoreOptions.defaults())) {
+            assertEquals(0, store.flush().get());
+
+            store.apply(5, List.of(put("a", "one")));
+            assertEquals(5, store.flush().get());
+            assertEquals(5, store.durableRevision());
+
+            store.apply(6, List.of());
+            assertEquals(6, store.flush().get());
+            assertEquals(1, store.stats().tableCount());
+        }
+        try (Store store = Store.open(directory, StoreOptions.defaults())) {
+            assertEquals(6, store.durableRevision());
+            assertEquals("one", value(store, "a"));
+        }
+    }
+
+    @Test
     void durableRevisionTracksTheRevisionOfFlushedMemtables() {
         try (Store store = Store.open(directory, Fixtures.NO_COMPACTION)) {
             long revision = Fixtures.fill(store, 0, 400, "value-");

@@ -14,6 +14,7 @@ import java.io.OutputStream;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletionStage;
 import java.util.stream.Stream;
 
 final class KvStateMachine implements StateMachine<TxnResult>, AutoCloseable {
@@ -34,6 +35,11 @@ final class KvStateMachine implements StateMachine<TxnResult>, AutoCloseable {
     }
 
     @Override
+    public long durableIndex() {
+        return store.durableRevision();
+    }
+
+    @Override
     public TxnResult apply(long index, Bytes command) {
         Txn txn = TxnCodec.decode(command);
         if (!matches(txn)) {
@@ -47,6 +53,11 @@ final class KvStateMachine implements StateMachine<TxnResult>, AutoCloseable {
     @Override
     public void skip(long index) {
         store.apply(index, List.of());
+    }
+
+    @Override
+    public CompletionStage<Long> flush() {
+        return store.flush();
     }
 
     @Override

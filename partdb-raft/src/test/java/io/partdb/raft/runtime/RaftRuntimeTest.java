@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -22,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -45,7 +47,7 @@ class RaftRuntimeTest {
     private final LocalNetwork network = new LocalNetwork();
     private final Map<String, RaftRuntime<Bytes>> runtimes = new LinkedHashMap<>();
     private final Map<String, RecordingStateMachine> machines = new LinkedHashMap<>();
-    private SnapshotPolicy snapshots = SnapshotPolicy.DEFAULT;
+    private LogRetention retention = LogRetention.DEFAULT;
 
     @AfterEach
     void closeAll() {
@@ -53,7 +55,7 @@ class RaftRuntimeTest {
     }
 
     private RaftConfig config(String id, Membership membership) {
-        return new RaftConfig(ClusterId.of("test"), Ids.id(id), membership, Duration.ofMillis(5), Options.defaults(), snapshots);
+        return new RaftConfig(ClusterId.of("test"), Ids.id(id), membership, Duration.ofMillis(5), Options.defaults(), retention);
     }
 
     private RaftRuntime<Bytes> start(String id, Membership membership) {
@@ -65,7 +67,7 @@ class RaftRuntimeTest {
 
     private void restart(String id, Membership membership) {
         runtimes.remove(id).close();
-        machines.remove(id);
+        machines.put(id, machines.get(id).reopen());
         start(id, membership);
     }
 
@@ -188,7 +190,7 @@ class RaftRuntimeTest {
         start("n1", Ids.voters("n1"));
         runtimes.remove("n1").close();
 
-        var other = new RaftConfig(ClusterId.of("other"), Ids.id("n1"), Ids.voters("n1"), Duration.ofMillis(5), Options.defaults(), snapshots);
+        var other = new RaftConfig(ClusterId.of("other"), Ids.id("n1"), Ids.voters("n1"), Duration.ofMillis(5), Options.defaults(), retention);
 
         assertThrows(IllegalStateException.class,
             () -> RaftRuntime.open(directory.resolve("n1"), other, network.transport(Ids.id("n1")), new RecordingStateMachine()));
@@ -328,8 +330,8 @@ class RaftRuntimeTest {
     }
 
     @Test
-    void compactsTheLogOnceTheEntryThresholdIsReached() throws Exception {
-        snapshots = SnapshotPolicy.everyEntries(20);
+    void compactsTheLogBehindTheDurableIndexOnceItGrowsPastTheRetention() throws Exception {
+        retention = LogRetention.ofEntries(20);
         startAll(THREE);
         var leader = leader();
 
@@ -337,19 +339,22 @@ class RaftRuntimeTest {
             join(leader.propose(Bytes.utf8("c" + i)));
         }
 
-        await(() -> runtimes.values().stream().allMatch(runtime -> runtime.status().snapshotIndex() >= 80));
+        await(() -> runtimes.values().stream().allMatch(runtime -> runtime.status().snapshotIndex() >= 60));
+        for (var runtime : runtimes.values()) {
+            assertTrue(runtime.status().snapshotIndex() <= machines.get(name(runtime)).durableIndex());
+        }
         var expected = machines.get(name(leader)).commands;
         await(() -> machines.values().stream().allMatch(machine -> machine.commands.equals(expected)));
     }
 
     @Test
-    void compactsTheLogOnceTheByteThresholdIsReached() throws Exception {
-        snapshots = new SnapshotPolicy(1_000_000, 4096);
+    void compactsTheLogOnceTheByteRetentionIsExceeded() throws Exception {
+        retention = new LogRetention(1_000_000, 4096);
         var runtime = start("n1", Ids.voters("n1"));
         await(() -> runtime.status().role() == Role.LEADER);
 
         String large = "x".repeat(1024);
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 10; i++) {
             join(runtime.propose(Bytes.utf8(large + i)));
         }
 
@@ -357,8 +362,25 @@ class RaftRuntimeTest {
     }
 
     @Test
-    void followerBehindCompactionCatchesUpFromLeaderSnapshot() throws Exception {
-        snapshots = SnapshotPolicy.everyEntries(10);
+    void neverCompactsPastWhatTheStateMachineMadeDurable() throws Exception {
+        retention = LogRetention.ofEntries(5);
+        var runtime = start("n1", Ids.voters("n1"));
+        await(() -> runtime.status().role() == Role.LEADER);
+        machines.get("n1").flushes = false;
+
+        for (int i = 0; i < 50; i++) {
+            join(runtime.propose(Bytes.utf8("c" + i)));
+        }
+
+        assertEquals(0, runtime.status().snapshotIndex());
+        machines.get("n1").flushes = true;
+        join(runtime.propose(Bytes.utf8("last")));
+        await(() -> runtime.status().snapshotIndex() > 40);
+    }
+
+    @Test
+    void followerBehindCompactionCatchesUpFromAGeneratedSnapshot() throws Exception {
+        retention = LogRetention.ofEntries(10);
         startAll(THREE);
         var leader = leader();
         join(leader.propose(Bytes.utf8("first")));
@@ -374,11 +396,15 @@ class RaftRuntimeTest {
         var expected = machines.get(name(leader)).commands;
         await(() -> machines.get(lagging).commands.equals(expected));
         assertTrue(machines.get(lagging).restored != null);
+        await(() -> runtimes.get(lagging).status().snapshotIndex() > 20);
+        try (var files = Files.list(directory.resolve(name(leader)).resolve("snap"))) {
+            assertEquals(List.of(), files.toList());
+        }
     }
 
     @Test
-    void restartRestoresFromSnapshotAndReplaysTheTail() throws Exception {
-        snapshots = SnapshotPolicy.everyEntries(5);
+    void restartResumesFromDurableStateAndReplaysTheTail() throws Exception {
+        retention = LogRetention.ofEntries(5);
         var single = Ids.voters("n1");
         var runtime = start("n1", single);
         await(() -> runtime.status().role() == Role.LEADER);
@@ -392,21 +418,57 @@ class RaftRuntimeTest {
         restart("n1", single);
 
         assertEquals(expected, machines.get("n1").commands);
-        assertTrue(machines.get("n1").restored != null);
+        assertTrue(machines.get("n1").reopenedAt > 0);
+        assertTrue(machines.get("n1").restored == null);
     }
 
-    private static final class RecordingStateMachine implements StateMachine<Bytes> {
-        private final List<String> commands = new CopyOnWriteArrayList<>();
-        private final List<Long> skipped = new CopyOnWriteArrayList<>();
-        private volatile long applied;
-        private volatile String restored;
+    @Test
+    void refusesToOpenWhenTheStateMachineLostDurableState() throws Exception {
+        retention = LogRetention.ofEntries(5);
+        var single = Ids.voters("n1");
+        var runtime = start("n1", single);
+        await(() -> runtime.status().role() == Role.LEADER);
+        for (int i = 0; i < 23; i++) {
+            join(runtime.propose(Bytes.utf8("c" + i)));
+        }
+        await(() -> runtime.status().snapshotIndex() > 0);
+        runtimes.remove("n1").close();
+        machines.put("n1", new RecordingStateMachine());
 
-        private RecordingStateMachine() {
+        assertThrows(RaftStorageException.Corruption.class, () -> start("n1", single));
+    }
+
+    static final class RecordingStateMachine implements StateMachine<Bytes> {
+        final List<String> commands = new CopyOnWriteArrayList<>();
+        private final List<Long> skipped = new CopyOnWriteArrayList<>();
+        private List<String> durableCommands = List.of();
+        private volatile long applied;
+        private volatile long durable;
+        volatile boolean flushes = true;
+        volatile String restored;
+        long reopenedAt;
+
+        RecordingStateMachine() {
+        }
+
+        synchronized RecordingStateMachine reopen() {
+            var reopened = new RecordingStateMachine();
+            reopened.commands.addAll(durableCommands);
+            reopened.durableCommands = durableCommands;
+            reopened.applied = durable;
+            reopened.durable = durable;
+            reopened.reopenedAt = durable;
+            return reopened;
         }
 
         @Override
         public long appliedIndex() {
             return applied;
+        }
+
+        @Override
+        public long durableIndex() {
+            return durable;
         }
 
         @Override
@@ -423,6 +485,15 @@ class RaftRuntimeTest {
         }
 
         @Override
+        public synchronized CompletionStage<Long> flush() {
+            if (flushes) {
+                durableCommands = List.copyOf(commands);
+                durable = applied;
+            }
+            return CompletableFuture.completedFuture(durable);
+        }
+
+        @Override
         public synchronized long snapshot(OutputStream target) throws IOException {
             target.write(String.join("\n", commands).getBytes(StandardCharsets.UTF_8));
             return applied;
@@ -435,7 +506,9 @@ class RaftRuntimeTest {
             if (!restored.isEmpty()) {
                 commands.addAll(List.of(restored.split("\n")));
             }
+            durableCommands = List.copyOf(commands);
             applied = index;
+            durable = index;
         }
     }
 }

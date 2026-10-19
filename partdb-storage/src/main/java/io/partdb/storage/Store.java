@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -104,6 +105,16 @@ public final class Store implements AutoCloseable {
         if (active.sizeBytes() >= options.memtableBytes()) {
             rotate();
         }
+    }
+
+    public CompletableFuture<Long> flush() {
+        ensureOpen();
+        flusher.throwIfFailed();
+        ReadState state = current.get();
+        if (state.active().isEmpty() && state.revision() == durableRevision) {
+            return CompletableFuture.completedFuture(durableRevision);
+        }
+        return rotate().thenApply(_ -> durableRevision);
     }
 
     public Snapshot snapshot() {
@@ -348,11 +359,11 @@ public final class Store implements AutoCloseable {
         }
     }
 
-    private void rotate() {
+    private CompletableFuture<Void> rotate() {
         flusher.reserve();
         Memtable full = current.get().active();
         publish(ReadState::rotated);
-        flusher.submit(full);
+        return flusher.submit(full);
     }
 
     private void publish(UnaryOperator<ReadState> transition) {

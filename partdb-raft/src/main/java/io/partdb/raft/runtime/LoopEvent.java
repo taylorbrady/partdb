@@ -15,7 +15,7 @@ sealed interface LoopEvent {
 
     record SnapshotDelivered(NodeId peer, boolean delivered) implements LoopEvent {}
 
-    record SnapshotCreated(Path payload, long index, int checksum, Throwable failure) implements LoopEvent {}
+    record SnapshotGenerated(Path payload, long index, long size, int checksum, Throwable failure) implements LoopEvent {}
 
     record Shutdown() implements LoopEvent {}
 }

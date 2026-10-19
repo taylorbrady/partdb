@@ -155,7 +155,7 @@ class MultiNodeClusterIntegrationTest {
 
     @Test
     void restartedFollowerInstallsSnapshotOverThePeerTransport() throws Exception {
-        try (var cluster = TestCluster.create(3, spec -> new InProcessNode(tempDir, spec, config -> config.snapshotLogEntries(8)))) {
+        try (var cluster = TestCluster.create(3, spec -> new InProcessNode(tempDir, spec, config -> config.logRetentionEntries(8)))) {
             cluster.startAll();
             var leader = cluster.awaitStableLeader(CLUSTER_TIMEOUT);
             String follower = anyFollower(cluster, leader.nodeId());

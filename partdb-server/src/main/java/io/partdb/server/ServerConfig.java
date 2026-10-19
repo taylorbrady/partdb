@@ -7,7 +7,7 @@ import io.partdb.raft.NodeId;
 import io.partdb.raft.Options;
 import io.partdb.raft.runtime.ClusterId;
 import io.partdb.raft.runtime.RaftConfig;
-import io.partdb.raft.runtime.SnapshotPolicy;
+import io.partdb.raft.runtime.LogRetention;
 import io.partdb.server.peer.PeerEndpoint;
 
 import java.nio.file.Path;
@@ -24,18 +24,18 @@ public record ServerConfig(
     Map<NodeId, PeerEndpoint> peers,
     int clientPort,
     int adminPort,
-    SnapshotPolicy snapshots
+    LogRetention retention
 ) {
     public static final int DEFAULT_CLIENT_PORT = 8101;
     public static final int DEFAULT_ADMIN_PORT = 8102;
-    public static final SnapshotPolicy DEFAULT_SNAPSHOTS = SnapshotPolicy.DEFAULT;
+    public static final LogRetention DEFAULT_RETENTION = LogRetention.DEFAULT;
 
     public ServerConfig {
         Objects.requireNonNull(nodeId, "nodeId must not be null");
         Objects.requireNonNull(dataDirectory, "dataDirectory must not be null");
         Objects.requireNonNull(clusterId, "clusterId must not be null");
         peers = Map.copyOf(Objects.requireNonNull(peers, "peers must not be null"));
-        Objects.requireNonNull(snapshots, "snapshots must not be null");
+        Objects.requireNonNull(retention, "retention must not be null");
         validatePort(clientPort, "clientPort");
         validatePort(adminPort, "adminPort");
         if (clientPort == adminPort) {
@@ -61,7 +61,7 @@ public record ServerConfig(
     }
 
     NodeConfig node() {
-        var raft = new RaftConfig(clusterId, nodeId, membership(nodeId, peers), RaftConfig.DEFAULT_TICK_INTERVAL, Options.defaults(), snapshots);
+        var raft = new RaftConfig(clusterId, nodeId, membership(nodeId, peers), RaftConfig.DEFAULT_TICK_INTERVAL, Options.defaults(), retention);
         return new NodeConfig(dataDirectory, raft, KvLimits.DEFAULT);
     }
 
@@ -82,7 +82,7 @@ public record ServerConfig(
         private Optional<ClusterId> clusterId = Optional.empty();
         private int clientPort = DEFAULT_CLIENT_PORT;
         private int adminPort = DEFAULT_ADMIN_PORT;
-        private SnapshotPolicy snapshots = DEFAULT_SNAPSHOTS;
+        private LogRetention retention = DEFAULT_RETENTION;
 
         private Builder(NodeId nodeId, Path dataDirectory) {
             this.nodeId = nodeId;
@@ -112,13 +112,13 @@ public record ServerConfig(
             return this;
         }
 
-        public Builder snapshotLogEntries(long entries) {
-            this.snapshots = new SnapshotPolicy(entries, snapshots.logBytes());
+        public Builder logRetentionEntries(long entries) {
+            this.retention = new LogRetention(entries, retention.bytes());
             return this;
         }
 
-        public Builder snapshotLogBytes(long bytes) {
-            this.snapshots = new SnapshotPolicy(snapshots.logEntries(), bytes);
+        public Builder logRetentionBytes(long bytes) {
+            this.retention = new LogRetention(retention.entries(), bytes);
             return this;
         }
 
@@ -130,7 +130,7 @@ public record ServerConfig(
                 peers,
                 clientPort,
                 adminPort,
-                snapshots
+                retention
             );
         }
     }

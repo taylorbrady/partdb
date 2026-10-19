@@ -3,6 +3,7 @@ package io.partdb.storage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,21 +37,28 @@ final class Flusher implements AutoCloseable {
         }
     }
 
-    void submit(Memtable memtable) {
+    CompletableFuture<Void> submit(Memtable memtable) {
+        var done = new CompletableFuture<Void>();
         executor.execute(() -> {
             try {
-                if (failure.get() == null) {
-                    flush.accept(memtable);
+                StoreException previous = failure.get();
+                if (previous != null) {
+                    done.completeExceptionally(previous);
+                    return;
                 }
+                flush.accept(memtable);
+                done.complete(null);
             } catch (RuntimeException e) {
                 log.atError().setCause(e).log("Memtable flush failed");
                 failure.compareAndSet(null, e instanceof StoreException storeException
                     ? storeException
                     : new StoreException.IO("Memtable flush failed", e));
+                done.completeExceptionally(failure.get());
             } finally {
                 slots.release();
             }
         });
+        return done;
     }
 
     void awaitIdle() {

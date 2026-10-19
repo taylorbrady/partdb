@@ -15,60 +15,43 @@ final class LogStore implements StableLog, AutoCloseable {
     private static final long SEGMENT_BYTES = 64L << 20;
 
     private final WriteAheadLog wal;
-    private final SnapshotStore snapshots;
     private final List<LogEntry> entries;
-    private SnapshotStore.SnapshotFile snapshot;
+    private SnapshotMetadata base;
     private HardState hardState;
     private long retainedBytes;
 
-    private LogStore(WriteAheadLog wal, SnapshotStore snapshots) {
+    private LogStore(WriteAheadLog wal) {
         this.wal = wal;
-        this.snapshots = snapshots;
-        this.snapshot = snapshots.latest().orElse(null);
         var replay = wal.replay();
         this.hardState = replay.hardState();
-        this.entries = new ArrayList<>(continuation(replay));
+        this.base = replay.base().orElse(null);
+        long baseIndex = firstIndex() - 1;
+        var live = replay.entries().stream().filter(entry -> entry.index() > baseIndex).toList();
+        if (!live.isEmpty() && live.getFirst().index() != baseIndex + 1) {
+            throw new RaftStorageException.Corruption("WAL resumes at " + live.getFirst().index() + " after log base " + baseIndex);
+        }
+        this.entries = new ArrayList<>(live);
         this.retainedBytes = entries.stream().mapToLong(LogEntry::payloadSize).sum();
     }
 
     static LogStore open(Path directory) {
-        return new LogStore(WriteAheadLog.open(directory.resolve("wal"), SEGMENT_BYTES), SnapshotStore.open(directory.resolve("snap")));
-    }
-
-    private List<LogEntry> continuation(WriteAheadLog.Replay replay) {
-        var replayed = replay.entries();
-        if (snapshot == null) {
-            if (!replayed.isEmpty() && replayed.getFirst().index() != 1) {
-                throw new RaftStorageException.Corruption("WAL starts at " + replayed.getFirst().index() + " without a snapshot");
-            }
-            return replayed;
-        }
-        var metadata = snapshot.metadata();
-        long index = metadata.index();
-        boolean resetHere = replay.resetIndex().isPresent() && replay.resetIndex().getAsLong() == index;
-        boolean startsAfter = !replayed.isEmpty() && replayed.getFirst().index() == index + 1;
-        boolean containsSnapshotEntry = replayed.stream().anyMatch(entry -> entry.index() == index && entry.term() == metadata.term());
-        if (resetHere || startsAfter || containsSnapshotEntry) {
-            return replayed.stream().filter(entry -> entry.index() > index).toList();
-        }
-        wal.reset(index, metadata.term());
-        return List.of();
+        return new LogStore(WriteAheadLog.open(directory.resolve("wal"), SEGMENT_BYTES));
     }
 
     boolean isEmpty() {
-        return snapshot == null && entries.isEmpty() && hardState.equals(HardState.INITIAL);
+        return base == null && entries.isEmpty() && hardState.equals(HardState.INITIAL);
     }
 
     HardState hardState() {
         return hardState;
     }
 
-    Optional<SnapshotStore.SnapshotFile> snapshot() {
-        return Optional.ofNullable(snapshot);
+    Optional<SnapshotMetadata> base() {
+        return Optional.ofNullable(base);
     }
 
-    SnapshotStore.Lease lease(SnapshotStore.SnapshotFile file) {
-        return snapshots.lease(file);
+    long retainedEntries() {
+        return entries.size();
     }
 
     long retainedBytes() {
@@ -77,7 +60,7 @@ final class LogStore implements StableLog, AutoCloseable {
 
     @Override
     public long firstIndex() {
-        return snapshot == null ? 1 : snapshot.metadata().index() + 1;
+        return base == null ? 1 : base.index() + 1;
     }
 
     @Override
@@ -87,8 +70,8 @@ final class LogStore implements StableLog, AutoCloseable {
 
     @Override
     public long term(long index) {
-        if (snapshot != null && index == snapshot.metadata().index()) {
-            return snapshot.metadata().term();
+        if (base != null && index == base.index()) {
+            return base.term();
         }
         return entries.get(position(index)).term();
     }
@@ -130,27 +113,38 @@ final class LogStore implements StableLog, AutoCloseable {
         wal.sync();
     }
 
-    Path stagingFile() {
-        return snapshots.stagingFile();
-    }
-
-    void installSnapshot(SnapshotMetadata metadata, Path staged, int checksum) {
-        snapshot = snapshots.install(metadata, staged, checksum);
-        wal.reset(metadata.index(), metadata.term());
-        entries.clear();
-        retainedBytes = 0;
-    }
-
-    void compact(SnapshotMetadata metadata, Path staged, int checksum) {
-        if (metadata.index() > lastIndex() || term(metadata.index()) != metadata.term()) {
-            throw new IllegalArgumentException("snapshot " + metadata.index() + " does not match the log");
+    long compactionIndex(long durableIndex, LogRetention retention) {
+        long index = Math.min(durableIndex, lastIndex());
+        long kept = 0;
+        long bytes = 0;
+        while (index >= firstIndex() && kept < retention.entries()) {
+            long size = entries.get(position(index)).payloadSize();
+            if (bytes + size > retention.bytes()) {
+                break;
+            }
+            bytes += size;
+            kept++;
+            index--;
         }
-        int keepFrom = position(metadata.index() + 1);
-        snapshot = snapshots.install(metadata, staged, checksum);
-        var compacted = entries.subList(0, keepFrom);
+        return Math.max(index, firstIndex() - 1);
+    }
+
+    void compact(SnapshotMetadata next) {
+        if (next.index() < firstIndex() || next.index() > lastIndex() || term(next.index()) != next.term()) {
+            throw new IllegalArgumentException("log base " + next.index() + " does not match the log [" + firstIndex() + ", " + lastIndex() + "]");
+        }
+        wal.compact(next);
+        var compacted = entries.subList(0, position(next.index() + 1));
         retainedBytes -= compacted.stream().mapToLong(LogEntry::payloadSize).sum();
         compacted.clear();
-        wal.compact(metadata.index());
+        base = next;
+    }
+
+    void reset(SnapshotMetadata next) {
+        wal.reset(next);
+        base = next;
+        entries.clear();
+        retainedBytes = 0;
     }
 
     @Override

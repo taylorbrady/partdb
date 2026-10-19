@@ -34,7 +34,7 @@ final class PrometheusMetrics {
         out.gauge("partdb_raft_term", "Current Raft term.", status.term());
         out.gauge("partdb_raft_commit_index", "Highest log index known to be committed.", status.commitIndex());
         out.gauge("partdb_raft_applied_index", "Highest log index applied to the state machine.", status.appliedIndex());
-        out.gauge("partdb_raft_snapshot_index", "Log index of the latest snapshot.", status.snapshotIndex());
+        out.gauge("partdb_raft_snapshot_index", "Log index the raft log is compacted through.", status.snapshotIndex());
         status.lastLeaderChange().ifPresent(changed -> out.gauge("partdb_raft_last_leader_change_timestamp_seconds",
             "Unix time at which this node last saw the leader change.", changed.toEpochMilli() / 1000.0));
 

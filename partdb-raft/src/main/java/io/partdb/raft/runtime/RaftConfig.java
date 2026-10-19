@@ -13,7 +13,7 @@ public record RaftConfig(
     Membership initialMembership,
     Duration tickInterval,
     Options options,
-    SnapshotPolicy snapshots
+    LogRetention retention
 ) {
     public static final Duration DEFAULT_TICK_INTERVAL = Duration.ofMillis(10);
 
@@ -23,7 +23,7 @@ public record RaftConfig(
         Objects.requireNonNull(initialMembership, "initialMembership must not be null");
         Objects.requireNonNull(tickInterval, "tickInterval must not be null");
         Objects.requireNonNull(options, "options must not be null");
-        Objects.requireNonNull(snapshots, "snapshots must not be null");
+        Objects.requireNonNull(retention, "retention must not be null");
         if (!initialMembership.isMember(nodeId)) {
             throw new IllegalArgumentException("initialMembership must include " + nodeId);
         }
@@ -39,7 +39,7 @@ public record RaftConfig(
             initialMembership,
             DEFAULT_TICK_INTERVAL,
             Options.defaults(),
-            SnapshotPolicy.DEFAULT
+            LogRetention.DEFAULT
         );
     }
 }

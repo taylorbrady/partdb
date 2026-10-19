@@ -3,6 +3,7 @@ package io.partdb.raft.runtime;
 import io.partdb.bytes.Bytes;
 import io.partdb.raft.HardState;
 import io.partdb.raft.LogEntry;
+import io.partdb.raft.SnapshotMetadata;
 
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
@@ -13,13 +14,16 @@ sealed interface WalRecord {
     byte ENTRY_NOOP = 1;
     byte ENTRY_CONFIGURATION = 2;
     byte STATE = 3;
-    byte SNAPSHOT = 4;
+    byte RESET = 4;
+    byte COMPACTED = 5;
 
     record Entry(LogEntry entry) implements WalRecord {}
 
     record State(HardState hardState) implements WalRecord {}
 
-    record Snapshot(long index, long term) implements WalRecord {}
+    record Reset(SnapshotMetadata base) implements WalRecord {}
+
+    record Compacted(SnapshotMetadata base) implements WalRecord {}
 
     default byte type() {
         return switch (this) {
@@ -27,7 +31,8 @@ sealed interface WalRecord {
             case Entry(LogEntry.NoOp _) -> ENTRY_NOOP;
             case Entry(LogEntry.Configuration _) -> ENTRY_CONFIGURATION;
             case State _ -> STATE;
-            case Snapshot _ -> SNAPSHOT;
+            case Reset _ -> RESET;
+            case Compacted _ -> COMPACTED;
         };
     }
 
@@ -48,10 +53,8 @@ sealed interface WalRecord {
                 BinaryFormat.putOptionalNode(buffer, state.votedFor());
                 buffer.putLong(state.commit());
             }
-            case Snapshot(long index, long term) -> {
-                buffer.putLong(index);
-                buffer.putLong(term);
-            }
+            case Reset(var base) -> putBase(buffer, base);
+            case Compacted(var base) -> putBase(buffer, base);
         }
         return buffer.flip();
     }
@@ -62,7 +65,8 @@ sealed interface WalRecord {
             case Entry(LogEntry.Configuration configuration) -> 2 * Long.BYTES + BinaryFormat.membershipSize(configuration.membership());
             case Entry(LogEntry.NoOp _) -> 2 * Long.BYTES;
             case State(var state) -> 2 * Long.BYTES + BinaryFormat.optionalNodeSize(state.votedFor());
-            case Snapshot _ -> 2 * Long.BYTES;
+            case Reset(var base) -> baseSize(base);
+            case Compacted(var base) -> baseSize(base);
         };
     }
 
@@ -84,7 +88,8 @@ sealed interface WalRecord {
                     });
                 }
                 case STATE -> new State(new HardState(buffer.getLong(), BinaryFormat.getOptionalNode(buffer), buffer.getLong()));
-                case SNAPSHOT -> new Snapshot(buffer.getLong(), buffer.getLong());
+                case RESET -> new Reset(getBase(buffer));
+                case COMPACTED -> new Compacted(getBase(buffer));
                 default -> throw new RaftStorageException.Corruption("unknown WAL record type " + type);
             };
             if (buffer.hasRemaining()) {
@@ -94,5 +99,21 @@ sealed interface WalRecord {
         } catch (BufferUnderflowException | IllegalArgumentException e) {
             throw new RaftStorageException.Corruption("malformed WAL record of type " + type + ": " + e.getMessage());
         }
+    }
+
+    private static int baseSize(SnapshotMetadata base) {
+        return 2 * Long.BYTES + BinaryFormat.membershipSize(base.membership());
+    }
+
+    private static void putBase(ByteBuffer buffer, SnapshotMetadata base) {
+        buffer.putLong(base.index());
+        buffer.putLong(base.term());
+        BinaryFormat.putMembership(buffer, base.membership());
+    }
+
+    private static SnapshotMetadata getBase(ByteBuffer buffer) {
+        long index = buffer.getLong();
+        long term = buffer.getLong();
+        return new SnapshotMetadata(index, term, BinaryFormat.getMembership(buffer));
     }
 }

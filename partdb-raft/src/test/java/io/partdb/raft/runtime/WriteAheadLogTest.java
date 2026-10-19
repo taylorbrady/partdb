@@ -4,6 +4,7 @@ import io.partdb.bytes.Bytes;
 import io.partdb.raft.HardState;
 import io.partdb.raft.LogEntry;
 import io.partdb.raft.Ids;
+import io.partdb.raft.SnapshotMetadata;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -14,7 +15,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.Set;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -34,6 +34,10 @@ class WriteAheadLogTest {
 
     private static HardState state(long term, long commit) {
         return new HardState(term, Optional.of(Ids.id("n1")), commit);
+    }
+
+    private static SnapshotMetadata base(long index, long term) {
+        return new SnapshotMetadata(index, term, Ids.membership(Set.of("n1", "n2"), Set.of("n3")));
     }
 
     private WriteAheadLog open(long segmentBytes) {
@@ -57,7 +61,7 @@ class WriteAheadLogTest {
             var replay = wal.replay();
             assertEquals(state(1, 2), replay.hardState());
             assertEquals(List.of(command(1, 1, "a"), command(2, 1, "b"), new LogEntry.NoOp(3, 1)), replay.entries());
-            assertEquals(OptionalLong.empty(), replay.resetIndex());
+            assertEquals(Optional.empty(), replay.base());
         }
     }
 
@@ -88,16 +92,16 @@ class WriteAheadLogTest {
     }
 
     @Test
-    void resetStartsAfterSnapshotAndKeepsHardState() throws IOException {
+    void resetStartsAfterTheBaseAndKeepsHardState() throws IOException {
         try (var wal = open(1 << 20)) {
             wal.append(Optional.of(state(3, 2)), LongStream.rangeClosed(1, 10).mapToObj(i -> command(i, 1, "v" + i)).toList());
-            wal.reset(20, 2);
+            wal.reset(base(20, 2));
             wal.append(Optional.empty(), List.of(command(21, 3, "u")));
         }
 
         try (var wal = open(1 << 20)) {
             var replay = wal.replay();
-            assertEquals(OptionalLong.of(20), replay.resetIndex());
+            assertEquals(Optional.of(base(20, 2)), replay.base());
             assertEquals(List.of(command(21, 3, "u")), replay.entries());
             assertEquals(state(3, 2), replay.hardState());
         }
@@ -115,7 +119,7 @@ class WriteAheadLogTest {
                     Files.copy(file, stale.resolve(file.getFileName()));
                 }
             }
-            wal.reset(9, 2);
+            wal.reset(base(9, 2));
         }
         try (Stream<Path> files = Files.list(stale)) {
             for (Path file : files.toList()) {
@@ -124,7 +128,7 @@ class WriteAheadLogTest {
         }
 
         try (var wal = open(1 << 20)) {
-            assertEquals(OptionalLong.of(9), wal.replay().resetIndex());
+            assertEquals(Optional.of(base(9, 2)), wal.replay().base());
             assertEquals(List.of(), wal.replay().entries());
         }
         assertEquals(1, segmentCount());
@@ -169,21 +173,37 @@ class WriteAheadLogTest {
     }
 
     @Test
-    void compactionDeletesSegmentsBelowSnapshotButKeepsHardState() throws IOException {
+    void compactionRecordsTheBaseAndDeletesSegmentsBelowIt() throws IOException {
         try (var wal = open(64)) {
             for (long i = 1; i <= 10; i++) {
                 wal.append(Optional.of(state(1, i)), List.of(command(i, 1, "value-" + i)));
             }
             long before = segmentCount();
-            wal.compact(6);
+            wal.compact(base(6, 1));
             assertTrue(segmentCount() < before);
         }
 
         try (var wal = open(64)) {
             var replay = wal.replay();
+            assertEquals(Optional.of(base(6, 1)), replay.base());
             assertEquals(state(1, 10), replay.hardState());
             assertEquals(10, replay.entries().getLast().index());
             assertTrue(replay.entries().getFirst().index() <= 7);
+        }
+    }
+
+    @Test
+    void latestBaseWinsAcrossCompactionsAndResets() {
+        try (var wal = open(64)) {
+            wal.append(Optional.of(state(1, 4)), LongStream.rangeClosed(1, 4).mapToObj(i -> command(i, 1, "v" + i)).toList());
+            wal.compact(base(2, 1));
+            wal.compact(base(3, 1));
+            wal.append(Optional.empty(), List.of(command(5, 1, "v5")));
+        }
+
+        try (var wal = open(64)) {
+            assertEquals(Optional.of(base(3, 1)), wal.replay().base());
+            assertEquals(5, wal.replay().entries().getLast().index());
         }
     }
 }

@@ -94,10 +94,10 @@ class PartDbAppTest {
     void parsesServerStartWithPeers() {
         var command = assertInstanceOf(StartCommand.class, parse(
             "server", "start", "--node-id", "node1", "--data-dir", "/tmp/partdb",
-            "--peer", "node1=localhost:8100", "--peer", "node2=localhost:8200", "--client-port", "8101", "--snapshot-entries", "50"));
+            "--peer", "node1=localhost:8100", "--peer", "node2=localhost:8200", "--client-port", "8101", "--log-retention-entries", "50"));
 
         assertEquals(Optional.of(8100), command.config().raftPort());
-        assertEquals(50, command.config().snapshots().logEntries());
+        assertEquals(50, command.config().retention().entries());
     }
 
     record Sample(String text, List<Object> values, Optional<String> missing, ExitCode exit) {}

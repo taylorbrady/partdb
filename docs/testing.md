@@ -62,11 +62,13 @@ Keep focused suites by protocol concern:
 
 Tests of the runtime (`io.partdb.raft.runtime`) may use real files and
 threads. `WriteAheadLogTest` and `LogStoreTest` cover durability, replay,
-torn tails, snapshot resets, and compaction. `RaftRuntimeTest` runs real
-runtimes over `LocalNetwork`, an in-memory transport, and covers replication,
-follower reads, restart replay, the cluster file, leadership transfer,
-membership changes including leader self-removal, partitions, entry- and
-byte-triggered compaction, and streamed snapshot catch-up.
+torn tails, base resets, compaction, and retention. `SnapshotsTest` covers
+finishing an interrupted install. `RaftRuntimeTest` runs real runtimes over
+`LocalNetwork`, an in-memory transport, and covers replication, follower
+reads, restart from durable state plus log replay, the cluster file,
+leadership transfer, membership changes including leader self-removal,
+partitions, entry- and byte-driven compaction that never passes the durable
+index, and catch-up from a generated snapshot.
 
 ## Project Checks
 

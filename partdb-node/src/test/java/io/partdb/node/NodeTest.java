@@ -8,7 +8,7 @@ import io.partdb.raft.Role;
 import io.partdb.raft.runtime.ClusterId;
 import io.partdb.raft.runtime.RaftConfig;
 import io.partdb.raft.runtime.RaftTransport;
-import io.partdb.raft.runtime.SnapshotPolicy;
+import io.partdb.raft.runtime.LogRetention;
 import io.partdb.storage.KeyRange;
 import io.partdb.storage.KeyValue;
 import io.partdb.storage.Mutation;
@@ -37,14 +37,14 @@ class NodeTest {
     @TempDir
     Path directory;
 
-    private NodeConfig config(Path data, SnapshotPolicy snapshots, KvLimits limits) {
+    private NodeConfig config(Path data, LogRetention retention, KvLimits limits) {
         var membership = Membership.ofVoters(Set.of(SELF));
-        var raft = new RaftConfig(ClusterId.of("test"), SELF, membership, Duration.ofMillis(1), Options.defaults(), snapshots);
+        var raft = new RaftConfig(ClusterId.of("test"), SELF, membership, Duration.ofMillis(1), Options.defaults(), retention);
         return new NodeConfig(data, raft, limits);
     }
 
     private NodeConfig config() {
-        return config(directory.resolve("node-1"), SnapshotPolicy.DEFAULT, KvLimits.DEFAULT);
+        return config(directory.resolve("node-1"), LogRetention.DEFAULT, KvLimits.DEFAULT);
     }
 
     private static long put(Node node, Bytes key, Bytes value) {
@@ -156,7 +156,7 @@ class NodeTest {
     @Test
     void rejectsRequestsOutsideTheLimitsBeforeProposing() throws Exception {
         var limits = new KvLimits(4, 8, 2, 2, 64);
-        try (var node = leader(config(directory.resolve("node-1"), SnapshotPolicy.DEFAULT, limits))) {
+        try (var node = leader(config(directory.resolve("node-1"), LogRetention.DEFAULT, limits))) {
             assertThrows(NodeException.InvalidRequest.class, () -> put(node, bytes("too-long"), bytes("v")));
             assertThrows(NodeException.InvalidRequest.class, () -> put(node, bytes("k"), bytes("value-too-long")));
             assertThrows(NodeException.InvalidRequest.class, () -> put(node, Bytes.EMPTY, bytes("v")));
@@ -183,8 +183,8 @@ class NodeTest {
     }
 
     @Test
-    void restartRestoresFromASnapshotAndReplaysTheTail() throws Exception {
-        var config = config(directory.resolve("node-1"), SnapshotPolicy.everyEntries(5), KvLimits.DEFAULT);
+    void restartResumesFromDurableStorageAndReplaysTheTail() throws Exception {
+        var config = config(directory.resolve("node-1"), LogRetention.ofEntries(5), KvLimits.DEFAULT);
         try (var node = leader(config)) {
             for (int i = 0; i < 23; i++) {
                 put(node, bytes("k" + i), bytes("v" + i));
@@ -204,8 +204,8 @@ class NodeTest {
     }
 
     @Test
-    void snapshotsAdvancePastEntriesThatChangeNothing() throws Exception {
-        var config = config(directory.resolve("node-1"), SnapshotPolicy.everyEntries(5), KvLimits.DEFAULT);
+    void logCompactionAdvancesPastEntriesThatChangeNothing() throws Exception {
+        var config = config(directory.resolve("node-1"), LogRetention.ofEntries(5), KvLimits.DEFAULT);
         try (var node = leader(config)) {
             long write = put(node, bytes("guard"), bytes("actual"));
             for (int i = 0; i < 20; i++) {

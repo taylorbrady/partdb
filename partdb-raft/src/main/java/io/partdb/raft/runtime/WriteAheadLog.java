@@ -2,6 +2,7 @@ package io.partdb.raft.runtime;
 
 import io.partdb.raft.HardState;
 import io.partdb.raft.LogEntry;
+import io.partdb.raft.SnapshotMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -11,7 +12,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.stream.Stream;
 
 final class WriteAheadLog implements AutoCloseable {
@@ -19,7 +19,7 @@ final class WriteAheadLog implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(WriteAheadLog.class);
     private static final String SUFFIX = ".wal";
 
-    record Replay(HardState hardState, OptionalLong resetIndex, List<LogEntry> entries) {}
+    record Replay(HardState hardState, Optional<SnapshotMetadata> base, List<LogEntry> entries) {}
 
     private record Segment(Path path, long sequence, long maxIndex) {}
 
@@ -70,12 +70,12 @@ final class WriteAheadLog implements AutoCloseable {
         active.sync();
     }
 
-    void reset(long snapshotIndex, long snapshotTerm) {
+    void reset(SnapshotMetadata base) {
         var previous = new ArrayList<>(sealed);
         previous.add(new Segment(active.path(), activeSequence, activeMaxIndex));
         active.close();
         openSegment(activeSequence + 1);
-        active.append(new WalRecord.Snapshot(snapshotIndex, snapshotTerm));
+        active.append(new WalRecord.Reset(base));
         active.append(new WalRecord.State(hardState));
         active.sync();
         sealed.clear();
@@ -83,12 +83,14 @@ final class WriteAheadLog implements AutoCloseable {
         Fsync.directory(directory);
     }
 
-    void compact(long snapshotIndex) {
+    void compact(SnapshotMetadata base) {
+        active.append(new WalRecord.Compacted(base));
+        active.sync();
         boolean deleted = false;
         var iterator = sealed.iterator();
         while (iterator.hasNext()) {
             var segment = iterator.next();
-            if (segment.maxIndex() > snapshotIndex) {
+            if (segment.maxIndex() > base.index()) {
                 break;
             }
             delete(segment.path());
@@ -109,7 +111,7 @@ final class WriteAheadLog implements AutoCloseable {
         var paths = segmentPaths();
         hardState = HardState.INITIAL;
         var entries = new ArrayList<LogEntry>();
-        OptionalLong resetIndex = OptionalLong.empty();
+        Optional<SnapshotMetadata> base = Optional.empty();
         int firstLive = 0;
 
         for (int i = 0; i < paths.size(); i++) {
@@ -131,12 +133,13 @@ final class WriteAheadLog implements AutoCloseable {
                         maxIndex = Math.max(maxIndex, entry.index());
                     }
                     case WalRecord.State(var state) -> hardState = state;
-                    case WalRecord.Snapshot(long index, long _) -> {
+                    case WalRecord.Reset(var reset) -> {
                         entries.clear();
-                        resetIndex = OptionalLong.of(index);
+                        base = Optional.of(reset);
                         firstLive = i;
                         sealed.clear();
                     }
+                    case WalRecord.Compacted(var compacted) -> base = Optional.of(compacted);
                 }
             }
             long sequence = sequenceOf(path);
@@ -160,7 +163,7 @@ final class WriteAheadLog implements AutoCloseable {
         } else if (firstLive > 0) {
             Fsync.directory(directory);
         }
-        return new Replay(hardState, resetIndex, List.copyOf(entries));
+        return new Replay(hardState, base, List.copyOf(entries));
     }
 
     private static void truncateFrom(List<LogEntry> entries, long index) {

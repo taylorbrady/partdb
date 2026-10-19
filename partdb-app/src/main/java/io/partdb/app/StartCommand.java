@@ -25,8 +25,9 @@ record StartCommand(ServerConfig config) implements AppCommand {
               --client-port <port>       Port for client gRPC traffic (default: %d)
               --admin-port <port>        Port for health checks and metrics (default: %d)
               --cluster-id <id>          Cluster identifier (default: derived from the peers)
-              --snapshot-entries <n>     Log entries between snapshots (default: %d)
-              --snapshot-bytes <n>       Log bytes between snapshots (default: %d)
+              --log-retention-entries <n>
+                                         Durable log entries kept for lagging peers (default: %d)
+              --log-retention-bytes <n>  Durable log bytes kept for lagging peers (default: %d)
           -h, --help                     Show this help message
 
         Examples:
@@ -37,7 +38,7 @@ record StartCommand(ServerConfig config) implements AppCommand {
                               --peer node2=10.0.0.2:8100 \\
                               --peer node3=10.0.0.3:8100
         """.formatted(
-        ServerConfig.DEFAULT_CLIENT_PORT, ServerConfig.DEFAULT_ADMIN_PORT, ServerConfig.DEFAULT_SNAPSHOTS.logEntries(), ServerConfig.DEFAULT_SNAPSHOTS.logBytes());
+        ServerConfig.DEFAULT_CLIENT_PORT, ServerConfig.DEFAULT_ADMIN_PORT, ServerConfig.DEFAULT_RETENTION.entries(), ServerConfig.DEFAULT_RETENTION.bytes());
 
     StartCommand {
         Objects.requireNonNull(config, "config must not be null");
@@ -78,13 +79,13 @@ record StartCommand(ServerConfig config) implements AppCommand {
                         String clusterId = args.value(arg);
                         settings.add(builder -> builder.clusterId(clusterId));
                     }
-                    case "--snapshot-entries" -> {
+                    case "--log-retention-entries" -> {
                         long entries = args.longValue(arg);
-                        settings.add(builder -> builder.snapshotLogEntries(entries));
+                        settings.add(builder -> builder.logRetentionEntries(entries));
                     }
-                    case "--snapshot-bytes" -> {
+                    case "--log-retention-bytes" -> {
                         long bytes = args.longValue(arg);
-                        settings.add(builder -> builder.snapshotLogBytes(bytes));
+                        settings.add(builder -> builder.logRetentionBytes(bytes));
                     }
                     default -> throw new IllegalArgumentException("unknown option: " + arg);
                 }

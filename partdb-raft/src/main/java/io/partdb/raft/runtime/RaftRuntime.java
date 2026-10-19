@@ -27,6 +27,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.LongFunction;
 
@@ -44,18 +45,21 @@ public final class RaftRuntime<R> implements AutoCloseable {
     private final StateMachine<R> stateMachine;
     private final Requests requests;
     private final Snapshots snapshots;
+    private final LogRetention retention;
     private final LinkedBlockingQueue<LoopEvent> events = new LinkedBlockingQueue<>();
 
     private HardState syncedState;
     private Role lastRole;
     private Optional<NodeId> lastLeader;
     private Instant lastLeaderChange;
+    private final AtomicBoolean flushing = new AtomicBoolean();
+    private long observedDurable = -1;
     private volatile boolean running = true;
     private volatile RaftStatus status;
     private volatile Membership membership;
     private Thread loop;
 
-    private RaftRuntime(RaftConfig config, Raft raft, LogStore storage, RaftTransport transport, StateMachine<R> stateMachine) {
+    private RaftRuntime(RaftConfig config, Raft raft, LogStore storage, SnapshotFiles files, RaftTransport transport, StateMachine<R> stateMachine) {
         this.nodeId = config.nodeId();
         this.tickNanos = config.tickInterval().toNanos();
         this.raft = raft;
@@ -63,7 +67,8 @@ public final class RaftRuntime<R> implements AutoCloseable {
         this.transport = transport;
         this.stateMachine = stateMachine;
         this.requests = new Requests(raft.appliedIndex());
-        this.snapshots = new Snapshots(nodeId, storage, stateMachine, transport, config.snapshots(), CALLBACKS, this::enqueue);
+        this.snapshots = new Snapshots(nodeId, storage, files, stateMachine, transport, CALLBACKS, this::enqueue);
+        this.retention = config.retention();
         this.syncedState = storage.hardState();
         this.lastRole = raft.role();
         this.lastLeader = raft.leaderId();
@@ -78,22 +83,19 @@ public final class RaftRuntime<R> implements AutoCloseable {
         LogStore storage = null;
         try {
             storage = LogStore.open(directory);
+            var files = SnapshotFiles.open(directory.resolve("snap"));
             var cluster = clusterFile(directory, config, storage);
-            var snapshot = storage.snapshot();
-            long snapshotIndex = snapshot.map(file -> file.metadata().index()).orElse(0L);
-            if (snapshot.isPresent() && stateMachine.appliedIndex() < snapshotIndex) {
-                Snapshots.restore(stateMachine, snapshot.get());
-            }
+            Snapshots.recover(stateMachine, storage, files);
             var raft = Raft.recover(
                 config.nodeId(),
-                snapshot.map(file -> file.metadata().membership()).orElse(cluster.initialMembership()),
+                storage.base().map(SnapshotMetadata::membership).orElse(cluster.initialMembership()),
                 config.options(),
                 storage,
                 storage.hardState(),
-                Math.max(stateMachine.appliedIndex(), snapshotIndex),
+                stateMachine.appliedIndex(),
                 new SplittableRandom()
             );
-            var runtime = new RaftRuntime<>(config, raft, storage, transport, stateMachine);
+            var runtime = new RaftRuntime<>(config, raft, storage, files, transport, stateMachine);
             runtime.start();
             return runtime;
         } catch (RuntimeException e) {
@@ -154,7 +156,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
             Thread.currentThread().interrupt();
         }
         failPending(new RaftException.Closed());
-        snapshots.discardStaged();
+        snapshots.close();
         storage.close();
         publishStatus();
     }
@@ -178,8 +180,8 @@ public final class RaftRuntime<R> implements AutoCloseable {
             return;
         }
         switch (event) {
-            case LoopEvent.SnapshotReceived received -> Snapshots.deleteQuietly(received.payload());
-            case LoopEvent.SnapshotCreated created -> Snapshots.deleteQuietly(created.payload());
+            case LoopEvent.SnapshotReceived received -> SnapshotFiles.deleteQuietly(received.payload());
+            case LoopEvent.SnapshotGenerated generated -> SnapshotFiles.deleteQuietly(generated.payload());
             default -> {}
         }
     }
@@ -218,7 +220,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
                 }
                 processReady();
                 snapshots.discardStaged();
-                snapshots.maybeCreate(requests.applied());
+                maintainLog();
                 observeLeadership();
                 publishStatus();
             }
@@ -244,7 +246,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
                 snapshots.delivered(peer);
                 raft.step(delivered ? new Input.SnapshotSent(peer) : new Input.SnapshotFailed(peer));
             }
-            case LoopEvent.SnapshotCreated created -> snapshots.created(created, raft);
+            case LoopEvent.SnapshotGenerated generated -> snapshots.generated(generated, raft);
             case LoopEvent.Shutdown() -> {
             }
         }
@@ -280,6 +282,27 @@ public final class RaftRuntime<R> implements AutoCloseable {
     private void installSnapshot(SnapshotMetadata metadata) {
         snapshots.install(metadata);
         requests.superseded(metadata.index());
+    }
+
+    private void maintainLog() {
+        long durable = Math.min(stateMachine.durableIndex(), requests.applied());
+        if (durable != observedDurable) {
+            observedDurable = durable;
+            long base = storage.compactionIndex(durable, retention);
+            if (base >= storage.firstIndex()) {
+                storage.compact(new SnapshotMetadata(base, storage.term(base), raft.membershipAt(base)));
+                log.atDebug().addKeyValue("nodeId", nodeId).addKeyValue("index", base).log("Compacted raft log");
+            }
+        }
+        boolean oversized = storage.retainedEntries() > 2 * retention.entries() || storage.retainedBytes() > 2 * retention.bytes();
+        if (oversized && requests.applied() > durable && flushing.compareAndSet(false, true)) {
+            stateMachine.flush().whenComplete((_, error) -> {
+                flushing.set(false);
+                if (error != null) {
+                    log.atWarn().addKeyValue("nodeId", nodeId).setCause(error).log("State machine flush failed");
+                }
+            });
+        }
     }
 
     private void apply(LogEntry entry) {
@@ -329,7 +352,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
             raft.leaderId(),
             raft.commitIndex(),
             requests.applied(),
-            snapshots.snapshotIndex(),
+            storage.firstIndex() - 1,
             Optional.ofNullable(lastLeaderChange),
             running
         );
@@ -340,8 +363,8 @@ public final class RaftRuntime<R> implements AutoCloseable {
         for (LoopEvent event; (event = events.poll()) != null; ) {
             switch (event) {
                 case LoopEvent.Submit(var pending, _) -> pending.future().completeExceptionally(error);
-                case LoopEvent.SnapshotReceived received -> Snapshots.deleteQuietly(received.payload());
-                case LoopEvent.SnapshotCreated created -> Snapshots.deleteQuietly(created.payload());
+                case LoopEvent.SnapshotReceived received -> SnapshotFiles.deleteQuietly(received.payload());
+                case LoopEvent.SnapshotGenerated generated -> SnapshotFiles.deleteQuietly(generated.payload());
                 case LoopEvent.Step _, LoopEvent.SnapshotDelivered _, LoopEvent.Shutdown _ -> {
                 }
             }

@@ -11,7 +11,6 @@ import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
@@ -19,126 +18,122 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.zip.CRC32C;
-import java.util.zip.CheckedInputStream;
 import java.util.zip.CheckedOutputStream;
 
 final class Snapshots {
 
     private static final Logger log = LoggerFactory.getLogger(Snapshots.class);
 
-    private record Task(Path payload, CompletableFuture<Void> done) {}
-
     private record Staged(SnapshotInfo info, Path payload) {}
+
+    private static final class Outgoing {
+        private final Path payload;
+        private final SnapshotInfo info;
+        private int transfers;
+
+        private Outgoing(Path payload, SnapshotInfo info) {
+            this.payload = payload;
+            this.info = info;
+        }
+    }
 
     private final NodeId self;
     private final LogStore storage;
+    private final SnapshotFiles files;
     private final StateMachine<?> stateMachine;
     private final RaftTransport transport;
-    private final SnapshotPolicy policy;
     private final Executor executor;
     private final Consumer<LoopEvent> events;
     private final Map<Long, Staged> staged = new HashMap<>();
-    private final Set<NodeId> sending = new HashSet<>();
-    private long snapshotIndex;
-    private Task task;
+    private final Map<NodeId, Long> waiting = new LinkedHashMap<>();
+    private final Map<NodeId, Outgoing> sending = new HashMap<>();
+    private Outgoing current;
+    private CompletableFuture<Void> generation;
 
     Snapshots(
         NodeId self,
         LogStore storage,
+        SnapshotFiles files,
         StateMachine<?> stateMachine,
         RaftTransport transport,
-        SnapshotPolicy policy,
         Executor executor,
         Consumer<LoopEvent> events
     ) {
         this.self = self;
         this.storage = storage;
+        this.files = files;
         this.stateMachine = stateMachine;
         this.transport = transport;
-        this.policy = policy;
         this.executor = executor;
         this.events = events;
-        this.snapshotIndex = storage.firstIndex() - 1;
     }
 
-    long snapshotIndex() {
-        return snapshotIndex;
-    }
-
-    void maybeCreate(long applied) {
-        if (task != null || !policy.due(applied - snapshotIndex, storage.retainedBytes())) {
-            return;
+    static void recover(StateMachine<?> stateMachine, LogStore storage, SnapshotFiles files) {
+        long base = storage.firstIndex() - 1;
+        long applied = stateMachine.appliedIndex();
+        if (applied < base) {
+            Path installing = files.installing(base).orElseThrow(() -> new RaftStorageException.Corruption(
+                "state machine at " + applied + " is behind the raft log, which starts after " + base));
+            restore(stateMachine, installing, base);
         }
-        Path payload = storage.stagingFile();
-        var done = new CompletableFuture<Void>();
-        task = new Task(payload, done);
-        executor.execute(() -> {
-            try {
-                var crc = new CRC32C();
-                long index = write(payload, crc);
-                events.accept(new LoopEvent.SnapshotCreated(payload, index, (int) crc.getValue(), null));
-            } catch (RuntimeException e) {
-                events.accept(new LoopEvent.SnapshotCreated(payload, 0, 0, e));
-            } finally {
-                done.complete(null);
-            }
-        });
-    }
-
-    void created(LoopEvent.SnapshotCreated created, Raft raft) {
-        if (task != null && task.payload().equals(created.payload())) {
-            task = null;
-        }
-        if (created.failure() != null) {
-            log.atWarn().addKeyValue("nodeId", self).setCause(created.failure()).log("Snapshot failed");
-            deleteQuietly(created.payload());
-            return;
-        }
-        long index = created.index();
-        if (index <= snapshotIndex) {
-            deleteQuietly(created.payload());
-            return;
-        }
-        var metadata = new SnapshotMetadata(index, storage.term(index), raft.membershipAt(index));
-        storage.compact(metadata, created.payload(), created.checksum());
-        snapshotIndex = index;
-        log.atDebug().addKeyValue("nodeId", self).addKeyValue("index", index).log("Compacted raft log");
+        files.clearInstalls();
     }
 
     void send(NodeId peer, long term) {
-        var snapshot = storage.snapshot().orElseThrow(() -> new IllegalStateException("raft requested a snapshot that does not exist"));
-        if (!sending.add(peer)) {
+        if (sending.containsKey(peer) || waiting.containsKey(peer)) {
             return;
         }
-        var lease = storage.lease(snapshot);
-        transport.sendSnapshot(peer, term, lease).whenComplete((_, error) -> {
-            lease.close();
-            if (error != null) {
-                log.atDebug().addKeyValue("nodeId", self).addKeyValue("peer", peer).setCause(error).log("Snapshot transfer failed");
-            }
-            events.accept(new LoopEvent.SnapshotDelivered(peer, error == null));
-        });
+        if (current != null && current.info.metadata().index() >= storage.firstIndex() - 1) {
+            transfer(peer, term, current);
+            return;
+        }
+        waiting.put(peer, term);
+        if (generation == null) {
+            generate();
+        }
+    }
+
+    void generated(LoopEvent.SnapshotGenerated generated, Raft raft) {
+        generation = null;
+        long index = generated.index();
+        if (generated.failure() != null || index < storage.firstIndex() - 1 || index < 1 || index > storage.lastIndex()) {
+            log.atWarn().addKeyValue("nodeId", self).addKeyValue("index", index).setCause(generated.failure())
+                .log("Discarding a snapshot that cannot be sent");
+            SnapshotFiles.deleteQuietly(generated.payload());
+            waiting.keySet().forEach(peer -> events.accept(new LoopEvent.SnapshotDelivered(peer, false)));
+            waiting.clear();
+            return;
+        }
+        var metadata = new SnapshotMetadata(index, storage.term(index), raft.membershipAt(index));
+        var fresh = new Outgoing(generated.payload(), new SnapshotInfo(metadata, generated.size(), generated.checksum()));
+        current = fresh;
+        waiting.forEach((peer, term) -> transfer(peer, term, fresh));
+        waiting.clear();
+        release(fresh);
     }
 
     void delivered(NodeId peer) {
-        sending.remove(peer);
+        var outgoing = sending.remove(peer);
+        if (outgoing != null) {
+            outgoing.transfers--;
+            release(outgoing);
+        }
     }
 
     RaftTransport.SnapshotSink stage(NodeId from, long term, SnapshotInfo info) throws IOException {
-        return new Sink(from, term, info, storage.stagingFile());
+        return new Sink(from, term, info, files.stagingFile("incoming"));
     }
 
     void received(LoopEvent.SnapshotReceived received) {
         var previous = staged.put(received.info().metadata().index(), new Staged(received.info(), received.payload()));
         if (previous != null) {
-            deleteQuietly(previous.payload());
+            SnapshotFiles.deleteQuietly(previous.payload());
         }
     }
 
@@ -147,49 +142,112 @@ final class Snapshots {
         if (snapshot == null) {
             throw new IllegalStateException("raft accepted snapshot " + metadata.index() + " without a payload");
         }
-        if (task != null) {
-            task.done().join();
+        if (generation != null) {
+            generation.join();
         }
-        storage.installSnapshot(metadata, snapshot.payload(), snapshot.info().checksum());
-        restore(stateMachine, storage.snapshot().orElseThrow());
-        snapshotIndex = metadata.index();
+        Path installing = files.promote(snapshot.payload(), metadata.index());
+        storage.reset(metadata);
+        restore(stateMachine, installing, metadata.index());
+        SnapshotFiles.deleteQuietly(installing);
     }
 
     void discardStaged() {
-        staged.values().forEach(snapshot -> deleteQuietly(snapshot.payload()));
+        staged.values().forEach(snapshot -> SnapshotFiles.deleteQuietly(snapshot.payload()));
         staged.clear();
     }
 
-    static void restore(StateMachine<?> stateMachine, SnapshotStore.SnapshotFile snapshot) {
-        var crc = new CRC32C();
-        try (InputStream in = new CheckedInputStream(new BufferedInputStream(Files.newInputStream(snapshot.payload())), crc)) {
-            stateMachine.restore(snapshot.metadata().index(), in);
-            in.transferTo(OutputStream.nullOutputStream());
-        } catch (IOException e) {
-            throw new UncheckedIOException("failed to restore snapshot " + snapshot.metadata().index(), e);
-        }
-        if ((int) crc.getValue() != snapshot.info().checksum()) {
-            throw new RaftStorageException.Corruption("snapshot " + snapshot.payload() + " failed its checksum");
+    void close() {
+        discardStaged();
+        sending.values().forEach(outgoing -> SnapshotFiles.deleteQuietly(outgoing.payload));
+        if (current != null) {
+            SnapshotFiles.deleteQuietly(current.payload);
         }
     }
 
-    static void deleteQuietly(Path path) {
+    private void generate() {
+        Path payload = files.stagingFile("outgoing");
+        var done = new CompletableFuture<Void>();
+        generation = done;
+        executor.execute(() -> {
+            try (FileChannel channel = FileChannel.open(payload, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                var crc = new CRC32C();
+                OutputStream out = new BufferedOutputStream(new CheckedOutputStream(Channels.newOutputStream(channel), crc));
+                long index = stateMachine.snapshot(out);
+                out.flush();
+                events.accept(new LoopEvent.SnapshotGenerated(payload, index, channel.size(), (int) crc.getValue(), null));
+            } catch (IOException | RuntimeException e) {
+                events.accept(new LoopEvent.SnapshotGenerated(payload, 0, 0, 0, e));
+            } finally {
+                done.complete(null);
+            }
+        });
+    }
+
+    private void transfer(NodeId peer, long term, Outgoing outgoing) {
+        FileChannel channel;
         try {
-            Files.deleteIfExists(path);
+            channel = FileChannel.open(outgoing.payload, StandardOpenOption.READ);
         } catch (IOException e) {
-            log.atWarn().addKeyValue("path", path).setCause(e).log("Failed to delete snapshot file");
+            log.atWarn().addKeyValue("nodeId", self).addKeyValue("peer", peer).setCause(e).log("Failed to open snapshot for transfer");
+            events.accept(new LoopEvent.SnapshotDelivered(peer, false));
+            return;
+        }
+        outgoing.transfers++;
+        sending.put(peer, outgoing);
+        var source = new Source(outgoing.info, channel);
+        transport.sendSnapshot(peer, term, source).whenComplete((_, error) -> {
+            source.close();
+            if (error != null) {
+                log.atDebug().addKeyValue("nodeId", self).addKeyValue("peer", peer).setCause(error).log("Snapshot transfer failed");
+            }
+            events.accept(new LoopEvent.SnapshotDelivered(peer, error == null));
+        });
+    }
+
+    private void release(Outgoing outgoing) {
+        if (outgoing.transfers > 0) {
+            return;
+        }
+        SnapshotFiles.deleteQuietly(outgoing.payload);
+        if (current == outgoing) {
+            current = null;
         }
     }
 
-    private long write(Path payload, CRC32C crc) {
-        try (FileChannel channel = FileChannel.open(payload, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-            OutputStream out = new BufferedOutputStream(new CheckedOutputStream(Channels.newOutputStream(channel), crc));
-            long index = stateMachine.snapshot(out);
-            out.flush();
-            channel.force(true);
-            return index;
+    private static void restore(StateMachine<?> stateMachine, Path payload, long index) {
+        try (InputStream in = new BufferedInputStream(Files.newInputStream(payload))) {
+            stateMachine.restore(index, in);
         } catch (IOException e) {
-            throw new UncheckedIOException("failed to write snapshot " + payload, e);
+            throw new RaftStorageException.IO("failed to restore snapshot " + index, e);
+        }
+    }
+
+    private static final class Source implements RaftTransport.SnapshotSource {
+        private final SnapshotInfo info;
+        private final FileChannel channel;
+
+        private Source(SnapshotInfo info, FileChannel channel) {
+            this.info = info;
+            this.channel = channel;
+        }
+
+        @Override
+        public SnapshotInfo info() {
+            return info;
+        }
+
+        @Override
+        public FileChannel channel() {
+            return channel;
+        }
+
+        @Override
+        public void close() {
+            try {
+                channel.close();
+            } catch (IOException e) {
+                log.atDebug().setCause(e).log("Failed to close snapshot source");
+            }
         }
     }
 
@@ -227,7 +285,7 @@ final class Snapshots {
             channel.force(true);
             channel.close();
             if (written != info.size() || (int) crc.getValue() != info.checksum()) {
-                deleteQuietly(path);
+                SnapshotFiles.deleteQuietly(path);
                 throw new IOException("snapshot " + info.metadata().index() + " arrived corrupt or incomplete");
             }
             events.accept(new LoopEvent.SnapshotReceived(from, term, info, path));
@@ -240,7 +298,7 @@ final class Snapshots {
             } catch (IOException e) {
                 log.atDebug().setCause(e).log("Failed to close staged snapshot");
             }
-            deleteQuietly(path);
+            SnapshotFiles.deleteQuietly(path);
         }
     }
 }

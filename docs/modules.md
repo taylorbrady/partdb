@@ -99,16 +99,24 @@ The module has two packages:
   index reaches it: commands through `apply`, no-ops and configuration entries
   through `skip`), and completes proposals, read barriers, membership changes,
   and leadership transfers. `Requests` owns every pending future; `Snapshots`
-  owns snapshot creation, compaction, leased sending, staging, and install.
-  Storage is a versioned, checksummed write-ahead log replayed into memory plus
-  file-based snapshots with a payload CRC; every file create, rename, and
-  delete is followed by a directory sync. The first open records the cluster
-  id and initial membership in a `cluster` file; later opens use that record
-  and refuse a directory from another cluster. A `SnapshotPolicy` bounds the
-  in-memory log by entries and by bytes; when either is reached the runtime
-  asks the `StateMachine` for a point-in-time snapshot and compacts the log
-  behind it. Lagging peers receive that snapshot as a stream from a lease that
-  keeps the file alive until the transfer ends.
+  owns generating snapshots for lagging peers, staging received ones, and
+  installing them. Storage is a versioned, checksummed write-ahead log replayed
+  into memory; every file create, rename, and delete is followed by a
+  directory sync. The first open records the cluster id and initial membership
+  in a `cluster` file; later opens use that record and refuse a directory from
+  another cluster.
+  The state machine is the snapshot: there is no on-disk snapshot copy. The
+  `StateMachine` reports a `durableIndex()`, and the runtime compacts the log
+  only behind it, keeping the last `LogRetention` entries and bytes for peers
+  that are a little behind. The WAL records the log's base (index, term,
+  membership). When the undurable tail outgrows the retention, the runtime asks
+  the state machine to `flush()`. A peer that falls behind the log base gets a
+  snapshot the leader generates on demand from the state machine, streams from
+  a temporary file, and deletes once every transfer using it ends. A follower
+  installs a received snapshot by renaming it into a durable install file,
+  resetting the WAL to the snapshot's base, restoring the state machine, and
+  deleting the file; reopening finishes an install interrupted between those
+  steps.
 
 Membership, role, and status are modeled once (`Membership`, `Role`,
 `RaftStatus`) and used as-is by the node API.

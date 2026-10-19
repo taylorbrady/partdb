@@ -9,11 +9,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.LongStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -29,12 +29,6 @@ class LogStoreTest {
 
     private static Optional<HardState> state(long term, long commit) {
         return Optional.of(new HardState(term, Optional.of(Ids.id("n1")), commit));
-    }
-
-    private Path payload(LogStore storage, String contents) throws IOException {
-        Path staged = storage.stagingFile();
-        Files.writeString(staged, contents);
-        return staged;
     }
 
     @Test
@@ -75,85 +69,67 @@ class LogStoreTest {
     }
 
     @Test
-    void installSnapshotReplacesTheLog() throws IOException {
-        var membership = Ids.membership(Set.of("n1", "n2"), Set.of("n3"));
-        var snapshot = new SnapshotMetadata(5, 2, membership);
+    void resetReplacesTheLogWithANewBase() {
+        var base = new SnapshotMetadata(5, 2, Ids.membership(Set.of("n1", "n2"), Set.of("n3")));
         try (var storage = LogStore.open(directory)) {
             storage.append(state(2, 1), List.of(command(1, 1, "a"), command(2, 1, "b"), command(3, 1, "c")));
-            storage.installSnapshot(snapshot, payload(storage, "state"), 0);
+            storage.reset(base);
             storage.append(Optional.empty(), List.of(command(6, 2, "f")));
             storage.sync();
         }
 
         try (var storage = LogStore.open(directory)) {
+            assertEquals(Optional.of(base), storage.base());
             assertEquals(6, storage.firstIndex());
             assertEquals(6, storage.lastIndex());
             assertEquals(2, storage.term(5));
             assertEquals(List.of(command(6, 2, "f")), storage.entries(6, 7, Long.MAX_VALUE));
-            var installed = storage.snapshot().orElseThrow();
-            assertEquals(snapshot, installed.metadata());
-            assertEquals("state", Files.readString(installed.payload()));
             assertEquals(state(2, 1).orElseThrow(), storage.hardState());
             assertThrows(IllegalArgumentException.class, () -> storage.entries(5, 6, Long.MAX_VALUE));
         }
     }
 
     @Test
-    void openDiscardsLogThatDoesNotContinueTheSnapshot() throws IOException {
-        try (var storage = LogStore.open(directory)) {
-            storage.append(state(1, 1), List.of(command(1, 1, "a"), command(2, 1, "b"), command(3, 1, "c")));
-            storage.sync();
-        }
-        installSnapshotOnly(new SnapshotMetadata(2, 2, Ids.voters("n1", "n2")));
-
-        try (var storage = LogStore.open(directory)) {
-            assertEquals(state(1, 1).orElseThrow(), storage.hardState());
-            assertEquals(3, storage.firstIndex());
-            assertEquals(2, storage.lastIndex());
-        }
-        try (var storage = LogStore.open(directory)) {
-            assertEquals(2, storage.lastIndex());
-        }
-    }
-
-    @Test
-    void openKeepsLogThatContinuesTheSnapshot() throws IOException {
-        try (var storage = LogStore.open(directory)) {
-            storage.append(state(1, 2), List.of(command(1, 1, "a"), command(2, 1, "b"), command(3, 1, "c")));
-            storage.sync();
-        }
-        installSnapshotOnly(new SnapshotMetadata(2, 1, Ids.voters("n1", "n2")));
-
-        try (var storage = LogStore.open(directory)) {
-            assertEquals(3, storage.firstIndex());
-            assertEquals(List.of(command(3, 1, "c")), storage.entries(3, 4, Long.MAX_VALUE));
-        }
-    }
-
-    @Test
-    void compactionDropsEntriesThroughTheSnapshot() throws IOException {
-        var snapshot = new SnapshotMetadata(2, 1, Ids.voters("n1"));
+    void compactionDropsEntriesThroughTheBase() {
+        var base = new SnapshotMetadata(2, 1, Ids.voters("n1"));
         try (var storage = LogStore.open(directory)) {
             storage.append(state(1, 3), List.of(command(1, 1, "a"), command(2, 1, "b"), command(3, 1, "c")));
-            storage.compact(snapshot, payload(storage, "state"), 0);
+            storage.compact(base);
 
             assertEquals(3, storage.firstIndex());
             assertEquals(1, storage.term(2));
+            assertEquals(1, storage.retainedEntries());
             assertEquals(List.of(command(3, 1, "c")), storage.entries(3, 4, Long.MAX_VALUE));
-            assertThrows(IllegalArgumentException.class,
-                () -> storage.compact(new SnapshotMetadata(3, 2, Ids.voters("n1")), payload(storage, "x"), 0));
+            assertThrows(IllegalArgumentException.class, () -> storage.compact(new SnapshotMetadata(3, 2, Ids.voters("n1"))));
+            assertThrows(IllegalArgumentException.class, () -> storage.compact(new SnapshotMetadata(4, 1, Ids.voters("n1"))));
         }
 
         try (var storage = LogStore.open(directory)) {
-            assertEquals(snapshot, storage.snapshot().orElseThrow().metadata());
+            assertEquals(Optional.of(base), storage.base());
             assertEquals(List.of(command(3, 1, "c")), storage.entries(3, 4, Long.MAX_VALUE));
         }
     }
 
-    private void installSnapshotOnly(SnapshotMetadata metadata) throws IOException {
-        var snapshots = SnapshotStore.open(directory.resolve("snap"));
-        Path staged = snapshots.stagingFile();
-        Files.writeString(staged, "payload");
-        snapshots.install(metadata, staged, 0);
+    @Test
+    void compactionIndexKeepsTheRetainedTailBehindTheDurableIndex() {
+        try (var storage = LogStore.open(directory)) {
+            storage.append(state(1, 10), LongStream.rangeClosed(1, 10).mapToObj(i -> command(i, 1, "0123456789")).toList());
+
+            assertEquals(5, storage.compactionIndex(8, new LogRetention(3, 1_000)));
+            assertEquals(6, storage.compactionIndex(8, new LogRetention(3, 25)));
+            assertEquals(0, storage.compactionIndex(2, new LogRetention(3, 1_000)));
+            assertEquals(7, storage.compactionIndex(20, new LogRetention(3, 1_000)));
+        }
+    }
+
+    @Test
+    void openRejectsAWalThatDoesNotContinueItsBase() throws IOException {
+        try (var wal = WriteAheadLog.open(directory.resolve("wal"), 1 << 20)) {
+            wal.reset(new SnapshotMetadata(5, 1, Ids.voters("n1")));
+            wal.append(Optional.empty(), List.of(command(7, 1, "gap")));
+            wal.sync();
+        }
+
+        assertThrows(RaftStorageException.Corruption.class, () -> LogStore.open(directory));
     }
 }
