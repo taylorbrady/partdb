@@ -26,16 +26,12 @@ import io.partdb.storage.KeyRange;
 import io.partdb.storage.KeyValue;
 import io.partdb.storage.Mutation;
 
-import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase {
-
-    private static final int BATCH_ENTRIES = 256;
-    private static final int BATCH_BYTES = 1 << 20;
 
     private final Node node;
 
@@ -84,8 +80,6 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
 
     @Override
     public void scan(ScanRequest request, StreamObserver<ScanResponse> responses) {
-        var call = (ServerCallStreamObserver<ScanResponse>) responses;
-        var flow = new FlowControl(call);
         Read<Stream<KeyValue>> scan;
         try {
             if (request.getLimit() < 0) {
@@ -96,31 +90,9 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
             responses.onError(Calls.toStatus(e));
             return;
         }
-        int remaining = request.getLimit() == 0 ? Integer.MAX_VALUE : request.getLimit();
-        try (Stream<KeyValue> entries = scan.value()) {
-            Iterator<KeyValue> cursor = entries.iterator();
-            boolean first = true;
-            while (first || (remaining > 0 && cursor.hasNext())) {
-                var batch = ScanResponse.newBuilder().setReadRevision(scan.revision());
-                int bytes = 0;
-                while (remaining > 0 && cursor.hasNext() && batch.getEntriesCount() < BATCH_ENTRIES && bytes < BATCH_BYTES) {
-                    var entry = proto(cursor.next());
-                    bytes += entry.getSerializedSize();
-                    batch.addEntries(entry);
-                    remaining--;
-                }
-                if (!flow.awaitReady()) {
-                    return;
-                }
-                call.onNext(batch.build());
-                first = false;
-            }
-            call.onCompleted();
-        } catch (RuntimeException e) {
-            if (!call.isCancelled()) {
-                call.onError(Calls.toStatus(e));
-            }
-        }
+        int limit = request.getLimit() == 0 ? Integer.MAX_VALUE : request.getLimit();
+        ScanStream.start((ServerCallStreamObserver<ScanResponse>) responses, scan.revision(),
+            scan.value().map(KeyValueService::proto), limit);
     }
 
     private static KeyRange range(ScanRequest request) {
