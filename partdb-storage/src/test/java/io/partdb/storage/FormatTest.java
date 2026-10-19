@@ -32,9 +32,8 @@ class FormatTest {
             store.apply(1, List.of(put("a", "1")));
             checkpoint = Fixtures.checkpoint(store);
         }
-        Path generation = Fixtures.generation(root);
-        byte[] table = Files.readAllBytes(generation.resolve(Fixtures.tableFiles(generation).getFirst()));
-        byte[] manifest = Files.readAllBytes(generation.resolve(Manifest.FILE_NAME));
+        byte[] table = Files.readAllBytes(root.resolve(Fixtures.tableFiles(root).getFirst()));
+        byte[] manifest = Files.readAllBytes(root.resolve(Manifest.FILE_NAME));
 
         assertHeader("PDBT", table);
         assertHeader("PDBM", manifest);
@@ -45,23 +44,23 @@ class FormatTest {
     @Test
     void tableRoundTripsThroughWriterAndReader() {
         Path path = directory.resolve("000001.sst");
-        try (TableWriter writer = TableWriter.create(path, 1, 2, StoreOptions.Table.defaults().withBlockSizeBytes(256))) {
+        try (TableWriter writer = TableWriter.create(path, 1, StoreOptions.defaults().withBlockBytes(256))) {
             for (int i = 0; i < 500; i++) {
                 writer.add(entry(i, i % 10 == 0));
             }
             TableMetadata metadata = writer.finish();
             assertEquals(Slice.utf8(Fixtures.key(0)), metadata.smallest());
             assertEquals(Slice.utf8(Fixtures.key(499)), metadata.largest());
+            assertEquals(50, metadata.tombstones());
         }
-        TableReader reader = TableReader.open(path, 1, 2, new BlockCache(0));
+        TableReader reader = TableReader.open(path, 1, new BlockCache(0));
         try {
-            assertEquals(2, reader.metadata().level());
+            assertEquals(50, reader.metadata().tombstones());
             for (int i = 0; i < 500; i++) {
-                InternalEntry found = reader.get(Slice.utf8(Fixtures.key(i)), Long.MAX_VALUE).orElseThrow();
+                InternalEntry found = reader.get(Slice.utf8(Fixtures.key(i))).orElseThrow();
                 assertEquals(entry(i, i % 10 == 0), found);
             }
-            assertEquals(Optional.empty(), reader.get(Slice.utf8("missing"), Long.MAX_VALUE));
-            assertEquals(Optional.empty(), reader.get(Slice.utf8(Fixtures.key(5)), 4));
+            assertEquals(Optional.empty(), reader.get(Slice.utf8("missing")));
 
             var scan = reader.scan(new Bounds(Slice.utf8(Fixtures.key(100)), Slice.utf8(Fixtures.key(200))));
             int count = 0;
@@ -78,7 +77,7 @@ class FormatTest {
     @Test
     void corruptTablesAreRejected() throws IOException {
         Path path = directory.resolve("000001.sst");
-        try (TableWriter writer = TableWriter.create(path, 1, 0, StoreOptions.Table.defaults().withBlockSizeBytes(256))) {
+        try (TableWriter writer = TableWriter.create(path, 1, StoreOptions.defaults().withBlockBytes(256))) {
             for (int i = 0; i < 200; i++) {
                 writer.add(entry(i, false));
             }
@@ -93,11 +92,20 @@ class FormatTest {
         assertTableCorrupt(path, Arrays.copyOf(valid, valid.length - 1));
 
         Files.write(path, flip(valid, 20));
-        TableReader reader = TableReader.open(path, 1, 0, new BlockCache(0));
+        TableReader reader = TableReader.open(path, 1, new BlockCache(0));
         try {
-            assertThrows(StoreException.Corruption.class, () -> reader.get(Slice.utf8(Fixtures.key(0)), Long.MAX_VALUE));
+            assertThrows(StoreException.Corruption.class, () -> reader.get(Slice.utf8(Fixtures.key(0))));
         } finally {
             reader.release();
+        }
+    }
+
+    @Test
+    void tablesRejectKeysOutOfOrder() {
+        try (TableWriter writer = TableWriter.create(directory.resolve("000001.sst"), 1, StoreOptions.defaults())) {
+            writer.add(entry(2, false));
+            assertThrows(IllegalArgumentException.class, () -> writer.add(entry(1, false)));
+            assertThrows(IllegalArgumentException.class, () -> writer.add(entry(2, true)));
         }
     }
 
@@ -110,6 +118,8 @@ class FormatTest {
         assertThrows(StoreException.Corruption.class, () -> Manifest.decode(withInt(valid, 4, 2)));
         assertThrows(StoreException.Corruption.class, () -> Manifest.decode(flip(valid, 10)));
         assertThrows(StoreException.Corruption.class, () -> Manifest.decode(Arrays.copyOf(valid, 12)));
+        byte[] deepLevel = new Manifest(7, 3, List.of(new Manifest.Placement(1, Version.LEVELS))).encode();
+        assertThrows(StoreException.Corruption.class, () -> Manifest.decode(deepLevel));
     }
 
     @Test
@@ -118,7 +128,7 @@ class FormatTest {
         try (Store store = Store.open(root, StoreOptions.defaults())) {
             store.apply(1, List.of(put("a", "1")));
         }
-        Path manifest = Fixtures.generation(root).resolve(Manifest.FILE_NAME);
+        Path manifest = root.resolve(Manifest.FILE_NAME);
         Files.write(manifest, flip(Files.readAllBytes(manifest), 9));
 
         assertThrows(StoreException.Corruption.class, () -> Store.open(root, StoreOptions.defaults()));
@@ -138,7 +148,7 @@ class FormatTest {
             assertRestoreCorrupt(target, flip(valid, valid.length - 1));
             assertRestoreCorrupt(target, flip(valid, valid.length - 40));
             assertRestoreCorrupt(target, Arrays.copyOf(valid, 10));
-            assertEquals(0, target.appliedIndex());
+            assertEquals(0, target.appliedRevision());
             assertEquals(1, Fixtures.restore(target, valid));
         }
     }
@@ -155,7 +165,7 @@ class FormatTest {
 
     private static void assertTableCorrupt(Path path, byte[] contents) throws IOException {
         Files.write(path, contents);
-        assertThrows(StoreException.Corruption.class, () -> TableReader.open(path, 1, 0, new BlockCache(0)));
+        assertThrows(StoreException.Corruption.class, () -> TableReader.open(path, 1, new BlockCache(0)));
     }
 
     private static void assertRestoreCorrupt(Store store, byte[] checkpoint) {

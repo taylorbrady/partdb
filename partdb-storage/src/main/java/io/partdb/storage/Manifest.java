@@ -3,12 +3,11 @@ package io.partdb.storage;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-record Manifest(long durableIndex, long nextTableId, List<Placement> tables) {
+record Manifest(long durableRevision, long nextTableId, List<Placement> tables) {
 
     static final String FILE_NAME = "MANIFEST";
 
@@ -23,20 +22,10 @@ record Manifest(long durableIndex, long nextTableId, List<Placement> tables) {
         tables = List.copyOf(tables);
     }
 
-    static Manifest of(long durableIndex, long nextTableId, Version version) {
-        return new Manifest(
-            durableIndex,
-            nextTableId,
-            version.tables().stream().map(table -> new Placement(table.id(), table.metadata().level())).toList()
-        );
-    }
-
     static Manifest read(Path directory) {
         Path path = directory.resolve(FILE_NAME);
         try {
             return decode(Files.readAllBytes(path));
-        } catch (NoSuchFileException e) {
-            throw new StoreException.Corruption("Missing manifest " + path, e);
         } catch (IOException e) {
             throw new StoreException.IO("Failed to read manifest " + path, e);
         }
@@ -48,7 +37,7 @@ record Manifest(long durableIndex, long nextTableId, List<Placement> tables) {
 
     byte[] encode() {
         ByteBuffer buffer = Encoding.allocate(HEADER_SIZE + tables.size() * PLACEMENT_SIZE + Integer.BYTES);
-        buffer.putInt(MAGIC).putInt(VERSION).putLong(durableIndex).putLong(nextTableId).putInt(tables.size());
+        buffer.putInt(MAGIC).putInt(VERSION).putLong(durableRevision).putLong(nextTableId).putInt(tables.size());
         for (Placement table : tables) {
             buffer.putLong(table.id()).putInt(table.level());
         }
@@ -65,7 +54,7 @@ record Manifest(long durableIndex, long nextTableId, List<Placement> tables) {
         int checksumOffset = bytes.length - Integer.BYTES;
         Encoding.check(buffer.getInt(checksumOffset) == Encoding.crc(bytes, 0, checksumOffset), "Manifest checksum mismatch");
 
-        long durableIndex = buffer.getLong();
+        long durableRevision = buffer.getLong();
         long nextTableId = buffer.getLong();
         int count = buffer.getInt();
         Encoding.check(count >= 0 && HEADER_SIZE + (long) count * PLACEMENT_SIZE == checksumOffset, "Invalid manifest table count");
@@ -73,10 +62,10 @@ record Manifest(long durableIndex, long nextTableId, List<Placement> tables) {
         for (int i = 0; i < count; i++) {
             long id = buffer.getLong();
             int level = buffer.getInt();
-            Encoding.check(id > 0 && id < nextTableId && level >= 0, "Invalid manifest table entry");
+            Encoding.check(id > 0 && id < nextTableId && level >= 0 && level < Version.LEVELS, "Invalid manifest table entry");
             tables.add(new Placement(id, level));
         }
-        Encoding.check(durableIndex >= 0, "Negative manifest durable index");
-        return new Manifest(durableIndex, nextTableId, tables);
+        Encoding.check(durableRevision >= 0, "Negative manifest durable revision");
+        return new Manifest(durableRevision, nextTableId, tables);
     }
 }

@@ -125,23 +125,33 @@ Role: local durable versioned state store.
 This module owns the LSM engine, memtables, tables, manifests, compaction,
 block cache, streamed checkpoints, and storage-level tests/benchmarks.
 
-Its public surface is `Store` and a handful of values (`Snapshot`, `Cursor`,
+Its public surface is `Store` and a handful of values (`Snapshot`,
 `KeyValue`, `Mutation`, `KeyRange`, `StoreOptions`, `StoreStats`,
 `StoreException`); everything else is package-private in `io.partdb.storage`.
+Reads go through a `Snapshot`, which reports the revision it reads at; a scan
+is a `Stream<KeyValue>` that pins its own view and must be closed.
 
 Contract with the replicated state machine:
 
-- A single writer calls `apply(index, mutations)` with strictly increasing
-  indexes, including empty mutation lists for entries that change nothing, so
-  `appliedIndex()` always equals the last Raft index handed to storage.
-- There is no storage WAL; the Raft log is the WAL. Flushes persist the applied
-  index of each memtable as the manifest's durable index, and reopening resumes
-  at `appliedIndex() == durableIndex()`.
-- `checkpoint` streams the state at exactly `appliedIndex()` from any thread;
-  `restore` stages the checkpoint into a new generation directory and swaps the
-  `CURRENT` pointer atomically.
-- The manifest is the only commit point within a generation; files it does not
-  reference are deleted on open.
+- A single writer calls `apply(revision, mutations)` with strictly increasing
+  revisions, including empty mutation lists for entries that change nothing,
+  so `appliedRevision()` always equals the last Raft index handed to storage.
+- There is no storage WAL; the Raft log is the WAL. Flushes persist the
+  revision of each memtable as the manifest's durable revision, and reopening
+  resumes at `appliedRevision() == durableRevision()`.
+- `checkpoint` streams the state at exactly `appliedRevision()` from any
+  thread; `restore` writes the checkpoint's tables beside the live ones and
+  swaps to them with one manifest commit.
+- The manifest is the only commit point; tables it does not reference are
+  deleted on open.
+
+The engine is a leveled LSM in the RocksDB mould. Tables hold one version per
+key; only memtables keep several, so snapshots can read past concurrent
+applies. Level targets are sized dynamically from the largest level, level
+zero compacts as a whole into the base level, writes stall when level zero
+reaches `levelZeroStopTrigger`, and a table with nothing beneath it moves down
+a level without being rewritten. Flush and compaction run on platform threads;
+tables are memory-mapped through the FFM API.
 
 Allowed dependencies: `partdb-bytes`.
 
@@ -157,11 +167,11 @@ what replication means for keys: transactions, conditions, read consistency,
 limits, and the replicated command format. `Node` is the whole API: blocking
 `get`, `scan`, `write`, and `transact` with explicit timeouts, plus `status`,
 `membership`, `stepDown`, and `metrics`. It speaks storage's key-value
-vocabulary (`KeyValue`, `Mutation`, `KeyRange`, `Cursor`, `StoreStats`) and
+vocabulary (`KeyValue`, `Mutation`, `KeyRange`, `StoreStats`) and
 Raft's cluster vocabulary as-is. Every write is one `Txn` (conditions plus
 mutations); `write` is an unconditional transaction. Reads return the revision
-they read at, and a scan is a lazy `Cursor` the caller stops when it has
-enough. Failures are one sealed `NodeException` family that callers switch
+they read at, and a scan is a lazy `Stream<KeyValue>` the caller closes when it
+has enough. Failures are one sealed `NodeException` family that callers switch
 over but never construct. `KvLimits` are enforced before a command is
 proposed, so oversized or invalid commands never reach the log. Everything is
 in `io.partdb.node`; `KvStateMachine` and the versioned, strictly decoded

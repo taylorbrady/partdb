@@ -43,8 +43,10 @@ final class PrometheusMetrics {
 
         out.gauge("partdb_storage_active_memtable_bytes", "Bytes held by the active memtable.", storage.activeMemtableBytes());
         out.gauge("partdb_storage_immutable_memtables", "Memtables waiting to be flushed.", storage.immutableMemtableCount());
+        out.gauge("partdb_storage_level_zero_tables", "Sorted table files in level zero.", storage.levelZeroTableCount());
         out.gauge("partdb_storage_tables", "Sorted table files in the current version.", storage.tableCount());
         out.gauge("partdb_storage_table_bytes", "Bytes in sorted table files.", storage.tableBytes());
+        out.counter("partdb_storage_stalled_writes_total", "Writes that waited for level zero compaction.", storage.stalledWriteCount());
         out.gauge("partdb_storage_active_compactions", "Compactions in progress.", storage.activeCompactions());
         out.counter("partdb_storage_compactions_total", "Compactions completed.", storage.completedCompactions());
         out.counter("partdb_storage_compactions_failed_total", "Compactions that failed.", storage.failedCompactions());

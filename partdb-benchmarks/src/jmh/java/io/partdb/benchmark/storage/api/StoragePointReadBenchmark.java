@@ -27,22 +27,22 @@ public class StoragePointReadBenchmark {
 
     @Benchmark
     public void hotHit(HotReadState state, KeyCursor cursor, Blackhole bh) {
-        bh.consume(state.store().get(state.existingKeys[cursor.nextHit(state.existingKeys.length)]));
+        bh.consume(StorageFixtures.get(state.store(), state.existingKeys[cursor.nextHit(state.existingKeys.length)]));
     }
 
     @Benchmark
     public void hotMiss(HotReadState state, KeyCursor cursor, Blackhole bh) {
-        bh.consume(state.store().get(state.missingKeys[cursor.nextMiss(state.missingKeys.length)]));
+        bh.consume(StorageFixtures.get(state.store(), state.missingKeys[cursor.nextMiss(state.missingKeys.length)]));
     }
 
     @Benchmark
     public void persistedHit(PersistedReadState state, KeyCursor cursor, Blackhole bh) {
-        bh.consume(state.store().get(state.existingKeys[cursor.nextHit(state.existingKeys.length)]));
+        bh.consume(StorageFixtures.get(state.store(), state.existingKeys[cursor.nextHit(state.existingKeys.length)]));
     }
 
     @Benchmark
     public void persistedMiss(PersistedReadState state, KeyCursor cursor, Blackhole bh) {
-        bh.consume(state.store().get(state.missingKeys[cursor.nextMiss(state.missingKeys.length)]));
+        bh.consume(StorageFixtures.get(state.store(), state.missingKeys[cursor.nextMiss(state.missingKeys.length)]));
     }
 
     @State(Scope.Thread)

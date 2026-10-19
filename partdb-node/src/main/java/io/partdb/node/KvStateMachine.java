@@ -2,7 +2,6 @@ package io.partdb.node;
 
 import io.partdb.bytes.Bytes;
 import io.partdb.raft.runtime.StateMachine;
-import io.partdb.storage.Cursor;
 import io.partdb.storage.KeyRange;
 import io.partdb.storage.KeyValue;
 import io.partdb.storage.Snapshot;
@@ -15,6 +14,7 @@ import java.io.OutputStream;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 final class KvStateMachine implements StateMachine<TxnResult>, AutoCloseable {
 
@@ -30,7 +30,7 @@ final class KvStateMachine implements StateMachine<TxnResult>, AutoCloseable {
 
     @Override
     public long appliedIndex() {
-        return store.appliedIndex();
+        return store.appliedRevision();
     }
 
     @Override
@@ -64,13 +64,13 @@ final class KvStateMachine implements StateMachine<TxnResult>, AutoCloseable {
 
     Read<Optional<KeyValue>> get(Bytes key) {
         try (Snapshot snapshot = store.snapshot()) {
-            return new Read<>(snapshot.get(key), snapshot.index());
+            return new Read<>(snapshot.get(key), snapshot.revision());
         }
     }
 
-    Cursor scan(KeyRange range) {
+    Read<Stream<KeyValue>> scan(KeyRange range) {
         try (Snapshot snapshot = store.snapshot()) {
-            return snapshot.scan(range);
+            return new Read<>(snapshot.scan(range), snapshot.revision());
         }
     }
 

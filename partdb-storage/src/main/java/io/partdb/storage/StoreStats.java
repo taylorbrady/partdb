@@ -6,8 +6,10 @@ import java.util.Objects;
 public record StoreStats(
     long activeMemtableBytes,
     int immutableMemtableCount,
+    int levelZeroTableCount,
     int tableCount,
     long tableBytes,
+    long stalledWriteCount,
     int activeCompactions,
     long completedCompactions,
     long failedCompactions,

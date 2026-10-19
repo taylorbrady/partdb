@@ -45,7 +45,7 @@ public class StorageWorkloadBenchmark {
     private static void execute(WorkloadState state, Blackhole bh) {
         StorageWorkloadScript.Operation operation = state.nextOperation();
         switch (operation.kind()) {
-            case READ_EXISTING, READ_MISSING -> bh.consume(state.store().get(operation.key()));
+            case READ_EXISTING, READ_MISSING -> bh.consume(StorageFixtures.get(state.store(), operation.key()));
             case UPDATE_EXISTING, INSERT_NEW -> state.store().apply(state.nextRevision(), List.of(Mutation.put(operation.key(), state.valueTemplate)));
         }
     }

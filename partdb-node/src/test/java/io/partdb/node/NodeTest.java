@@ -19,7 +19,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
@@ -146,15 +145,11 @@ class NodeTest {
                 put(node, bytes(key), bytes(key + "-value"));
             }
 
-            var keys = new ArrayList<String>();
-            long revision;
-            try (var scan = node.scan(KeyRange.between(bytes("b"), bytes("d")), ReadConsistency.LINEARIZABLE, TIMEOUT)) {
-                revision = scan.revision();
-                scan.forEachRemaining(entry -> keys.add(entry.key().utf8()));
+            var scan = node.scan(KeyRange.between(bytes("b"), bytes("d")), ReadConsistency.LINEARIZABLE, TIMEOUT);
+            try (var entries = scan.value()) {
+                assertEquals(List.of("b", "c"), entries.map(entry -> entry.key().utf8()).toList());
             }
-
-            assertEquals(List.of("b", "c"), keys);
-            assertTrue(revision > 0);
+            assertTrue(scan.revision() > 0);
         }
     }
 

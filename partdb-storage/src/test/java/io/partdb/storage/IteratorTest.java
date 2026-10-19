@@ -33,7 +33,7 @@ class IteratorTest {
     }
 
     @Test
-    void memtableReturnsNewestEntryAtOrBelowTheReadIndex() {
+    void memtableReturnsNewestEntryAtOrBelowTheReadRevision() {
         Memtable memtable = new Memtable(0);
         memtable.put(value("a", 2));
         memtable.put(tombstone("a", 4));
@@ -45,7 +45,7 @@ class IteratorTest {
         assertEquals(List.of(), memtable.get(Slice.utf8("a"), 1).stream().toList());
         assertEquals(List.of(value("b", 3)), drain(memtable.scan(new Bounds(Slice.utf8("b"), null))));
         assertEquals(List.of(tombstone("a", 4), value("a", 2)), drain(memtable.scan(new Bounds(null, Slice.utf8("b")))));
-        assertEquals(4, memtable.appliedIndex());
+        assertEquals(4, memtable.revision());
     }
 
     private static InternalEntry value(String key, long revision) {

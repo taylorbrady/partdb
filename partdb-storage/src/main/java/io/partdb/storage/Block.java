@@ -45,18 +45,9 @@ final class Block {
         return segment.byteSize();
     }
 
-    Optional<InternalEntry> get(Slice key, long index) {
+    Optional<InternalEntry> get(Slice key) {
         Cursor cursor = seek(key);
-        while (cursor.hasNext()) {
-            InternalEntry entry = cursor.next();
-            if (!entry.userKey().equals(key)) {
-                return Optional.empty();
-            }
-            if (entry.revision() <= index) {
-                return Optional.of(entry);
-            }
-        }
-        return Optional.empty();
+        return cursor.hasNext() && cursor.peek().userKey().equals(key) ? Optional.of(cursor.peek()) : Optional.empty();
     }
 
     Iterator<InternalEntry> iterator() {

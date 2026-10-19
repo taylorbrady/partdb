@@ -14,7 +14,6 @@ final class BlockWriter {
 
     private Slice firstKey;
     private Slice lastKey;
-    private InternalKey lastInternalKey;
     private byte[] lastKeyBytes;
     private int sinceRestart;
     private int count;
@@ -27,8 +26,8 @@ final class BlockWriter {
     }
 
     void add(InternalEntry entry) {
-        if (lastInternalKey != null && entry.key().compareTo(lastInternalKey) <= 0) {
-            throw new IllegalArgumentException("Block entries must be added in strictly increasing order");
+        if (lastKey != null && entry.userKey().compareTo(lastKey) <= 0) {
+            throw new IllegalArgumentException("Block keys must be strictly increasing");
         }
 
         byte[] key = entry.userKey().toByteArray();
@@ -57,7 +56,6 @@ final class BlockWriter {
             firstKey = entry.userKey();
         }
         lastKey = entry.userKey();
-        lastInternalKey = entry.key();
         lastKeyBytes = key;
         sinceRestart++;
         count++;
@@ -73,10 +71,6 @@ final class BlockWriter {
 
     Slice firstKey() {
         return firstKey;
-    }
-
-    Slice lastKey() {
-        return lastKey;
     }
 
     byte[] finish() {
@@ -100,7 +94,6 @@ final class BlockWriter {
         restarts.clear();
         firstKey = null;
         lastKey = null;
-        lastInternalKey = null;
         lastKeyBytes = null;
         sinceRestart = 0;
         count = 0;

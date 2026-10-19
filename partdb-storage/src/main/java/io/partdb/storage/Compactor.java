@@ -17,62 +17,46 @@ import java.util.concurrent.locks.ReentrantLock;
 final class Compactor implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(Compactor.class);
-    private static final int GRANDPARENT_OVERLAP_FACTOR = 10;
-
-    private record Reservation(Set<Long> ids, int sourceLevel, int targetLevel, Slice smallest, Slice largest) {
-        boolean conflicts(Reservation other) {
-            boolean sharedLevel = sourceLevel == other.sourceLevel || sourceLevel == other.targetLevel
-                || targetLevel == other.sourceLevel || targetLevel == other.targetLevel;
-            boolean overlapping = largest.compareTo(other.smallest) >= 0 && other.largest.compareTo(smallest) >= 0;
-            return (sharedLevel && overlapping) || ids.stream().anyMatch(other.ids::contains);
-        }
-    }
 
     private final Store store;
     private final StoreOptions options;
     private final CompactionPlanner planner;
-    private final ExecutorService executor = Executors.newThreadPerTaskExecutor(
-        Thread.ofVirtual().name("partdb-compaction-", 0).factory()
-    );
+    private final ExecutorService executor;
     private final ReentrantLock lock = new ReentrantLock();
-    private final List<Reservation> reservations = new ArrayList<>();
+    private final Set<Long> busy = new HashSet<>();
     private final AtomicLong completed = new AtomicLong();
     private final AtomicLong failed = new AtomicLong();
+    private int running;
     private volatile Duration lastDuration = Duration.ZERO;
     private volatile boolean closed;
 
     Compactor(Store store, StoreOptions options) {
         this.store = store;
         this.options = options;
-        this.planner = new CompactionPlanner(options.compaction());
+        this.planner = new CompactionPlanner(options.levelZeroCompactionTrigger(), options.levelBaseBytes(), options.targetTableBytes());
+        this.executor = Executors.newFixedThreadPool(
+            options.compactionConcurrency(),
+            Thread.ofPlatform().name("partdb-compaction-", 0).daemon(true).factory()
+        );
     }
 
     void request() {
         lock.lock();
         try {
-            if (closed || reservations.size() >= options.compaction().maxConcurrent()) {
+            if (closed || running >= options.compactionConcurrency()) {
                 return;
             }
             ReadState state = store.acquire();
             try {
                 Version version = state.version();
-                for (CompactionPlanner.Task task : planner.plan(version.metadata(), reservedIds())) {
-                    if (reservations.size() >= options.compaction().maxConcurrent()) {
+                for (CompactionPlanner.Task task : planner.plan(version.metadata(), Set.copyOf(busy))) {
+                    if (running >= options.compactionConcurrency()) {
                         break;
                     }
-                    var reservation = new Reservation(
-                        new HashSet<>(task.inputs().stream().map(TableMetadata::id).toList()),
-                        task.sourceLevel(),
-                        task.targetLevel(),
-                        task.smallest(),
-                        task.largest()
-                    );
-                    if (reservations.stream().noneMatch(reservation::conflicts)) {
-                        reservations.add(reservation);
-                        Version pinned = version.retain();
-                        Generation generation = store.generation();
-                        executor.execute(() -> run(task, reservation, pinned, generation));
-                    }
+                    task.inputs().forEach(input -> busy.add(input.id()));
+                    running++;
+                    Version pinned = version.retain();
+                    executor.execute(() -> run(task, pinned));
                 }
             } finally {
                 state.release();
@@ -85,7 +69,7 @@ final class Compactor implements AutoCloseable {
     int active() {
         lock.lock();
         try {
-            return reservations.size();
+            return running;
         } finally {
             lock.unlock();
         }
@@ -114,79 +98,86 @@ final class Compactor implements AutoCloseable {
         executor.close();
     }
 
-    private Set<Long> reservedIds() {
-        Set<Long> ids = new HashSet<>();
-        reservations.forEach(reservation -> ids.addAll(reservation.ids()));
-        return ids;
-    }
-
-    private void run(CompactionPlanner.Task task, Reservation reservation, Version version, Generation generation) {
+    private void run(CompactionPlanner.Task task, Version version) {
         long started = System.nanoTime();
-        List<TableReader> outputs = new ArrayList<>();
-        boolean succeeded = false;
+        boolean installed = false;
         try {
             List<TableReader> inputs = task.inputs().stream().map(input -> version.table(input.id()).orElseThrow()).toList();
-            merge(task, inputs, generation, outputs);
-            if (store.installCompaction(inputs, outputs, task.targetLevel())) {
+            installed = switch (task) {
+                case CompactionPlanner.Move move -> store.installCompaction(inputs, inputs, move.targetLevel());
+                case CompactionPlanner.Merge merge -> merge(merge, inputs);
+            };
+            if (installed) {
                 completed.incrementAndGet();
-            } else {
-                outputs.forEach(TableReader::markObsolete);
             }
-            succeeded = true;
         } catch (RuntimeException e) {
-            outputs.forEach(TableReader::markObsolete);
             if (!closed) {
                 failed.incrementAndGet();
                 log.atError()
                     .setCause(e)
+                    .addKeyValue("sourceLevel", task.sourceLevel())
                     .addKeyValue("targetLevel", task.targetLevel())
                     .addKeyValue("inputs", task.inputs().size())
                     .log("Compaction failed");
             }
         } finally {
-            outputs.forEach(TableReader::release);
             version.release();
             lastDuration = Duration.ofNanos(System.nanoTime() - started);
             lock.lock();
             try {
-                reservations.remove(reservation);
+                task.inputs().forEach(input -> busy.remove(input.id()));
+                running--;
             } finally {
                 lock.unlock();
             }
         }
-        if (succeeded) {
+        if (installed) {
             request();
         }
     }
 
-    private void merge(CompactionPlanner.Task task, List<TableReader> inputs, Generation generation, List<TableReader> outputs) {
+    private boolean merge(CompactionPlanner.Merge merge, List<TableReader> inputs) {
+        List<TableReader> outputs = new ArrayList<>();
+        try {
+            write(merge, inputs, outputs);
+            boolean installed = store.installCompaction(inputs, outputs, merge.targetLevel());
+            if (!installed) {
+                outputs.forEach(TableReader::markObsolete);
+            }
+            return installed;
+        } catch (RuntimeException e) {
+            outputs.forEach(TableReader::markObsolete);
+            throw e;
+        } finally {
+            outputs.forEach(TableReader::release);
+        }
+    }
+
+    private void write(CompactionPlanner.Merge merge, List<TableReader> inputs, List<TableReader> outputs) {
         List<Iterator<InternalEntry>> sources = inputs.stream().map(input -> input.scan(Bounds.ALL)).toList();
-        Iterator<InternalEntry> entries = new LatestIterator(new MergingIterator(sources), Long.MAX_VALUE, task.dropTombstones());
-        long target = options.compaction().targetTableBytes();
+        Iterator<InternalEntry> entries = new LatestIterator(new MergingIterator(sources), Long.MAX_VALUE, merge.dropTombstones());
+        var grandparents = new Grandparents(merge.grandparents(), options.targetTableBytes() * CompactionPlanner.GRANDPARENT_OVERLAP_FACTOR);
+        StoreDirectory directory = store.directory();
         TableWriter writer = null;
-        Slice firstKey = null;
         try {
             while (entries.hasNext()) {
                 if (closed) {
                     throw new StoreException.Closed();
                 }
                 InternalEntry entry = entries.next();
-                if (writer != null && (writer.rawBytes() + entry.encodedSize() > target
-                    || grandparentOverlap(task, firstKey, entry.userKey()) > target * GRANDPARENT_OVERLAP_FACTOR)) {
-                    writer.finish();
-                    outputs.add(open(writer, generation, task.targetLevel()));
+                boolean split = grandparents.splitBefore(entry.userKey());
+                if (writer != null && (split || writer.rawBytes() >= options.targetTableBytes())) {
+                    outputs.add(finish(writer, directory));
                     writer = null;
                 }
                 if (writer == null) {
-                    long id = generation.allocateTableId();
-                    writer = TableWriter.create(generation.tablePath(id), id, task.targetLevel(), options.table());
-                    firstKey = entry.userKey();
+                    long id = directory.allocateTableId();
+                    writer = TableWriter.create(directory.tablePath(id), id, options);
                 }
                 writer.add(entry);
             }
             if (writer != null) {
-                writer.finish();
-                outputs.add(open(writer, generation, task.targetLevel()));
+                outputs.add(finish(writer, directory));
                 writer = null;
             }
         } finally {
@@ -195,21 +186,40 @@ final class Compactor implements AutoCloseable {
             }
         }
         if (!outputs.isEmpty()) {
-            Disk.syncDirectory(generation.directory());
+            directory.sync();
         }
     }
 
-    private TableReader open(TableWriter writer, Generation generation, int level) {
-        return TableReader.open(generation.tablePath(writer.id()), writer.id(), level, store.cache());
+    private TableReader finish(TableWriter writer, StoreDirectory directory) {
+        writer.finish();
+        return TableReader.open(directory.tablePath(writer.id()), writer.id(), store.cache());
     }
 
-    private static long grandparentOverlap(CompactionPlanner.Task task, Slice start, Slice end) {
-        long bytes = 0;
-        for (TableMetadata grandparent : task.grandparents()) {
-            if (grandparent.overlaps(start, end)) {
-                bytes += grandparent.sizeBytes();
+    private static final class Grandparents {
+        private final List<TableMetadata> tables;
+        private final long limit;
+        private int position;
+        private long overlap;
+        private boolean started;
+
+        private Grandparents(List<TableMetadata> tables, long limit) {
+            this.tables = tables;
+            this.limit = limit;
+        }
+
+        boolean splitBefore(Slice key) {
+            while (position < tables.size() && key.compareTo(tables.get(position).largest()) > 0) {
+                if (started) {
+                    overlap += tables.get(position).sizeBytes();
+                }
+                position++;
             }
+            started = true;
+            if (overlap > limit) {
+                overlap = 0;
+                return true;
+            }
+            return false;
         }
-        return bytes;
     }
 }

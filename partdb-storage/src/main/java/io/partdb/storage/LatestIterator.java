@@ -6,14 +6,14 @@ import java.util.NoSuchElementException;
 final class LatestIterator implements Iterator<InternalEntry> {
 
     private final Iterator<InternalEntry> source;
-    private final long index;
+    private final long revision;
     private final boolean dropTombstones;
     private Slice lastKey;
     private InternalEntry next;
 
-    LatestIterator(Iterator<InternalEntry> source, long index, boolean dropTombstones) {
+    LatestIterator(Iterator<InternalEntry> source, long revision, boolean dropTombstones) {
         this.source = source;
-        this.index = index;
+        this.revision = revision;
         this.dropTombstones = dropTombstones;
         advance();
     }
@@ -36,7 +36,7 @@ final class LatestIterator implements Iterator<InternalEntry> {
     private void advance() {
         while (source.hasNext()) {
             InternalEntry candidate = source.next();
-            if (candidate.revision() > index || candidate.userKey().equals(lastKey)) {
+            if (candidate.revision() > revision || candidate.userKey().equals(lastKey)) {
                 continue;
             }
             lastKey = candidate.userKey();

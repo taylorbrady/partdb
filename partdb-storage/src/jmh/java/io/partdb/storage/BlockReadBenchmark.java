@@ -27,27 +27,27 @@ public class BlockReadBenchmark {
 
     @Benchmark
     public Optional<InternalEntry> findFirst(BlockState state) {
-        return state.block.get(state.firstKey, Long.MAX_VALUE);
+        return state.block.get(state.firstKey);
     }
 
     @Benchmark
     public Optional<InternalEntry> findMiddle(BlockState state) {
-        return state.block.get(state.middleKey, Long.MAX_VALUE);
+        return state.block.get(state.middleKey);
     }
 
     @Benchmark
     public Optional<InternalEntry> findLast(BlockState state) {
-        return state.block.get(state.lastKey, Long.MAX_VALUE);
+        return state.block.get(state.lastKey);
     }
 
     @Benchmark
     public Optional<InternalEntry> findMissBefore(BlockState state) {
-        return state.block.get(Slice.EMPTY, Long.MAX_VALUE);
+        return state.block.get(Slice.EMPTY);
     }
 
     @Benchmark
     public Optional<InternalEntry> findMissAfter(BlockState state) {
-        return state.block.get(state.afterLastKey, Long.MAX_VALUE);
+        return state.block.get(state.afterLastKey);
     }
 
     @Benchmark

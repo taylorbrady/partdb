@@ -14,12 +14,22 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 final class Version {
 
+    static final int LEVELS = 7;
+
     private static final Comparator<TableReader> BY_SMALLEST = Comparator.comparing(table -> table.metadata().smallest());
 
     private final TableReader[][] levels;
     private final AtomicInteger refs = new AtomicInteger(1);
 
     private Version(TableReader[][] levels) {
+        for (int level = 1; level < LEVELS; level++) {
+            TableReader[] tables = levels[level];
+            for (int i = 1; i < tables.length; i++) {
+                if (tables[i - 1].metadata().largest().compareTo(tables[i].metadata().smallest()) >= 0) {
+                    throw new IllegalStateException("Tables %d and %d overlap in level %d".formatted(tables[i - 1].id(), tables[i].id(), level));
+                }
+            }
+        }
         this.levels = levels;
         for (TableReader[] level : levels) {
             for (TableReader table : level) {
@@ -28,27 +38,30 @@ final class Version {
         }
     }
 
-    static Version of(List<TableReader> tables, int levelCount) {
-        int count = levelCount;
-        for (TableReader table : tables) {
-            count = Math.max(count, table.metadata().level() + 1);
+    static Version empty() {
+        return of(emptyLevels());
+    }
+
+    static List<List<TableReader>> emptyLevels() {
+        List<List<TableReader>> levels = new ArrayList<>(LEVELS);
+        for (int level = 0; level < LEVELS; level++) {
+            levels.add(new ArrayList<>());
         }
-        List<List<TableReader>> grouped = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            grouped.add(new ArrayList<>());
+        return levels;
+    }
+
+    static Version of(List<List<TableReader>> levels) {
+        if (levels.size() != LEVELS) {
+            throw new IllegalArgumentException("Expected " + LEVELS + " levels, got " + levels.size());
         }
-        for (TableReader table : tables) {
-            grouped.get(table.metadata().level()).add(table);
-        }
-        TableReader[][] levels = new TableReader[count][];
-        for (int i = 0; i < count; i++) {
-            List<TableReader> level = grouped.get(i);
-            if (i > 0) {
-                level.sort(BY_SMALLEST);
+        TableReader[][] sorted = new TableReader[LEVELS][];
+        for (int level = 0; level < LEVELS; level++) {
+            sorted[level] = levels.get(level).toArray(TableReader[]::new);
+            if (level > 0) {
+                Arrays.sort(sorted[level], BY_SMALLEST);
             }
-            levels[i] = level.toArray(TableReader[]::new);
         }
-        return new Version(levels);
+        return new Version(sorted);
     }
 
     Version retain() {
@@ -72,8 +85,8 @@ final class Version {
         }
     }
 
-    int levelCount() {
-        return levels.length;
+    List<TableReader> level(int level) {
+        return List.of(levels[level]);
     }
 
     List<TableReader> tables() {
@@ -85,11 +98,25 @@ final class Version {
     }
 
     List<List<TableMetadata>> metadata() {
-        List<List<TableMetadata>> metadata = new ArrayList<>(levels.length);
+        List<List<TableMetadata>> metadata = new ArrayList<>(LEVELS);
         for (TableReader[] level : levels) {
             metadata.add(Arrays.stream(level).map(TableReader::metadata).toList());
         }
         return metadata;
+    }
+
+    List<Manifest.Placement> placements() {
+        List<Manifest.Placement> placements = new ArrayList<>();
+        for (int level = 0; level < LEVELS; level++) {
+            for (TableReader table : levels[level]) {
+                placements.add(new Manifest.Placement(table.id(), level));
+            }
+        }
+        return placements;
+    }
+
+    int levelZeroCount() {
+        return levels[0].length;
     }
 
     int tableCount() {
@@ -122,22 +149,21 @@ final class Version {
     }
 
     boolean containsAll(Collection<TableReader> tables) {
-        Set<TableReader> present = identitySet(tables());
-        return present.containsAll(tables);
+        return identitySet(tables()).containsAll(tables);
     }
 
-    Optional<InternalEntry> get(Slice key, long index) {
+    Optional<InternalEntry> get(Slice key) {
         for (TableReader table : levels[0]) {
-            Optional<InternalEntry> found = table.get(key, index);
+            Optional<InternalEntry> found = table.get(key);
             if (found.isPresent()) {
                 return found;
             }
         }
-        for (int i = 1; i < levels.length; i++) {
-            TableReader[] level = levels[i];
-            int position = firstEndingAtOrAfter(level, key);
-            if (position < level.length && level[position].metadata().smallest().compareTo(key) <= 0) {
-                Optional<InternalEntry> found = level[position].get(key, index);
+        for (int level = 1; level < LEVELS; level++) {
+            TableReader[] tables = levels[level];
+            int position = firstEndingAtOrAfter(tables, key);
+            if (position < tables.length) {
+                Optional<InternalEntry> found = tables[position].get(key);
                 if (found.isPresent()) {
                     return found;
                 }
@@ -158,52 +184,41 @@ final class Version {
     }
 
     Version withFlushed(TableReader table) {
-        TableReader[][] next = copyLevels();
-        TableReader[] levelZero = new TableReader[next[0].length + 1];
+        TableReader[][] next = levels.clone();
+        TableReader[] levelZero = new TableReader[levels[0].length + 1];
         levelZero[0] = table;
-        System.arraycopy(next[0], 0, levelZero, 1, next[0].length);
+        System.arraycopy(levels[0], 0, levelZero, 1, levels[0].length);
         next[0] = levelZero;
         return new Version(next);
     }
 
     Version withCompaction(Collection<TableReader> removed, List<TableReader> added, int targetLevel) {
         Set<TableReader> gone = identitySet(removed);
-        int count = Math.max(levels.length, targetLevel + 1);
-        TableReader[][] next = new TableReader[count][];
-        for (int i = 0; i < count; i++) {
-            List<TableReader> level = new ArrayList<>();
-            if (i < levels.length) {
-                for (TableReader table : levels[i]) {
-                    if (!gone.contains(table)) {
-                        level.add(table);
-                    }
+        TableReader[][] next = new TableReader[LEVELS][];
+        for (int level = 0; level < LEVELS; level++) {
+            List<TableReader> tables = new ArrayList<>();
+            for (TableReader table : levels[level]) {
+                if (!gone.contains(table)) {
+                    tables.add(table);
                 }
             }
-            if (i == targetLevel) {
-                level.addAll(added);
-                if (i > 0) {
-                    level.sort(BY_SMALLEST);
+            if (level == targetLevel) {
+                tables.addAll(added);
+                if (level > 0) {
+                    tables.sort(BY_SMALLEST);
                 }
             }
-            next[i] = level.toArray(TableReader[]::new);
+            next[level] = tables.toArray(TableReader[]::new);
         }
         return new Version(next);
     }
 
-    private TableReader[][] copyLevels() {
-        TableReader[][] copy = new TableReader[levels.length][];
-        for (int i = 0; i < levels.length; i++) {
-            copy[i] = levels[i].clone();
-        }
-        return copy;
-    }
-
-    private static int firstEndingAtOrAfter(TableReader[] level, Slice key) {
+    private static int firstEndingAtOrAfter(TableReader[] tables, Slice key) {
         int low = 0;
-        int high = level.length;
+        int high = tables.length;
         while (low < high) {
             int mid = (low + high) >>> 1;
-            if (level[mid].metadata().largest().compareTo(key) < 0) {
+            if (tables[mid].metadata().largest().compareTo(key) < 0) {
                 low = mid + 1;
             } else {
                 high = mid;
@@ -212,7 +227,7 @@ final class Version {
         return low;
     }
 
-    private static Set<TableReader> identitySet(Collection<TableReader> tables) {
+    static Set<TableReader> identitySet(Collection<TableReader> tables) {
         Set<TableReader> set = Collections.newSetFromMap(new IdentityHashMap<>());
         set.addAll(tables);
         return set;

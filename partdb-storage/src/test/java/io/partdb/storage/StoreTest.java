@@ -4,8 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 import static io.partdb.storage.Fixtures.bytes;
 import static io.partdb.storage.Fixtures.delete;
@@ -23,38 +23,40 @@ class StoreTest {
     Path directory;
 
     @Test
-    void freshStoreStartsAtIndexZero() {
+    void freshStoreStartsAtRevisionZero() {
         try (Store store = Store.open(directory, StoreOptions.defaults())) {
-            assertEquals(0, store.appliedIndex());
-            assertEquals(0, store.durableIndex());
-            assertTrue(store.get(bytes("missing")).isEmpty());
+            assertEquals(0, store.appliedRevision());
+            assertEquals(0, store.durableRevision());
+            assertNull(value(store, "missing"));
         }
     }
 
     @Test
-    void putsAndDeletesCarryTheirApplyIndexAsRevision() {
+    void putsAndDeletesCarryTheirApplyRevision() {
         try (Store store = Store.open(directory, StoreOptions.defaults())) {
             store.apply(3, List.of(put("a", "one")));
             store.apply(7, List.of(put("a", "two"), put("b", "bee")));
             store.apply(9, List.of(delete("b")));
 
-            KeyValue a = store.get(bytes("a")).orElseThrow();
-            assertEquals("two", a.value().utf8());
-            assertEquals(7, a.revision());
-            assertTrue(store.get(bytes("b")).isEmpty());
-            assertEquals(9, store.appliedIndex());
+            try (Snapshot snapshot = store.snapshot()) {
+                KeyValue a = snapshot.get(bytes("a")).orElseThrow();
+                assertEquals("two", a.value().utf8());
+                assertEquals(7, a.revision());
+                assertTrue(snapshot.get(bytes("b")).isEmpty());
+                assertEquals(9, snapshot.revision());
+            }
         }
     }
 
     @Test
-    void applyRejectsIndexesAtOrBelowTheAppliedIndex() {
+    void applyRejectsRevisionsAtOrBelowTheAppliedRevision() {
         try (Store store = Store.open(directory, StoreOptions.defaults())) {
             store.apply(5, List.of(put("a", "one")));
 
             assertThrows(IllegalArgumentException.class, () -> store.apply(5, List.of(put("a", "two"))));
             assertThrows(IllegalArgumentException.class, () -> store.apply(4, List.of()));
             assertEquals("one", value(store, "a"));
-            assertEquals(5, store.appliedIndex());
+            assertEquals(5, store.appliedRevision());
         }
     }
 
@@ -66,7 +68,7 @@ class StoreTest {
                 () -> store.apply(1, List.of(put("a", "one"), put("b", "two"), delete("a")))
             );
 
-            assertEquals(0, store.appliedIndex());
+            assertEquals(0, store.appliedRevision());
             assertNull(value(store, "a"));
             assertNull(value(store, "b"));
             store.apply(1, List.of(put("b", "two")));
@@ -75,22 +77,22 @@ class StoreTest {
     }
 
     @Test
-    void emptyApplyAdvancesAppliedIndexWithoutChangingData() {
+    void emptyApplyAdvancesTheRevisionWithoutChangingData() {
         try (Store store = Store.open(directory, StoreOptions.defaults())) {
             store.apply(1, List.of(put("a", "one")));
             store.apply(2, List.of());
             store.apply(3, List.of());
 
-            assertEquals(3, store.appliedIndex());
-            assertEquals(1, store.get(bytes("a")).orElseThrow().revision());
+            assertEquals(3, store.appliedRevision());
             try (Snapshot snapshot = store.snapshot()) {
-                assertEquals(3, snapshot.index());
+                assertEquals(3, snapshot.revision());
+                assertEquals(1, snapshot.get(bytes("a")).orElseThrow().revision());
             }
         }
     }
 
     @Test
-    void emptyApplyIsPersistedAsTheDurableIndexAcrossReopen() {
+    void emptyApplyIsPersistedAsTheDurableRevisionAcrossReopen() {
         try (Store store = Store.open(directory, StoreOptions.defaults())) {
             store.apply(1, List.of(put("a", "one")));
             store.apply(2, List.of());
@@ -98,47 +100,65 @@ class StoreTest {
         }
 
         try (Store store = Store.open(directory, StoreOptions.defaults())) {
-            assertEquals(3, store.appliedIndex());
-            assertEquals(3, store.durableIndex());
+            assertEquals(3, store.appliedRevision());
+            assertEquals(3, store.durableRevision());
             assertEquals("one", value(store, "a"));
             store.apply(4, List.of());
         }
 
         try (Store store = Store.open(directory, StoreOptions.defaults())) {
-            assertEquals(4, store.durableIndex());
-            assertEquals(4, store.appliedIndex());
+            assertEquals(4, store.durableRevision());
+            assertEquals(4, store.appliedRevision());
         }
     }
 
     @Test
-    void durableIndexTracksTheAppliedIndexOfFlushedMemtables() {
+    void durableRevisionTracksTheRevisionOfFlushedMemtables() {
         try (Store store = Store.open(directory, Fixtures.NO_COMPACTION)) {
-            long index = Fixtures.fill(store, 0, 400, "value-");
-            store.apply(++index, List.of());
-            Fixtures.await("a flush", () -> store.durableIndex() > 0);
+            long revision = Fixtures.fill(store, 0, 400, "value-");
+            store.apply(++revision, List.of());
+            Fixtures.await("a flush", () -> store.durableRevision() > 0);
 
-            assertTrue(store.durableIndex() <= store.appliedIndex());
+            assertTrue(store.durableRevision() <= store.appliedRevision());
             assertTrue(store.stats().tableCount() > 0);
         }
     }
 
     @Test
     void dataSurvivesReopenAcrossManyTables() {
-        long index;
+        long revision;
         try (Store store = Store.open(directory, Fixtures.SMALL)) {
-            index = Fixtures.fill(store, 0, 2_000, "v");
+            revision = Fixtures.fill(store, 0, 2_000, "v");
             for (int i = 0; i < 2_000; i += 3) {
-                store.apply(++index, List.of(Mutation.delete(bytes(Fixtures.key(i)))));
+                store.apply(++revision, List.of(Mutation.delete(bytes(Fixtures.key(i)))));
             }
         }
 
-        try (Store store = Store.open(directory, Fixtures.SMALL)) {
-            assertEquals(index, store.appliedIndex());
-            assertEquals(index, store.durableIndex());
+        try (Store store = Store.open(directory, Fixtures.SMALL); Snapshot snapshot = store.snapshot()) {
+            assertEquals(revision, store.appliedRevision());
+            assertEquals(revision, store.durableRevision());
             for (int i = 0; i < 2_000; i++) {
                 String expected = i % 3 == 0 ? null : "v" + i;
-                assertEquals(expected, value(store, Fixtures.key(i)), Fixtures.key(i));
+                assertEquals(expected, value(snapshot, Fixtures.key(i)), Fixtures.key(i));
             }
+        }
+    }
+
+    @Test
+    void writesStallAtTheLevelZeroStopTriggerUntilCompactionDrainsIt() {
+        long revision;
+        try (Store store = Store.open(directory, Fixtures.NO_COMPACTION)) {
+            revision = Fixtures.fill(store, 0, 400, "v");
+        }
+        StoreOptions stalling = Fixtures.SMALL.withLevelZeroTriggers(2, 3);
+
+        try (Store store = Store.open(directory, stalling)) {
+            store.apply(++revision, List.of(put("after", "stall")));
+
+            assertEquals(1, store.stats().stalledWriteCount());
+            assertTrue(store.stats().levelZeroTableCount() < 3);
+            assertEquals("stall", value(store, "after"));
+            assertEquals("v7", value(store, Fixtures.key(7)));
         }
     }
 
@@ -161,9 +181,9 @@ class StoreTest {
     @Test
     void scansMergeMemtablesAndTablesInKeyOrder() {
         try (Store store = Store.open(directory, Fixtures.NO_COMPACTION)) {
-            long index = Fixtures.fill(store, 0, 500, "old-");
+            long revision = Fixtures.fill(store, 0, 500, "old-");
             for (int i = 0; i < 500; i += 2) {
-                store.apply(++index, List.of(put(i, "new-" + i)));
+                store.apply(++revision, List.of(put(i, "new-" + i)));
             }
 
             List<KeyValue> entries = Fixtures.entries(store);
@@ -176,14 +196,14 @@ class StoreTest {
     }
 
     @Test
-    void snapshotsKeepTheirReadPointWhileWritesContinue() {
+    void snapshotsKeepTheirRevisionWhileWritesContinue() {
         try (Store store = Store.open(directory, Fixtures.SMALL)) {
             store.apply(1, List.of(put("a", "one"), put("b", "bee")));
             try (Snapshot snapshot = store.snapshot()) {
                 store.apply(2, List.of(put("a", "two"), delete("b"), put("c", "sea")));
                 Fixtures.fill(store, 2, 1_000, "filler-");
 
-                assertEquals(1, snapshot.index());
+                assertEquals(1, snapshot.revision());
                 assertEquals("one", value(snapshot, "a"));
                 assertEquals("bee", value(snapshot, "b"));
                 assertNull(value(snapshot, "c"));
@@ -195,19 +215,29 @@ class StoreTest {
     }
 
     @Test
-    void cursorRemainsUsableAfterItsSnapshotCloses() {
+    void scanRemainsUsableAfterItsSnapshotCloses() {
         try (Store store = Store.open(directory, StoreOptions.defaults())) {
             store.apply(1, List.of(put("a", "1"), put("b", "2")));
-            Cursor cursor;
+            Stream<KeyValue> scan;
             try (Snapshot snapshot = store.snapshot()) {
-                cursor = snapshot.scan(KeyRange.all());
+                scan = snapshot.scan(KeyRange.all());
             }
-            List<String> seen = new ArrayList<>();
-            try (cursor) {
-                cursor.forEachRemaining(entry -> seen.add(entry.key().utf8()));
+            try (scan) {
+                assertEquals(List.of("a", "b"), scan.map(entry -> entry.key().utf8()).toList());
             }
-            assertEquals(List.of("a", "b"), seen);
-            assertThrows(IllegalStateException.class, cursor::hasNext);
+            assertThrows(IllegalStateException.class, scan::toList);
+        }
+    }
+
+    @Test
+    void closedSnapshotRejectsReads() {
+        try (Store store = Store.open(directory, StoreOptions.defaults())) {
+            Snapshot snapshot = store.snapshot();
+            snapshot.close();
+
+            assertThrows(IllegalStateException.class, () -> snapshot.get(bytes("a")));
+            assertThrows(IllegalStateException.class, () -> snapshot.scan(KeyRange.all()));
+            snapshot.close();
         }
     }
 
@@ -217,7 +247,6 @@ class StoreTest {
         store.close();
 
         assertThrows(StoreException.Closed.class, () -> store.apply(1, List.of()));
-        assertThrows(StoreException.Closed.class, () -> store.get(bytes("a")));
         assertThrows(StoreException.Closed.class, store::snapshot);
         store.close();
     }

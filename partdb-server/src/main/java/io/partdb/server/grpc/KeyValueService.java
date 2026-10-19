@@ -18,17 +18,19 @@ import io.partdb.grpc.kv.v1.TxnRequest;
 import io.partdb.grpc.kv.v1.TxnResponse;
 import io.partdb.node.Condition;
 import io.partdb.node.Node;
+import io.partdb.node.Read;
 import io.partdb.node.ReadConsistency;
 import io.partdb.node.Txn;
 import io.partdb.node.TxnResult;
-import io.partdb.storage.Cursor;
 import io.partdb.storage.KeyRange;
 import io.partdb.storage.KeyValue;
 import io.partdb.storage.Mutation;
 
+import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase {
 
@@ -84,21 +86,22 @@ final class KeyValueService extends KeyValueServiceGrpc.KeyValueServiceImplBase 
     public void scan(ScanRequest request, StreamObserver<ScanResponse> responses) {
         var call = (ServerCallStreamObserver<ScanResponse>) responses;
         var flow = new FlowControl(call);
-        Cursor cursor;
+        Read<Stream<KeyValue>> scan;
         try {
             if (request.getLimit() < 0) {
                 throw Calls.invalid("limit must not be negative");
             }
-            cursor = node.scan(range(request), consistency(request.getConsistency()), Calls.timeout());
+            scan = node.scan(range(request), consistency(request.getConsistency()), Calls.timeout());
         } catch (RuntimeException e) {
             responses.onError(Calls.toStatus(e));
             return;
         }
         int remaining = request.getLimit() == 0 ? Integer.MAX_VALUE : request.getLimit();
-        try (cursor) {
+        try (Stream<KeyValue> entries = scan.value()) {
+            Iterator<KeyValue> cursor = entries.iterator();
             boolean first = true;
             while (first || (remaining > 0 && cursor.hasNext())) {
-                var batch = ScanResponse.newBuilder().setReadRevision(cursor.revision());
+                var batch = ScanResponse.newBuilder().setReadRevision(scan.revision());
                 int bytes = 0;
                 while (remaining > 0 && cursor.hasNext() && batch.getEntriesCount() < BATCH_ENTRIES && bytes < BATCH_BYTES) {
                     var entry = proto(cursor.next());

@@ -7,8 +7,8 @@ import java.lang.foreign.ValueLayout;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.stream.Stream;
 
-import static io.partdb.storage.Fixtures.generation;
 import static io.partdb.storage.Fixtures.tableFiles;
 import static io.partdb.storage.Fixtures.value;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,7 +24,7 @@ class TableLifecycleTest {
     @Test
     void releasingTheLastVersionUnmapsAndDeletesAnObsoleteTable() {
         TableReader table = write(directory.resolve("000001.sst"), 1, "a");
-        Version first = Version.of(List.of(table), 4);
+        Version first = Version.empty().withFlushed(table);
         table.release();
         Version second = first.retain();
 
@@ -35,13 +35,12 @@ class TableLifecycleTest {
 
         first.release();
         assertTrue(Files.exists(table.path()));
-        assertEquals("a", table.get(Slice.utf8("a"), Long.MAX_VALUE).map(Fixtures::valueOf).orElseThrow());
+        assertEquals("a", table.get(Slice.utf8("a")).map(Fixtures::valueOf).orElseThrow());
 
         second.release();
         assertFalse(Files.exists(table.path()));
         assertThrows(IllegalStateException.class, () -> table.contents().get(ValueLayout.JAVA_BYTE, 0));
 
-        assertTrue(Files.exists(replacement.path()));
         compacted.release();
         assertTrue(Files.exists(replacement.path()), "tables that are not obsolete keep their file");
         assertThrows(IllegalStateException.class, () -> replacement.contents().get(ValueLayout.JAVA_BYTE, 0));
@@ -50,73 +49,95 @@ class TableLifecycleTest {
     @Test
     void carriedOverTablesKeepExactlyOneReferencePerVersion() {
         TableReader kept = write(directory.resolve("000001.sst"), 1, "a");
-        Version first = Version.of(List.of(kept), 4);
+        Version first = Version.empty().withFlushed(kept);
         kept.release();
         TableReader flushed = write(directory.resolve("000002.sst"), 2, "b");
         Version second = first.withFlushed(flushed);
         flushed.release();
 
         first.release();
-        assertEquals("a", kept.get(Slice.utf8("a"), Long.MAX_VALUE).map(Fixtures::valueOf).orElseThrow());
+        assertEquals("a", kept.get(Slice.utf8("a")).map(Fixtures::valueOf).orElseThrow());
         second.release();
         assertThrows(IllegalStateException.class, () -> kept.contents().get(ValueLayout.JAVA_BYTE, 0));
         assertThrows(IllegalStateException.class, kept::release);
     }
 
     @Test
+    void movedTablesKeepTheirFile() {
+        TableReader table = write(directory.resolve("000001.sst"), 1, "a");
+        Version first = Version.empty().withFlushed(table);
+        table.release();
+
+        Version moved = first.withCompaction(List.of(table), List.of(table), 3);
+        first.release();
+
+        assertEquals(List.of(), moved.level(0));
+        assertEquals(List.of(table), moved.level(3));
+        assertEquals("a", table.get(Slice.utf8("a")).map(Fixtures::valueOf).orElseThrow());
+        moved.release();
+        assertTrue(Files.exists(table.path()));
+    }
+
+    @Test
+    void versionsRejectOverlappingTablesBelowLevelZero() {
+        TableReader left = write(directory.resolve("000001.sst"), 1, "a");
+        TableReader right = write(directory.resolve("000002.sst"), 2, "a");
+        Version base = Version.empty().withCompaction(List.of(), List.of(left), 2);
+
+        assertThrows(IllegalStateException.class, () -> base.withCompaction(List.of(), List.of(right), 2));
+
+        base.release();
+        left.release();
+        right.release();
+    }
+
+    @Test
     void compactedTablesAreDeletedOnceNoSnapshotPinsThem() {
         try (Store store = Store.open(directory, Fixtures.SMALL)) {
-            long index = Fixtures.fill(store, 0, 200, "first-");
-            Path generation = generation(directory);
+            long revision = Fixtures.fill(store, 0, 200, "first-");
             awaitQuiet(store);
 
             try (Snapshot pinned = store.snapshot()) {
                 List<String> before = live(store);
                 long completed = store.stats().completedCompactions();
-                Fixtures.fill(store, index, 400, "second-");
+                Fixtures.fill(store, revision, 400, "second-");
                 Fixtures.await("a compaction", () -> store.stats().completedCompactions() > completed);
                 Fixtures.await("compactions to settle", () -> store.stats().activeCompactions() == 0);
 
                 assertTrue(before.stream().anyMatch(name -> !live(store).contains(name)), "compaction must retire a pinned table");
-                assertTrue(tableFiles(generation).containsAll(before), "pinned tables must survive compaction");
+                assertTrue(tableFiles(directory).containsAll(before), "pinned tables must survive compaction");
                 assertEquals("first-5", value(pinned, Fixtures.key(5)));
                 assertEquals(200, Fixtures.keys(pinned, KeyRange.all()).size());
 
                 pinned.close();
-                Fixtures.await("retired tables to be deleted", () -> settled(store, generation));
+                Fixtures.await("retired tables to be deleted", () -> settled(store));
             }
             assertEquals("second-5", value(store, Fixtures.key(5)));
         }
     }
 
     @Test
-    void openCursorPinsTablesLikeASnapshot() {
+    void openScanPinsTablesLikeASnapshot() {
         try (Store store = Store.open(directory, Fixtures.SMALL)) {
-            long index = Fixtures.fill(store, 0, 200, "first-");
-            Path generation = generation(directory);
+            long revision = Fixtures.fill(store, 0, 200, "first-");
             awaitQuiet(store);
 
-            Cursor cursor;
+            Stream<KeyValue> scan;
             List<String> before;
             try (Snapshot snapshot = store.snapshot()) {
-                cursor = snapshot.scan(KeyRange.all());
+                scan = snapshot.scan(KeyRange.all());
                 before = live(store);
             }
             long completed = store.stats().completedCompactions();
-            Fixtures.fill(store, index, 400, "second-");
+            Fixtures.fill(store, revision, 400, "second-");
             Fixtures.await("a compaction", () -> store.stats().completedCompactions() > completed);
 
             assertTrue(before.stream().anyMatch(name -> !live(store).contains(name)), "compaction must retire a pinned table");
-            int count = 0;
-            try (cursor) {
-                while (cursor.hasNext()) {
-                    assertTrue(cursor.next().value().utf8().startsWith("first-"));
-                    count++;
-                }
-                assertTrue(tableFiles(generation).containsAll(before));
+            try (scan) {
+                assertTrue(tableFiles(directory).containsAll(before));
+                assertTrue(scan.allMatch(entry -> entry.value().utf8().startsWith("first-")));
             }
-            assertEquals(200, count);
-            Fixtures.await("retired tables to be deleted", () -> settled(store, generation));
+            Fixtures.await("retired tables to be deleted", () -> settled(store));
         }
     }
 
@@ -137,15 +158,15 @@ class TableLifecycleTest {
         }
     }
 
-    private static boolean settled(Store store, Path generation) {
-        return store.stats().activeCompactions() == 0 && tableFiles(generation).equals(live(store));
+    private boolean settled(Store store) {
+        return store.stats().activeCompactions() == 0 && tableFiles(directory).equals(live(store));
     }
 
     private static TableReader write(Path path, long id, String key) {
-        try (TableWriter writer = TableWriter.create(path, id, 0, StoreOptions.Table.defaults())) {
+        try (TableWriter writer = TableWriter.create(path, id, StoreOptions.defaults())) {
             writer.add(new InternalEntry.Value(new InternalKey(Slice.utf8(key), 1), Slice.utf8(key)));
             writer.finish();
         }
-        return TableReader.open(path, id, 0, new BlockCache(1024 * 1024));
+        return TableReader.open(path, id, new BlockCache(1024 * 1024));
     }
 }

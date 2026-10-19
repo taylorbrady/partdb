@@ -1,8 +1,6 @@
 package io.partdb.storage;
 
 import io.partdb.bytes.Bytes;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -16,40 +14,41 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.UnaryOperator;
 
 public final class Store implements AutoCloseable {
 
-    private static final Logger log = LoggerFactory.getLogger(Store.class);
+    private static final long STALL_RECHECK_MILLIS = 100;
 
-    private final Path root;
+    private final StoreDirectory directory;
     private final StoreOptions options;
     private final BlockCache cache;
     private final AtomicReference<ReadState> current;
     private final ReentrantLock stateLock = new ReentrantLock();
+    private final Condition versionChanged = stateLock.newCondition();
     private final ReentrantLock editLock = new ReentrantLock();
     private final Flusher flusher;
     private final Compactor compactor;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicLong stalledWrites = new AtomicLong();
     private final AtomicLong checkpoints = new AtomicLong();
     private final AtomicLong restores = new AtomicLong();
     private volatile Duration lastCheckpoint = Duration.ZERO;
     private volatile Duration lastRestore = Duration.ZERO;
-    private volatile Generation generation;
-    private volatile long durableIndex;
+    private volatile long durableRevision;
 
-    private Store(Path root, StoreOptions options, BlockCache cache, Generation generation, long durableIndex, Version version) {
-        this.root = root;
+    private Store(StoreDirectory directory, StoreOptions options, BlockCache cache, long durableRevision, Version version) {
+        this.directory = directory;
         this.options = options;
         this.cache = cache;
-        this.generation = generation;
-        this.durableIndex = durableIndex;
-        this.current = new AtomicReference<>(new ReadState(durableIndex, new Memtable(durableIndex), List.of(), version));
+        this.durableRevision = durableRevision;
+        this.current = new AtomicReference<>(new ReadState(durableRevision, new Memtable(durableRevision), List.of(), version));
         this.flusher = new Flusher(this::flush);
         this.compactor = new Compactor(this, options);
     }
@@ -57,66 +56,58 @@ public final class Store implements AutoCloseable {
     public static Store open(Path directory, StoreOptions options) {
         Objects.requireNonNull(directory, "directory must not be null");
         Objects.requireNonNull(options, "options must not be null");
-        Generation.Recovered recovered = Generation.recover(directory);
-        BlockCache cache = new BlockCache(options.blockCacheMaxBytes());
+        StoreDirectory.Opened opened = StoreDirectory.open(directory);
+        BlockCache cache = new BlockCache(options.blockCacheBytes());
+        Manifest manifest = opened.manifest();
+        List<List<TableReader>> levels = Version.emptyLevels();
         List<TableReader> tables = new ArrayList<>();
         Version version;
         try {
-            for (Manifest.Placement placement : recovered.manifest().tables()) {
-                Path path = recovered.generation().tablePath(placement.id());
-                tables.add(TableReader.open(path, placement.id(), placement.level(), cache));
+            for (Manifest.Placement placement : manifest.tables()) {
+                TableReader table = TableReader.open(opened.directory().tablePath(placement.id()), placement.id(), cache);
+                tables.add(table);
+                levels.get(placement.level()).add(table);
             }
-            version = Version.of(tables, options.compaction().maxLevels());
+            version = Version.of(levels);
         } finally {
             tables.forEach(TableReader::release);
         }
-        Store store = new Store(directory, options, cache, recovered.generation(), recovered.manifest().durableIndex(), version);
+        Store store = new Store(opened.directory(), options, cache, manifest.durableRevision(), version);
         store.compactor.request();
         return store;
     }
 
-    public long appliedIndex() {
-        return current.get().index();
+    public long appliedRevision() {
+        return current.get().revision();
     }
 
-    public long durableIndex() {
-        return durableIndex;
+    public long durableRevision() {
+        return durableRevision;
     }
 
-    public void apply(long index, List<Mutation> mutations) {
+    public void apply(long revision, List<Mutation> mutations) {
         Objects.requireNonNull(mutations, "mutations must not be null");
         ensureOpen();
         flusher.throwIfFailed();
-        ReadState state = current.get();
-        if (index <= state.index()) {
-            throw new IllegalArgumentException(
-                "index %d must be greater than applied index %d".formatted(index, state.index())
-            );
+        long applied = current.get().revision();
+        if (revision <= applied) {
+            throw new IllegalArgumentException("revision %d must be greater than applied revision %d".formatted(revision, applied));
         }
         requireUniqueKeys(mutations);
-        Memtable active = state.active();
+        awaitLevelZeroCapacity();
+        Memtable active = current.get().active();
         for (Mutation mutation : mutations) {
-            active.put(InternalEntry.of(mutation, index));
+            active.put(InternalEntry.of(mutation, revision));
         }
-        active.advanceTo(index);
-        publish(previous -> previous.advancedTo(index));
-        if (active.sizeBytes() >= options.memtableMaxBytes()) {
+        active.advanceTo(revision);
+        publish(previous -> previous.advancedTo(revision));
+        if (active.sizeBytes() >= options.memtableBytes()) {
             rotate();
         }
     }
 
-    public Optional<KeyValue> get(Bytes key) {
-        Objects.requireNonNull(key, "key must not be null");
-        ReadState state = pin();
-        try {
-            return state.find(Slice.of(key)).flatMap(InternalEntry::visible);
-        } finally {
-            state.release();
-        }
-    }
-
     public Snapshot snapshot() {
-        return new StoreSnapshot(pin());
+        return new Snapshot(pin());
     }
 
     public long checkpoint(OutputStream target) {
@@ -128,10 +119,13 @@ public final class Store implements AutoCloseable {
             unflushed = unflushed(state);
             List<Checkpoint.Part> parts = new ArrayList<>();
             unflushed.ifPresent(table -> parts.add(new Checkpoint.Part(0, table.contents())));
-            for (TableReader table : state.version().tables()) {
-                parts.add(new Checkpoint.Part(table.metadata().level(), table.contents()));
+            Version version = state.version();
+            for (int level = 0; level < Version.LEVELS; level++) {
+                for (TableReader table : version.level(level)) {
+                    parts.add(new Checkpoint.Part(level, table.contents()));
+                }
             }
-            Checkpoint.write(target, state.index(), parts);
+            Checkpoint.write(target, state.revision(), parts);
         } catch (IOException e) {
             throw new StoreException.IO("Failed to write checkpoint", e);
         } finally {
@@ -140,7 +134,7 @@ public final class Store implements AutoCloseable {
         }
         checkpoints.incrementAndGet();
         lastCheckpoint = Duration.ofNanos(System.nanoTime() - started);
-        return state.index();
+        return state.revision();
     }
 
     public long restore(InputStream checkpoint) {
@@ -148,60 +142,50 @@ public final class Store implements AutoCloseable {
         ensureOpen();
         long started = System.nanoTime();
         flusher.awaitIdle();
-        long index;
+        long revision;
         editLock.lock();
         try {
-            Generation staged = Generation.stage(root);
-            Checkpoint.Restored restored;
+            Checkpoint.Restored restored = Checkpoint.read(checkpoint, directory, cache);
+            revision = restored.revision();
             try {
-                restored = Checkpoint.read(checkpoint, staged, cache, options.compaction().maxLevels());
+                directory.commit(revision, restored.version());
             } catch (RuntimeException e) {
-                discard(staged, e);
-                throw e;
-            }
-            try {
-                staged.activate();
-            } catch (RuntimeException e) {
+                restored.version().tables().forEach(TableReader::markObsolete);
                 restored.version().release();
                 throw e;
             }
-
-            Generation previous = generation;
             ReadState replaced;
             stateLock.lock();
             try {
                 replaced = current.get();
-                current.set(new ReadState(restored.index(), new Memtable(restored.index()), List.of(), restored.version()));
-                generation = staged;
-                durableIndex = restored.index();
+                current.set(new ReadState(revision, new Memtable(revision), List.of(), restored.version()));
+                durableRevision = revision;
+                versionChanged.signalAll();
             } finally {
                 stateLock.unlock();
             }
             replaced.version().tables().forEach(TableReader::markObsolete);
             replaced.release();
-            try {
-                previous.delete();
-            } catch (StoreException e) {
-                log.atWarn().setCause(e).log("Failed to delete replaced storage generation");
-            }
-            index = restored.index();
         } finally {
             editLock.unlock();
         }
         restores.incrementAndGet();
         lastRestore = Duration.ofNanos(System.nanoTime() - started);
         compactor.request();
-        return index;
+        return revision;
     }
 
     public StoreStats stats() {
         ReadState state = pin();
         try {
+            Version version = state.version();
             return new StoreStats(
                 state.active().sizeBytes(),
                 state.frozen().size(),
-                state.version().tableCount(),
-                state.version().sizeBytes(),
+                version.levelZeroCount(),
+                version.tableCount(),
+                version.sizeBytes(),
+                stalledWrites.get(),
                 compactor.active(),
                 compactor.completed(),
                 compactor.failed(),
@@ -223,7 +207,7 @@ public final class Store implements AutoCloseable {
         }
         try {
             ReadState state = current.get();
-            if (!state.active().isEmpty() || state.index() > durableIndex) {
+            if (!state.active().isEmpty() || state.revision() > durableRevision) {
                 rotate();
             }
             flusher.awaitIdle();
@@ -232,11 +216,6 @@ public final class Store implements AutoCloseable {
             flusher.close();
             current.get().release();
         }
-    }
-
-    ReadState pin() {
-        ensureOpen();
-        return acquire();
     }
 
     ReadState acquire() {
@@ -248,24 +227,25 @@ public final class Store implements AutoCloseable {
         }
     }
 
-    Generation generation() {
-        return generation;
+    StoreDirectory directory() {
+        return directory;
     }
 
     BlockCache cache() {
         return cache;
     }
 
-    boolean installCompaction(List<TableReader> inputs, List<TableReader> outputs, int targetLevel) {
+    boolean installCompaction(List<TableReader> removed, List<TableReader> added, int targetLevel) {
         editLock.lock();
         try {
             Version base = current.get().version();
-            if (!base.containsAll(inputs)) {
+            if (!base.containsAll(removed)) {
                 return false;
             }
-            Version next = base.withCompaction(inputs, outputs, targetLevel);
-            commit(generation, durableIndex, next);
-            inputs.forEach(TableReader::markObsolete);
+            Version next = base.withCompaction(removed, added, targetLevel);
+            commit(durableRevision, next);
+            Set<TableReader> kept = Version.identitySet(added);
+            removed.stream().filter(table -> !kept.contains(table)).forEach(TableReader::markObsolete);
             publish(state -> state.withVersion(next));
             return true;
         } finally {
@@ -273,19 +253,46 @@ public final class Store implements AutoCloseable {
         }
     }
 
+    private ReadState pin() {
+        ensureOpen();
+        return acquire();
+    }
+
+    private void awaitLevelZeroCapacity() {
+        if (current.get().version().levelZeroCount() < options.levelZeroStopTrigger()) {
+            return;
+        }
+        stalledWrites.incrementAndGet();
+        while (current.get().version().levelZeroCount() >= options.levelZeroStopTrigger()) {
+            ensureOpen();
+            flusher.throwIfFailed();
+            compactor.request();
+            stateLock.lock();
+            try {
+                if (current.get().version().levelZeroCount() >= options.levelZeroStopTrigger()) {
+                    versionChanged.await(STALL_RECHECK_MILLIS, TimeUnit.MILLISECONDS);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new StoreException.IO("Interrupted waiting for level zero compaction", e);
+            } finally {
+                stateLock.unlock();
+            }
+        }
+    }
+
     private void flush(Memtable memtable) {
-        Generation target = generation;
         Optional<TableReader> table = Optional.empty();
         try {
             if (!memtable.isEmpty()) {
-                table = Optional.of(writeLevelZero(target, memtable));
+                table = Optional.of(writeLevelZero(memtable));
             }
             editLock.lock();
             try {
                 Version base = current.get().version();
                 Version next = table.isPresent() ? base.withFlushed(table.get()) : base.retain();
-                commit(target, memtable.appliedIndex(), next);
-                durableIndex = memtable.appliedIndex();
+                commit(memtable.revision(), next);
+                durableRevision = memtable.revision();
                 publish(state -> state.flushed(memtable, next));
             } finally {
                 editLock.unlock();
@@ -299,43 +306,42 @@ public final class Store implements AutoCloseable {
         compactor.request();
     }
 
-    private TableReader writeLevelZero(Generation target, Memtable memtable) {
-        long id = target.allocateTableId();
-        Path path = target.tablePath(id);
-        try (TableWriter writer = TableWriter.create(path, id, 0, options.table())) {
-            Iterator<InternalEntry> entries = new LatestIterator(memtable.scan(Bounds.ALL), Long.MAX_VALUE, false);
-            while (entries.hasNext()) {
-                writer.add(entries.next());
-            }
-            writer.finish();
-        }
-        Disk.syncDirectory(target.directory());
-        return TableReader.open(path, id, 0, cache);
+    private TableReader writeLevelZero(Memtable memtable) {
+        long id = directory.allocateTableId();
+        Path path = directory.tablePath(id);
+        write(path, id, new LatestIterator(memtable.scan(Bounds.ALL), Long.MAX_VALUE, false));
+        directory.sync();
+        return TableReader.open(path, id, cache);
     }
 
     private Optional<TableReader> unflushed(ReadState state) {
         List<Iterator<InternalEntry>> sources = new ArrayList<>();
         sources.add(state.active().scan(Bounds.ALL));
         state.frozen().forEach(memtable -> sources.add(memtable.scan(Bounds.ALL)));
-        Iterator<InternalEntry> entries = new LatestIterator(new MergingIterator(sources), state.index(), false);
+        Iterator<InternalEntry> entries = new LatestIterator(new MergingIterator(sources), state.revision(), false);
         if (!entries.hasNext()) {
             return Optional.empty();
         }
-        Path path = root.resolve("checkpoint-" + UUID.randomUUID() + Disk.TEMPORARY_SUFFIX);
-        try (TableWriter writer = TableWriter.create(path, 1, 0, options.table())) {
+        long id = directory.allocateTableId();
+        Path path = directory.temporaryPath("checkpoint");
+        write(path, id, entries);
+        TableReader table = TableReader.open(path, id, cache);
+        table.markObsolete();
+        return Optional.of(table);
+    }
+
+    private void write(Path path, long id, Iterator<InternalEntry> entries) {
+        try (TableWriter writer = TableWriter.create(path, id, options)) {
             while (entries.hasNext()) {
                 writer.add(entries.next());
             }
             writer.finish();
         }
-        TableReader table = TableReader.open(path, 1, 0, cache);
-        table.markObsolete();
-        return Optional.of(table);
     }
 
-    private void commit(Generation target, long durable, Version next) {
+    private void commit(long durable, Version next) {
         try {
-            target.commit(Manifest.of(durable, target.nextTableId(), next));
+            directory.commit(durable, next);
         } catch (RuntimeException e) {
             next.release();
             throw e;
@@ -355,6 +361,7 @@ public final class Store implements AutoCloseable {
         try {
             previous = current.get();
             current.set(transition.apply(previous));
+            versionChanged.signalAll();
         } finally {
             stateLock.unlock();
         }
@@ -374,14 +381,6 @@ public final class Store implements AutoCloseable {
             if (!keys.add(mutation.key())) {
                 throw new IllegalArgumentException("Duplicate key in one apply: " + mutation.key());
             }
-        }
-    }
-
-    private static void discard(Generation staged, RuntimeException failure) {
-        try {
-            staged.delete();
-        } catch (StoreException e) {
-            failure.addSuppressed(e);
         }
     }
 }

@@ -50,11 +50,11 @@ final class TableReader {
         this.cache = cache;
     }
 
-    static TableReader open(Path path, long id, int level, BlockCache cache) {
+    static TableReader open(Path path, long id, BlockCache cache) {
         Arena arena = Arena.ofShared();
         try (var channel = FileChannel.open(path, StandardOpenOption.READ)) {
             MemorySegment segment = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size(), arena);
-            return parse(path, id, level, cache, arena, segment);
+            return parse(path, id, cache, arena, segment);
         } catch (IOException e) {
             arena.close();
             throw new StoreException.IO("Failed to open table " + path, e);
@@ -64,7 +64,7 @@ final class TableReader {
         }
     }
 
-    private static TableReader parse(Path path, long id, int level, BlockCache cache, Arena arena, MemorySegment segment) {
+    private static TableReader parse(Path path, long id, BlockCache cache, Arena arena, MemorySegment segment) {
         long size = segment.byteSize();
         Encoding.check(size >= TableWriter.HEADER_SIZE + TableWriter.FOOTER_FIXED_SIZE, "Table too small: " + path);
         Encoding.check(segment.get(Encoding.INT, 0) == TableWriter.MAGIC, "Invalid table magic: " + path);
@@ -88,16 +88,17 @@ final class TableReader {
         long indexOffset = footer.get(Encoding.LONG, 12);
         int indexSize = footer.get(Encoding.INT, 20);
         int blockCount = footer.get(Encoding.INT, 24);
-        int metaCrc = footer.get(Encoding.INT, 36);
-        int smallestLength = footer.get(Encoding.INT, 40);
-        Encoding.check(smallestLength >= 0 && 44L + smallestLength <= footerSize, "Invalid table smallest key: " + path);
-        Slice smallest = Slice.wrap(footer.asSlice(44, smallestLength)).copy();
-        int largestLength = footer.get(Encoding.INT, 44L + smallestLength);
+        long tombstones = footer.get(Encoding.LONG, 36);
+        int metaCrc = footer.get(Encoding.INT, 44);
+        int smallestLength = footer.get(Encoding.INT, 48);
+        Encoding.check(smallestLength >= 0 && 52L + smallestLength <= footerSize, "Invalid table smallest key: " + path);
+        Slice smallest = Slice.wrap(footer.asSlice(52, smallestLength)).copy();
+        int largestLength = footer.get(Encoding.INT, 52L + smallestLength);
         Encoding.check(
             largestLength >= 0 && TableWriter.FOOTER_FIXED_SIZE + smallestLength + (long) largestLength == footerSize,
             "Invalid table largest key: " + path
         );
-        Slice largest = Slice.wrap(footer.asSlice(48L + smallestLength, largestLength)).copy();
+        Slice largest = Slice.wrap(footer.asSlice(56L + smallestLength, largestLength)).copy();
 
         Encoding.check(
             bloomOffset == indexOffset - bloomSize && bloomOffset >= TableWriter.HEADER_SIZE && indexOffset + indexSize == footerOffset,
@@ -111,7 +112,7 @@ final class TableReader {
             BlockIndex.Handle handle = index.get(i);
             Encoding.check(handle.offset() + handle.size() <= bloomOffset, "Table block exceeds data region: " + path);
         }
-        var metadata = new TableMetadata(id, level, smallest, largest, size);
+        var metadata = new TableMetadata(id, smallest, largest, size, tombstones);
         return new TableReader(path, metadata, arena, segment, bloom, index, cache);
     }
 
@@ -131,12 +132,12 @@ final class TableReader {
         return segment;
     }
 
-    Optional<InternalEntry> get(Slice key, long index) {
+    Optional<InternalEntry> get(Slice key) {
         if (!metadata.contains(key) || !bloom.mightContain(key)) {
             return Optional.empty();
         }
-        int position = this.index.find(key);
-        return position < 0 ? Optional.empty() : block(position).get(key, index);
+        int position = index.find(key);
+        return position < 0 ? Optional.empty() : block(position).get(key);
     }
 
     Iterator<InternalEntry> scan(Bounds bounds) {
@@ -194,9 +195,7 @@ final class TableReader {
 
         private Scan(Bounds bounds) {
             this.bounds = bounds;
-            if (bounds.start() == null) {
-                position = 0;
-            } else {
+            if (bounds.start() != null) {
                 position = Math.max(0, index.find(bounds.start()));
                 if (position < index.size()) {
                     current = block(position++).seek(bounds.start());

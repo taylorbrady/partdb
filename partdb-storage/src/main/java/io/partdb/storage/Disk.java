@@ -7,7 +7,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -61,19 +60,6 @@ final class Disk {
     static void delete(Path path) {
         try {
             Files.deleteIfExists(path);
-        } catch (IOException e) {
-            throw new StoreException.IO("Failed to delete " + path, e);
-        }
-    }
-
-    static void deleteRecursively(Path path) {
-        if (!Files.exists(path)) {
-            return;
-        }
-        try (Stream<Path> paths = Files.walk(path)) {
-            for (Path each : paths.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(each);
-            }
         } catch (IOException e) {
             throw new StoreException.IO("Failed to delete " + path, e);
         }

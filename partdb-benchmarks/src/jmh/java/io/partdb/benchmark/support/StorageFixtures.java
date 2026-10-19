@@ -1,11 +1,14 @@
 package io.partdb.benchmark.support;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.storage.KeyValue;
 import io.partdb.storage.Mutation;
+import io.partdb.storage.Snapshot;
 import io.partdb.storage.StoreOptions;
 import io.partdb.storage.Store;
 
 import java.util.List;
+import java.util.Optional;
 
 public final class StorageFixtures {
 
@@ -20,10 +23,19 @@ public final class StorageFixtures {
 
     public static StoreOptions compactionOptions(StoreOptions.Compression compression) {
         return StoreOptions.defaults()
-            .withMemtableMaxBytes(256L * KIB)
-            .withBlockCacheMaxBytes(0)
-            .withTable(StoreOptions.Table.defaults().withBlockSizeBytes(16 * KIB).withCompression(compression))
-            .withCompaction(new StoreOptions.Compaction(256L * KIB, 1, 2, 512L * KIB, 4, 5));
+            .withMemtableBytes(256L * KIB)
+            .withBlockCacheBytes(0)
+            .withBlockBytes(16 * KIB)
+            .withCompression(compression)
+            .withTargetTableBytes(256L * KIB)
+            .withLevelZeroTriggers(2, 12)
+            .withCompactionConcurrency(1);
+    }
+
+    public static Optional<KeyValue> get(Store store, Bytes key) {
+        try (Snapshot snapshot = store.snapshot()) {
+            return snapshot.get(key);
+        }
     }
 
     public static long populate(Store store, Bytes[] keys, Bytes value, long startingRevision) {

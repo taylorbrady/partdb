@@ -5,7 +5,6 @@ import io.partdb.raft.Membership;
 import io.partdb.raft.runtime.RaftRuntime;
 import io.partdb.raft.runtime.RaftStatus;
 import io.partdb.raft.runtime.RaftTransport;
-import io.partdb.storage.Cursor;
 import io.partdb.storage.KeyRange;
 import io.partdb.storage.KeyValue;
 import io.partdb.storage.Mutation;
@@ -21,6 +20,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 public final class Node implements AutoCloseable {
 
@@ -55,7 +55,7 @@ public final class Node implements AutoCloseable {
         return stateMachine.get(key);
     }
 
-    public Cursor scan(KeyRange range, ReadConsistency consistency, Duration timeout) {
+    public Read<Stream<KeyValue>> scan(KeyRange range, ReadConsistency consistency, Duration timeout) {
         Objects.requireNonNull(range, "range must not be null");
         barrier(consistency, timeout);
         return stateMachine.scan(range);

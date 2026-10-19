@@ -2,54 +2,66 @@ package io.partdb.storage;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
 final class CompactionPlanner {
 
-    record Task(
+    static final int LEVEL_MULTIPLIER = 10;
+    static final int GRANDPARENT_OVERLAP_FACTOR = 10;
+
+    sealed interface Task {
+        List<TableMetadata> inputs();
+
+        int sourceLevel();
+
+        int targetLevel();
+
+        double score();
+    }
+
+    record Move(TableMetadata table, int sourceLevel, int targetLevel, double score) implements Task {
+        @Override
+        public List<TableMetadata> inputs() {
+            return List.of(table);
+        }
+    }
+
+    record Merge(
         List<TableMetadata> inputs,
         List<TableMetadata> grandparents,
         int sourceLevel,
         int targetLevel,
         boolean dropTombstones,
         double score
-    ) {
-        Task {
+    ) implements Task {
+        Merge {
             inputs = List.copyOf(inputs);
             grandparents = List.copyOf(grandparents);
         }
-
-        Slice smallest() {
-            return inputs.stream().map(TableMetadata::smallest).min(Comparator.naturalOrder()).orElseThrow();
-        }
-
-        Slice largest() {
-            return inputs.stream().map(TableMetadata::largest).max(Comparator.naturalOrder()).orElseThrow();
-        }
     }
 
-    private final StoreOptions.Compaction options;
-    private final Map<Integer, Integer> cursors = new HashMap<>();
+    private final int levelZeroTrigger;
+    private final long levelBaseBytes;
+    private final long maxGrandparentOverlap;
 
-    CompactionPlanner(StoreOptions.Compaction options) {
-        this.options = options;
+    CompactionPlanner(int levelZeroTrigger, long levelBaseBytes, long targetTableBytes) {
+        this.levelZeroTrigger = levelZeroTrigger;
+        this.levelBaseBytes = levelBaseBytes;
+        this.maxGrandparentOverlap = targetTableBytes * GRANDPARENT_OVERLAP_FACTOR;
     }
 
     List<Task> plan(List<List<TableMetadata>> levels, Set<Long> busy) {
-        if (options.maxLevels() <= 1) {
-            return List.of();
-        }
+        int bottom = levels.size() - 1;
+        int base = baseLevel(levels);
         List<Task> candidates = new ArrayList<>();
-        levelZero(levels, busy).ifPresent(candidates::add);
-        for (int level = 1; level < options.maxLevels() - 1 && level < levels.size(); level++) {
-            deeper(levels, level, busy).ifPresent(candidates::add);
+        levelZero(levels, base, busy).ifPresent(candidates::add);
+        for (int level = base; level < bottom; level++) {
+            deeper(levels, level, targetBytes(levels, level), busy).ifPresent(candidates::add);
         }
-        candidates.sort(Comparator.comparingDouble(Task::score).reversed().thenComparingInt(Task::sourceLevel));
+        candidates.sort(Comparator.comparingDouble(Task::score).reversed());
 
         List<Task> tasks = new ArrayList<>();
         Set<Long> used = new HashSet<>(busy);
@@ -62,48 +74,82 @@ final class CompactionPlanner {
         return tasks;
     }
 
-    private Optional<Task> levelZero(List<List<TableMetadata>> levels, Set<Long> busy) {
-        List<TableMetadata> files = available(levels, 0, busy);
-        if (files.size() < options.levelZeroTrigger()) {
-            return Optional.empty();
-        }
-        List<TableMetadata> batch = files.subList(files.size() - options.levelZeroTrigger(), files.size());
-        return Optional.of(task(levels, batch, 0, (double) files.size() / options.levelZeroTrigger(), busy));
-    }
-
-    private Optional<Task> deeper(List<List<TableMetadata>> levels, int level, Set<Long> busy) {
-        long size = levels.get(level).stream().mapToLong(TableMetadata::sizeBytes).sum();
-        long limit = options.maxBytesForLevel(level);
-        List<TableMetadata> files = available(levels, level, busy);
-        if (size <= limit || files.isEmpty()) {
-            return Optional.empty();
-        }
-        List<TableMetadata> next = available(levels, level + 1, busy);
-        int start = Math.floorMod(cursors.merge(level, 1, Integer::sum) - 1, files.size());
-        TableMetadata seed = files.get(start);
-        long seedOverlap = Long.MAX_VALUE;
-        for (int offset = 0; offset < files.size(); offset++) {
-            TableMetadata candidate = files.get((start + offset) % files.size());
-            long overlap = overlapping(List.of(candidate), next).stream().mapToLong(TableMetadata::sizeBytes).sum();
-            if (overlap < seedOverlap) {
-                seed = candidate;
-                seedOverlap = overlap;
+    int baseLevel(List<List<TableMetadata>> levels) {
+        int bottom = levels.size() - 1;
+        int base = bottom;
+        for (int level = 1; level < bottom; level++) {
+            if (!levels.get(level).isEmpty()) {
+                base = level;
+                break;
             }
         }
-        return Optional.of(task(levels, List.of(seed), level, (double) size / limit, busy));
+        long target = largestLevelBytes(levels);
+        for (int level = bottom; level > base; level--) {
+            target /= LEVEL_MULTIPLIER;
+        }
+        while (base > 1 && target > levelBaseBytes) {
+            base--;
+            target /= LEVEL_MULTIPLIER;
+        }
+        return base;
     }
 
-    private Task task(List<List<TableMetadata>> levels, List<TableMetadata> sources, int sourceLevel, double score, Set<Long> busy) {
-        int targetLevel = sourceLevel + 1;
+    long targetBytes(List<List<TableMetadata>> levels, int level) {
+        long target = largestLevelBytes(levels);
+        for (int i = levels.size() - 1; i > level; i--) {
+            target /= LEVEL_MULTIPLIER;
+        }
+        return Math.max(target, levelBaseBytes);
+    }
+
+    private Optional<Task> levelZero(List<List<TableMetadata>> levels, int base, Set<Long> busy) {
+        List<TableMetadata> files = levels.getFirst();
+        if (files.size() < levelZeroTrigger || anyBusy(files, busy)) {
+            return Optional.empty();
+        }
+        return task(levels, files, 0, base, (double) files.size() / levelZeroTrigger, busy);
+    }
+
+    private Optional<Task> deeper(List<List<TableMetadata>> levels, int level, long target, Set<Long> busy) {
+        List<TableMetadata> files = levels.get(level);
+        long size = bytes(files);
+        if (size <= target) {
+            return Optional.empty();
+        }
+        List<TableMetadata> next = levels.get(level + 1);
+        TableMetadata seed = null;
+        double seedRatio = Double.MAX_VALUE;
+        for (TableMetadata file : files) {
+            List<TableMetadata> overlap = overlapping(List.of(file), next);
+            if (busy.contains(file.id()) || anyBusy(overlap, busy)) {
+                continue;
+            }
+            double ratio = (double) bytes(overlap) / Math.max(1, file.sizeBytes());
+            if (ratio < seedRatio) {
+                seed = file;
+                seedRatio = ratio;
+            }
+        }
+        return seed == null ? Optional.empty() : task(levels, List.of(seed), level, level + 1, (double) size / target, busy);
+    }
+
+    private Optional<Task> task(List<List<TableMetadata>> levels, List<TableMetadata> sources, int sourceLevel, int targetLevel, double score, Set<Long> busy) {
+        List<TableMetadata> overlap = overlapping(sources, levels.get(targetLevel));
+        if (anyBusy(overlap, busy)) {
+            return Optional.empty();
+        }
         List<TableMetadata> inputs = new ArrayList<>(sources);
-        inputs.addAll(overlapping(sources, available(levels, targetLevel, busy)));
-        List<TableMetadata> grandparents = targetLevel + 1 < levels.size()
-            ? overlapping(inputs, levels.get(targetLevel + 1))
-            : List.of();
-        return new Task(inputs, grandparents, sourceLevel, targetLevel, isBottom(levels, inputs, targetLevel), score);
+        inputs.addAll(overlap);
+        List<TableMetadata> grandparents = targetLevel + 1 < levels.size() ? overlapping(inputs, levels.get(targetLevel + 1)) : List.of();
+        boolean bottommost = bottommost(levels, inputs, targetLevel);
+        if (sources.size() == 1 && overlap.isEmpty() && bytes(grandparents) <= maxGrandparentOverlap
+            && (!bottommost || sources.getFirst().tombstones() == 0)) {
+            return Optional.of(new Move(sources.getFirst(), sourceLevel, targetLevel, score));
+        }
+        return Optional.of(new Merge(inputs, grandparents, sourceLevel, targetLevel, bottommost, score));
     }
 
-    private static boolean isBottom(List<List<TableMetadata>> levels, List<TableMetadata> inputs, int targetLevel) {
+    private static boolean bottommost(List<List<TableMetadata>> levels, List<TableMetadata> inputs, int targetLevel) {
         for (int level = targetLevel + 1; level < levels.size(); level++) {
             if (!overlapping(inputs, levels.get(level)).isEmpty()) {
                 return false;
@@ -112,11 +158,20 @@ final class CompactionPlanner {
         return true;
     }
 
-    private static List<TableMetadata> available(List<List<TableMetadata>> levels, int level, Set<Long> busy) {
-        if (level >= levels.size()) {
-            return List.of();
+    private static long largestLevelBytes(List<List<TableMetadata>> levels) {
+        long largest = 0;
+        for (int level = 1; level < levels.size(); level++) {
+            largest = Math.max(largest, bytes(levels.get(level)));
         }
-        return levels.get(level).stream().filter(table -> !busy.contains(table.id())).toList();
+        return largest;
+    }
+
+    private static long bytes(List<TableMetadata> tables) {
+        return tables.stream().mapToLong(TableMetadata::sizeBytes).sum();
+    }
+
+    private static boolean anyBusy(List<TableMetadata> tables, Set<Long> busy) {
+        return tables.stream().anyMatch(table -> busy.contains(table.id()));
     }
 
     private static List<TableMetadata> overlapping(List<TableMetadata> sources, List<TableMetadata> candidates) {

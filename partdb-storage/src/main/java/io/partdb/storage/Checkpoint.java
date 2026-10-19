@@ -7,6 +7,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
@@ -19,19 +20,18 @@ final class Checkpoint {
     private static final int VERSION = 1;
     private static final int HEADER_SIZE = 4 + 4 + 8 + 4 + 4;
     private static final int TABLE_HEADER_SIZE = 4 + 8;
-    private static final int MAX_LEVEL = 64;
     private static final int CHUNK = 1 << 16;
 
     record Part(int level, MemorySegment contents) {}
 
-    record Restored(long index, Version version) {}
+    record Restored(long revision, Version version) {}
 
     private Checkpoint() {
     }
 
-    static void write(OutputStream out, long index, List<Part> parts) throws IOException {
+    static void write(OutputStream out, long revision, List<Part> parts) throws IOException {
         ByteBuffer header = Encoding.allocate(HEADER_SIZE);
-        header.putInt(MAGIC).putInt(VERSION).putLong(index).putInt(parts.size());
+        header.putInt(MAGIC).putInt(VERSION).putLong(revision).putInt(parts.size());
         header.putInt(Encoding.crc(header.array(), 0, header.position()));
         out.write(header.array());
 
@@ -49,39 +49,38 @@ final class Checkpoint {
         out.flush();
     }
 
-    static Restored read(InputStream in, Generation staged, BlockCache cache, int levelCount) {
+    static Restored read(InputStream in, StoreDirectory directory, BlockCache cache) {
         ByteBuffer header = Encoding.wrap(readFully(in, HEADER_SIZE));
         Encoding.check(header.getInt() == MAGIC, "Invalid checkpoint magic");
         int version = header.getInt();
         Encoding.check(version == VERSION, "Unsupported checkpoint version: " + version);
-        long index = header.getLong();
+        long revision = header.getLong();
         int count = header.getInt();
         Encoding.check(header.getInt() == Encoding.crc(header.array(), 0, HEADER_SIZE - Integer.BYTES), "Checkpoint header checksum mismatch");
-        Encoding.check(index >= 0 && count >= 0, "Invalid checkpoint header");
+        Encoding.check(revision >= 0 && count >= 0, "Invalid checkpoint header");
 
-        List<TableReader> tables = new ArrayList<>(count);
+        List<List<TableReader>> levels = Version.emptyLevels();
+        List<TableReader> opened = new ArrayList<>(count);
         try {
             for (int i = 0; i < count; i++) {
                 ByteBuffer tableHeader = Encoding.wrap(readFully(in, TABLE_HEADER_SIZE));
                 int level = tableHeader.getInt();
                 long size = tableHeader.getLong();
-                Encoding.check(level >= 0 && level < MAX_LEVEL && size > 0, "Invalid checkpoint table header");
-                long id = staged.allocateTableId();
-                Path path = staged.tablePath(id);
+                Encoding.check(level >= 0 && level < Version.LEVELS && size > 0, "Invalid checkpoint table header");
+                long id = directory.allocateTableId();
+                Path path = directory.tablePath(id);
                 copy(in, path, size);
-                tables.add(TableReader.open(path, id, level, cache));
+                TableReader table = TableReader.open(path, id, cache);
+                opened.add(table);
+                levels.get(level).add(table);
             }
-            Disk.syncDirectory(staged.directory());
-            Version restored = Version.of(tables, levelCount);
-            try {
-                staged.commit(Manifest.of(index, staged.nextTableId(), restored));
-            } catch (RuntimeException e) {
-                restored.release();
-                throw e;
-            }
-            return new Restored(index, restored);
+            directory.sync();
+            return new Restored(revision, Version.of(levels));
+        } catch (RuntimeException e) {
+            opened.forEach(TableReader::markObsolete);
+            throw e;
         } finally {
-            tables.forEach(TableReader::release);
+            opened.forEach(TableReader::release);
         }
     }
 
@@ -104,7 +103,19 @@ final class Checkpoint {
             Encoding.check(expected == (int) crc.getValue(), "Checkpoint table checksum mismatch");
             channel.force(true);
         } catch (IOException e) {
+            discard(path, e);
             throw new StoreException.IO("Failed to stage checkpoint table " + path, e);
+        } catch (RuntimeException e) {
+            discard(path, e);
+            throw e;
+        }
+    }
+
+    private static void discard(Path path, Exception failure) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            failure.addSuppressed(e);
         }
     }
 

@@ -17,15 +17,17 @@ final class TableWriter implements AutoCloseable {
     static final int MAGIC = 0x54424450;
     static final int VERSION = 1;
     static final int HEADER_SIZE = 2 * Integer.BYTES;
-    static final int FOOTER_FIXED_SIZE = 8 + 4 + 8 + 4 + 4 + 8 + 4 + 4 + 4 + 4 + 4;
+    static final int FOOTER_FIXED_SIZE = 8 + 4 + 8 + 4 + 4 + 8 + 8 + 4 + 4 + 4 + 4 + 4;
+
+    private static final int RESTART_INTERVAL = 16;
+    private static final double BLOOM_FALSE_POSITIVE_RATE = 0.01;
 
     private final Path path;
     private final long id;
-    private final int level;
-    private final StoreOptions.Table options;
+    private final StoreOptions options;
     private final FileChannel channel;
     private final OutputStream out;
-    private final BlockWriter block;
+    private final BlockWriter block = new BlockWriter(RESTART_INTERVAL);
     private final List<BlockIndex.Handle> handles = new ArrayList<>();
     private final List<Slice> keys = new ArrayList<>();
     private final CRC32C metaCrc = new CRC32C();
@@ -33,24 +35,22 @@ final class TableWriter implements AutoCloseable {
     private Slice smallest;
     private Slice largest;
     private long position;
-    private long entryCount;
+    private long tombstones;
     private long rawBytes;
     private boolean finished;
 
-    private TableWriter(Path path, long id, int level, StoreOptions.Table options, FileChannel channel) {
+    private TableWriter(Path path, long id, StoreOptions options, FileChannel channel) {
         this.path = path;
         this.id = id;
-        this.level = level;
         this.options = options;
         this.channel = channel;
         this.out = new BufferedOutputStream(Channels.newOutputStream(channel), 1 << 16);
-        this.block = new BlockWriter(options.blockRestartInterval());
     }
 
-    static TableWriter create(Path path, long id, int level, StoreOptions.Table options) {
+    static TableWriter create(Path path, long id, StoreOptions options) {
         try {
             var channel = FileChannel.open(path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-            var writer = new TableWriter(path, id, level, options, channel);
+            var writer = new TableWriter(path, id, options, channel);
             writer.write(Encoding.allocate(HEADER_SIZE).putInt(MAGIC).putInt(VERSION).array());
             return writer;
         } catch (IOException e) {
@@ -59,18 +59,21 @@ final class TableWriter implements AutoCloseable {
     }
 
     void add(InternalEntry entry) {
-        if (!block.isEmpty() && block.estimatedSize() >= options.blockSizeBytes() && !block.lastKey().equals(entry.userKey())) {
+        if (largest != null && entry.userKey().compareTo(largest) <= 0) {
+            throw new IllegalArgumentException("Table keys must be strictly increasing");
+        }
+        if (!block.isEmpty() && block.estimatedSize() >= options.blockBytes()) {
             flushBlock();
         }
         block.add(entry);
-        if (largest == null || !largest.equals(entry.userKey())) {
-            keys.add(entry.userKey());
-        }
+        keys.add(entry.userKey());
         if (smallest == null) {
             smallest = entry.userKey();
         }
         largest = entry.userKey();
-        entryCount++;
+        if (entry instanceof InternalEntry.Tombstone) {
+            tombstones++;
+        }
         rawBytes += entry.encodedSize();
     }
 
@@ -78,23 +81,19 @@ final class TableWriter implements AutoCloseable {
         return id;
     }
 
-    boolean isEmpty() {
-        return entryCount == 0;
-    }
-
     long rawBytes() {
         return rawBytes;
     }
 
     TableMetadata finish() {
-        if (entryCount == 0) {
+        if (keys.isEmpty()) {
             throw new IllegalStateException("Cannot finish an empty table");
         }
         if (!block.isEmpty()) {
             flushBlock();
         }
         long bloomOffset = position;
-        byte[] bloom = BloomFilter.build(keys, options.bloomFalsePositiveRate()).encode();
+        byte[] bloom = BloomFilter.build(keys, BLOOM_FALSE_POSITIVE_RATE).encode();
         writeMeta(bloom);
         long indexOffset = position;
         byte[] index = new BlockIndex(handles).encode();
@@ -106,7 +105,7 @@ final class TableWriter implements AutoCloseable {
         var footer = Encoding.allocate(footerSize);
         footer.putLong(bloomOffset).putInt(bloom.length);
         footer.putLong(indexOffset).putInt(index.length);
-        footer.putInt(handles.size()).putLong(entryCount);
+        footer.putInt(handles.size()).putLong(keys.size()).putLong(tombstones);
         footer.putInt((int) metaCrc.getValue());
         footer.putInt(low.length).put(low);
         footer.putInt(high.length).put(high);
@@ -122,7 +121,7 @@ final class TableWriter implements AutoCloseable {
             throw new StoreException.IO("Failed to sync table " + path, e);
         }
         finished = true;
-        return new TableMetadata(id, level, smallest.copy(), largest.copy(), position);
+        return new TableMetadata(id, smallest.copy(), largest.copy(), position, tombstones);
     }
 
     @Override

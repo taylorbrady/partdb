@@ -12,10 +12,10 @@ final class Memtable {
 
     private final ConcurrentSkipListMap<InternalKey, InternalEntry> entries = new ConcurrentSkipListMap<>();
     private volatile long sizeBytes;
-    private volatile long appliedIndex;
+    private volatile long revision;
 
-    Memtable(long appliedIndex) {
-        this.appliedIndex = appliedIndex;
+    Memtable(long revision) {
+        this.revision = revision;
     }
 
     void put(InternalEntry entry) {
@@ -23,12 +23,12 @@ final class Memtable {
         sizeBytes += ENTRY_OVERHEAD + entry.encodedSize();
     }
 
-    void advanceTo(long index) {
-        appliedIndex = index;
+    void advanceTo(long revision) {
+        this.revision = revision;
     }
 
-    long appliedIndex() {
-        return appliedIndex;
+    long revision() {
+        return revision;
     }
 
     long sizeBytes() {
@@ -39,8 +39,8 @@ final class Memtable {
         return entries.isEmpty();
     }
 
-    Optional<InternalEntry> get(Slice key, long index) {
-        Map.Entry<InternalKey, InternalEntry> candidate = entries.ceilingEntry(new InternalKey(key, index));
+    Optional<InternalEntry> get(Slice key, long revision) {
+        Map.Entry<InternalKey, InternalEntry> candidate = entries.ceilingEntry(new InternalKey(key, revision));
         return candidate != null && candidate.getKey().userKey().equals(key)
             ? Optional.of(candidate.getValue())
             : Optional.empty();

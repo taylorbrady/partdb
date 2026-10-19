@@ -9,7 +9,6 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.concurrent.locks.LockSupport;
@@ -18,13 +17,13 @@ import java.util.stream.Stream;
 final class Fixtures {
 
     static final StoreOptions SMALL = StoreOptions.defaults()
-        .withMemtableMaxBytes(4 * 1024)
-        .withBlockCacheMaxBytes(1024 * 1024)
-        .withTable(StoreOptions.Table.defaults().withBlockSizeBytes(512))
-        .withCompaction(new StoreOptions.Compaction(8 * 1024, 2, 2, 16 * 1024, 4, 4));
+        .withMemtableBytes(4 * 1024)
+        .withBlockCacheBytes(1024 * 1024)
+        .withBlockBytes(512)
+        .withTargetTableBytes(8 * 1024)
+        .withLevelZeroTriggers(2, 64);
 
-    static final StoreOptions NO_COMPACTION = SMALL
-        .withCompaction(new StoreOptions.Compaction(8 * 1024, 1, 1_000_000, Long.MAX_VALUE / 16, 4, 4));
+    static final StoreOptions NO_COMPACTION = SMALL.withLevelZeroTriggers(1_000_000, Integer.MAX_VALUE);
 
     private Fixtures() {
     }
@@ -57,7 +56,9 @@ final class Fixtures {
     }
 
     static String value(Store store, String key) {
-        return store.get(bytes(key)).map(entry -> entry.value().utf8()).orElse(null);
+        try (Snapshot snapshot = store.snapshot()) {
+            return value(snapshot, key);
+        }
     }
 
     static String value(Snapshot snapshot, String key) {
@@ -65,19 +66,15 @@ final class Fixtures {
     }
 
     static List<String> keys(Snapshot snapshot, KeyRange range) {
-        List<String> keys = new ArrayList<>();
-        try (Cursor cursor = snapshot.scan(range)) {
-            cursor.forEachRemaining(entry -> keys.add(entry.key().utf8()));
+        try (Stream<KeyValue> entries = snapshot.scan(range)) {
+            return entries.map(entry -> entry.key().utf8()).toList();
         }
-        return keys;
     }
 
     static List<KeyValue> entries(Store store) {
-        List<KeyValue> entries = new ArrayList<>();
-        try (Snapshot snapshot = store.snapshot(); Cursor cursor = snapshot.scan(KeyRange.all())) {
-            cursor.forEachRemaining(entries::add);
+        try (Snapshot snapshot = store.snapshot(); Stream<KeyValue> entries = snapshot.scan(KeyRange.all())) {
+            return entries.toList();
         }
-        return entries;
     }
 
     static byte[] checkpoint(Store store) {
@@ -90,12 +87,12 @@ final class Fixtures {
         return store.restore(new ByteArrayInputStream(checkpoint));
     }
 
-    static long fill(Store store, long fromIndex, int count, String valuePrefix) {
-        long index = fromIndex;
+    static long fill(Store store, long fromRevision, int count, String valuePrefix) {
+        long revision = fromRevision;
         for (int i = 0; i < count; i++) {
-            store.apply(++index, List.of(put(i, valuePrefix + i)));
+            store.apply(++revision, List.of(put(i, valuePrefix + i)));
         }
-        return index;
+        return revision;
     }
 
     static void await(String description, BooleanSupplier condition) {
@@ -105,14 +102,6 @@ final class Fixtures {
                 throw new AssertionError("Timed out waiting for " + description);
             }
             LockSupport.parkNanos(Duration.ofMillis(1).toNanos());
-        }
-    }
-
-    static Path generation(Path root) {
-        try (Stream<Path> paths = Files.list(root)) {
-            return paths.filter(path -> path.getFileName().toString().startsWith("gen-")).findFirst().orElseThrow();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
         }
     }
 

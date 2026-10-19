@@ -24,9 +24,8 @@ class BlockTest {
     private static void roundTrip(int restartInterval) {
         List<InternalEntry> entries = new ArrayList<>();
         for (int i = 0; i < 100; i++) {
-            Slice key = Slice.utf8("tenant/key-%04d".formatted(i));
-            entries.add(new InternalEntry.Value(new InternalKey(key, 20), Slice.utf8("v" + i)));
-            entries.add(i % 4 == 0 ? new InternalEntry.Tombstone(new InternalKey(key, 10)) : new InternalEntry.Value(new InternalKey(key, 10), Slice.utf8("old" + i)));
+            InternalKey key = new InternalKey(Slice.utf8("tenant/key-%04d".formatted(i)), 10 + i);
+            entries.add(i % 4 == 0 ? new InternalEntry.Tombstone(key) : new InternalEntry.Value(key, Slice.utf8("v" + i)));
         }
         Block block = block(restartInterval, entries);
 
@@ -34,13 +33,11 @@ class BlockTest {
         block.iterator().forEachRemaining(decoded::add);
         assertEquals(entries, decoded);
 
-        Slice key = Slice.utf8("tenant/key-0040");
-        assertEquals(Optional.of(entries.get(80)), block.get(key, 25));
-        assertEquals(Optional.of(entries.get(81)), block.get(key, 15));
-        assertEquals(Optional.empty(), block.get(key, 5));
-        assertEquals(Optional.empty(), block.get(Slice.utf8("tenant/key-0040a"), 25));
-        assertEquals(Optional.empty(), block.get(Slice.utf8("a"), 25));
-        assertEquals(Optional.empty(), block.get(Slice.utf8("z"), 25));
+        assertEquals(Optional.of(entries.get(40)), block.get(Slice.utf8("tenant/key-0040")));
+        assertEquals(Optional.of(entries.get(41)), block.get(Slice.utf8("tenant/key-0041")));
+        assertEquals(Optional.empty(), block.get(Slice.utf8("tenant/key-0040a")));
+        assertEquals(Optional.empty(), block.get(Slice.utf8("a")));
+        assertEquals(Optional.empty(), block.get(Slice.utf8("z")));
     }
 
     @Test
@@ -58,7 +55,7 @@ class BlockTest {
     }
 
     @Test
-    void writerRejectsOutOfOrderEntries() {
+    void writerRejectsKeysThatDoNotStrictlyIncrease() {
         BlockWriter writer = new BlockWriter(4);
         writer.add(new InternalEntry.Tombstone(new InternalKey(Slice.utf8("b"), 1)));
         assertThrows(IllegalArgumentException.class, () -> writer.add(new InternalEntry.Tombstone(new InternalKey(Slice.utf8("a"), 1))));

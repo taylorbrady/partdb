@@ -8,13 +8,14 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static io.partdb.storage.Fixtures.bytes;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,7 +26,7 @@ class StoreConcurrencyTest {
     private static final int KEYS = 32;
     private static final int APPLIES = 1_500;
     private static final int MAX_CHECKPOINTS = 20;
-    private static final StoreOptions OPTIONS = Fixtures.SMALL.withMemtableMaxBytes(64 * 1024);
+    private static final StoreOptions OPTIONS = Fixtures.SMALL.withMemtableBytes(64 * 1024);
 
     @TempDir
     Path directory;
@@ -36,8 +37,8 @@ class StoreConcurrencyTest {
              ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             AtomicBoolean done = new AtomicBoolean();
             Future<?> writer = executor.submit(() -> {
-                for (long index = 1; index <= APPLIES; index++) {
-                    store.apply(index, index % 7 == 0 ? List.of() : batch(index));
+                for (long revision = 1; revision <= APPLIES; revision++) {
+                    store.apply(revision, revision % 7 == 0 ? List.of() : batch(revision));
                 }
                 done.set(true);
             });
@@ -60,7 +61,7 @@ class StoreConcurrencyTest {
             for (Future<Integer> reader : readers) {
                 assertTrue(reader.get() > 0);
             }
-            assertEquals(APPLIES, store.appliedIndex());
+            assertEquals(APPLIES, store.appliedRevision());
             Fixtures.await("compaction activity", () -> store.stats().completedCompactions() > 0);
             try (Snapshot snapshot = store.snapshot()) {
                 assertConsistent(snapshot);
@@ -72,18 +73,18 @@ class StoreConcurrencyTest {
     @Test
     void pinnedSnapshotIsStableAcrossFlushAndCompaction() {
         try (Store store = Store.open(directory, OPTIONS)) {
-            for (long index = 1; index <= 50; index++) {
-                store.apply(index, batch(index));
+            for (long revision = 1; revision <= 50; revision++) {
+                store.apply(revision, batch(revision));
             }
             try (Snapshot snapshot = store.snapshot()) {
                 Map<String, String> expected = contents(snapshot);
                 long completed = store.stats().completedCompactions();
-                for (long index = 51; index <= 600; index++) {
-                    store.apply(index, batch(index));
+                for (long revision = 51; revision <= 600; revision++) {
+                    store.apply(revision, batch(revision));
                 }
                 Fixtures.await("compaction after pin", () -> store.stats().completedCompactions() > completed);
 
-                assertEquals(50, snapshot.index());
+                assertEquals(50, snapshot.revision());
                 assertEquals(expected, contents(snapshot));
                 assertConsistent(snapshot);
             }
@@ -91,20 +92,20 @@ class StoreConcurrencyTest {
     }
 
     @Test
-    void checkpointFromAnotherThreadCapturesExactlyItsIndex() throws Exception {
+    void checkpointFromAnotherThreadCapturesExactlyItsRevision() throws Exception {
         try (Store store = Store.open(directory, OPTIONS);
              ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             Future<?> writer = executor.submit(() -> {
-                for (long index = 1; index <= APPLIES; index++) {
-                    store.apply(index, index % 5 == 0 ? List.of() : batch(index));
+                for (long revision = 1; revision <= APPLIES; revision++) {
+                    store.apply(revision, revision % 5 == 0 ? List.of() : batch(revision));
                 }
             });
 
             List<byte[]> checkpoints = new ArrayList<>();
-            List<Long> indexes = new ArrayList<>();
+            List<Long> revisions = new ArrayList<>();
             while (!writer.isDone() && checkpoints.size() < MAX_CHECKPOINTS) {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
-                indexes.add(store.checkpoint(out));
+                revisions.add(store.checkpoint(out));
                 checkpoints.add(out.toByteArray());
             }
             writer.get();
@@ -112,13 +113,13 @@ class StoreConcurrencyTest {
             for (int i = 0; i < checkpoints.size(); i++) {
                 Path target = directory.resolve("restore-" + i);
                 try (Store restored = Store.open(target, OPTIONS)) {
-                    long index = restored.restore(new ByteArrayInputStream(checkpoints.get(i)));
-                    assertEquals(indexes.get(i), index);
-                    assertEquals(index, restored.appliedIndex());
+                    long revision = restored.restore(new ByteArrayInputStream(checkpoints.get(i)));
+                    assertEquals(revisions.get(i), revision);
+                    assertEquals(revision, restored.appliedRevision());
                     try (Snapshot snapshot = restored.snapshot()) {
                         assertConsistent(snapshot);
-                        if (lastWrite(index, 5) > 0) {
-                            assertEquals(lastWrite(index, 5), Long.parseLong(Fixtures.value(snapshot, key(0))));
+                        if (lastWrite(revision, 5) > 0) {
+                            assertEquals(lastWrite(revision, 5), Long.parseLong(Fixtures.value(snapshot, key(0))));
                         }
                     }
                 }
@@ -126,16 +127,16 @@ class StoreConcurrencyTest {
         }
     }
 
-    private static List<Mutation> batch(long index) {
+    private static List<Mutation> batch(long revision) {
         List<Mutation> batch = new ArrayList<>(KEYS);
         for (int k = 0; k < KEYS; k++) {
-            batch.add(Mutation.put(bytes(key(k)), bytes(Long.toString(index))));
+            batch.add(Mutation.put(bytes(key(k)), bytes(Long.toString(revision))));
         }
         return batch;
     }
 
-    private static long lastWrite(long index, int emptyEvery) {
-        for (long i = index; i > 0; i--) {
+    private static long lastWrite(long revision, int emptyEvery) {
+        for (long i = revision; i > 0; i--) {
             if (i % emptyEvery != 0) {
                 return i;
             }
@@ -148,9 +149,9 @@ class StoreConcurrencyTest {
     }
 
     private static void assertConsistent(Snapshot snapshot) {
-        List<KeyValue> entries = new ArrayList<>();
-        try (Cursor cursor = snapshot.scan(KeyRange.all())) {
-            cursor.forEachRemaining(entries::add);
+        List<KeyValue> entries;
+        try (Stream<KeyValue> scan = snapshot.scan(KeyRange.all())) {
+            entries = scan.toList();
         }
         if (entries.isEmpty()) {
             return;
@@ -158,7 +159,7 @@ class StoreConcurrencyTest {
         assertEquals(KEYS, entries.size());
         Bytes first = entries.getFirst().value();
         long revision = entries.getFirst().revision();
-        assertTrue(revision <= snapshot.index());
+        assertTrue(revision <= snapshot.revision());
         for (KeyValue entry : entries) {
             assertEquals(first, entry.value(), "batch torn at " + entry.key().utf8());
             assertEquals(revision, entry.revision());
@@ -167,10 +168,8 @@ class StoreConcurrencyTest {
     }
 
     private static Map<String, String> contents(Snapshot snapshot) {
-        Map<String, String> contents = new HashMap<>();
-        try (Cursor cursor = snapshot.scan(KeyRange.all())) {
-            cursor.forEachRemaining(entry -> contents.put(entry.key().utf8(), entry.value().utf8() + "@" + entry.revision()));
+        try (Stream<KeyValue> scan = snapshot.scan(KeyRange.all())) {
+            return scan.collect(Collectors.toMap(entry -> entry.key().utf8(), entry -> entry.value().utf8() + "@" + entry.revision()));
         }
-        return contents;
     }
 }

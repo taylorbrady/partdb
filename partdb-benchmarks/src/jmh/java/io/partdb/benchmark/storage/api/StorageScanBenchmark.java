@@ -5,8 +5,8 @@ import io.partdb.benchmark.support.BenchmarkKeys;
 import io.partdb.benchmark.support.BenchmarkValues;
 import io.partdb.benchmark.support.StorageFixtures;
 import io.partdb.bytes.Bytes;
-import io.partdb.storage.Cursor;
 import io.partdb.storage.KeyRange;
+import io.partdb.storage.KeyValue;
 import io.partdb.storage.Snapshot;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -22,6 +22,7 @@ import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
@@ -52,20 +53,15 @@ public class StorageScanBenchmark {
     @Benchmark
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
     public long persistedFullScan(PersistedScanState state) {
-        long count = 0;
-        try (Snapshot snapshot = state.store().snapshot(); Cursor cursor = snapshot.scan(KeyRange.all())) {
-            while (cursor.hasNext()) {
-                cursor.next();
-                count++;
-            }
+        try (Snapshot snapshot = state.store().snapshot(); Stream<KeyValue> entries = snapshot.scan(KeyRange.all())) {
+            return entries.count();
         }
-        return count;
     }
 
     private static void consumeRange(BaseScanState state, ScanRange range, Blackhole bh) {
         try (Snapshot snapshot = state.store().snapshot();
-             Cursor cursor = snapshot.scan(KeyRange.between(range.start(), range.endExclusive()))) {
-            cursor.forEachRemaining(bh::consume);
+             Stream<KeyValue> entries = snapshot.scan(KeyRange.between(range.start(), range.endExclusive()))) {
+            entries.forEach(bh::consume);
         }
     }
 

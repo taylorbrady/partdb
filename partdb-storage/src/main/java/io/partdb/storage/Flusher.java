@@ -18,7 +18,7 @@ final class Flusher implements AutoCloseable {
     private final Consumer<Memtable> flush;
     private final Semaphore slots = new Semaphore(MAX_PENDING);
     private final ExecutorService executor = Executors.newSingleThreadExecutor(
-        Thread.ofVirtual().name("partdb-flush").factory()
+        Thread.ofPlatform().name("partdb-flush").daemon(true).factory()
     );
     private final AtomicReference<StoreException> failure = new AtomicReference<>();
 
