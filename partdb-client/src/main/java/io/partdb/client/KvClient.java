@@ -12,8 +12,14 @@ import io.partdb.grpc.kv.v1.ScanRequest;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Spliterator;
+import java.util.Spliterators;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 public final class KvClient {
+
+    private static final int SCAN_CHARACTERISTICS = Spliterator.ORDERED | Spliterator.DISTINCT | Spliterator.NONNULL | Spliterator.IMMUTABLE;
 
     private final Invoker invoker;
 
@@ -64,11 +70,11 @@ public final class KvClient {
             KeyValueServiceGrpc.newBlockingStub(channel).withDeadline(deadline).txn(request)));
     }
 
-    public ScanCursor scan(KeyRange range) {
+    public Read<Stream<KeyValue>> scan(KeyRange range) {
         return scan(range, ScanOptions.DEFAULT);
     }
 
-    public ScanCursor scan(KeyRange range, ScanOptions options) {
+    public Read<Stream<KeyValue>> scan(KeyRange range, ScanOptions options) {
         Objects.requireNonNull(range, "range must not be null");
         Objects.requireNonNull(options, "options must not be null");
         var request = ScanRequest.newBuilder()
@@ -83,7 +89,9 @@ public final class KvClient {
                 if (!responses.hasNext()) {
                     throw new PartDbException.Internal("the server ended the scan without a response", null);
                 }
-                return new ScanCursor(context, responses, responses.next());
+                var first = responses.next();
+                var entries = Spliterators.spliteratorUnknownSize(new ScanEntries(context, responses, first), SCAN_CHARACTERISTICS);
+                return new Read<>(StreamSupport.stream(entries, false).onClose(() -> context.cancel(null)), first.getReadRevision());
             } catch (StatusRuntimeException | PartDbException e) {
                 context.cancel(null);
                 throw e;

@@ -185,15 +185,12 @@ class MultiNodeClusterIntegrationTest {
             long last = client.kv().put(bytes("proof/c"), bytes("three"));
             client.kv().put(bytes("other"), bytes("x"));
 
-            var scanned = new ArrayList<String>();
-            long readRevision;
-            try (var cursor = client.kv().scan(KeyRange.between(bytes("proof/"), bytes("proof0")))) {
-                readRevision = cursor.readRevision();
-                cursor.forEachRemaining(entry -> scanned.add(entry.key().utf8() + "=" + entry.value().utf8()));
+            var scan = client.kv().scan(KeyRange.between(bytes("proof/"), bytes("proof0")));
+            try (var entries = scan.value()) {
+                assertEquals(List.of("proof/a=one", "proof/b=two", "proof/c=three"),
+                    entries.map(entry -> entry.key().utf8() + "=" + entry.value().utf8()).toList());
             }
-
-            assertEquals(List.of("proof/a=one", "proof/b=two", "proof/c=three"), scanned);
-            assertTrue(readRevision >= last);
+            assertTrue(scan.revision() >= last);
         }
     }
 

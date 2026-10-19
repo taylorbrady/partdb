@@ -47,6 +47,14 @@ PartDB should read like idiomatic modern Java:
 - Keep Raft event handling explicit: input event, output effects, persistence,
   transport, and application are separate responsibilities.
 - Avoid framework magic. Plain Java is a feature of this codebase.
+- Return a lazy, resource-backed sequence as a `Stream` the caller closes, as
+  `Files.lines` does, not as a hand-written cursor. Pair it with the revision
+  it reads at in a `Read<Stream<T>>`.
+- Model absence with `Optional`, never `null`, including record components:
+  a record's accessors are its API's return types.
+- Declare an interface only for an SPI or a family with several
+  implementations; otherwise expose a `final class`.
+- Return `CompletionStage` from operations that finish later.
 
 ## Module Intent
 

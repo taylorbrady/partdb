@@ -143,13 +143,12 @@ record KvCommand(Operation operation, ClientOptions options) implements ClientCo
             case Operation.Delete(var key, var conditions) ->
                 committed(out, err, client.kv().transact(Txn.when(conditions, List.of(Mutation.delete(key)))));
             case Operation.Scan(var range, var scanOptions) -> {
-                try (var cursor = client.kv().scan(range, scanOptions)) {
+                var scan = client.kv().scan(range, scanOptions);
+                try (var entries = scan.value()) {
                     if (options.output() == OutputFormat.JSON) {
-                        var entries = new ArrayList<Entry>();
-                        cursor.forEachRemaining(entry -> entries.add(Entry.of(entry)));
-                        out.println(Json.write(new Scanned(cursor.readRevision(), entries)));
+                        out.println(Json.write(new Scanned(scan.revision(), entries.map(Entry::of).toList())));
                     } else {
-                        cursor.forEachRemaining(entry -> out.println(entry.key().utf8() + "=" + entry.value().utf8()));
+                        entries.forEach(entry -> out.println(entry.key().utf8() + "=" + entry.value().utf8()));
                     }
                 }
                 yield ExitCode.OK;

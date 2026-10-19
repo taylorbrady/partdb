@@ -214,8 +214,10 @@ This module exposes one blocking Java client, `PartDbClient`, with `kv()` and
 hints to the leader's endpoint (learned from each endpoint's status), retries
 reads and requests the server reports as not applied within one deadline, and
 reports any write that may have been applied as `OutcomeUnknown` instead of
-retrying it. Reads return the revision they read at (`Read<T>`,
-`ScanCursor.readRevision()`). Failures are one sealed `PartDbException` family.
+retrying it. Reads return the revision they read at as a `Read<T>`: `get`
+yields `Read<Optional<KeyValue>>` and `scan` yields `Read<Stream<KeyValue>>`,
+the same shapes the node API uses; closing a scan's stream cancels the gRPC
+call. Failures are one sealed `PartDbException` family.
 `cluster().status(endpoint)` is a diagnostic view of one node built from the
 wire format, so it reports Raft role, term, and indexes without depending on
 Raft.

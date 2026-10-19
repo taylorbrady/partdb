@@ -8,42 +8,32 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
-public final class ScanCursor implements Iterator<KeyValue>, AutoCloseable {
+final class ScanEntries implements Iterator<KeyValue> {
 
     private final Context.CancellableContext context;
     private final Iterator<ScanResponse> responses;
-    private final long readRevision;
     private Iterator<io.partdb.grpc.kv.v1.KeyValue> batch;
-    private boolean closed;
 
-    ScanCursor(Context.CancellableContext context, Iterator<ScanResponse> responses, ScanResponse first) {
+    ScanEntries(Context.CancellableContext context, Iterator<ScanResponse> responses, ScanResponse first) {
         this.context = context;
         this.responses = responses;
-        this.readRevision = first.getReadRevision();
         this.batch = first.getEntriesList().iterator();
-    }
-
-    public long readRevision() {
-        return readRevision;
     }
 
     @Override
     public boolean hasNext() {
-        if (closed) {
-            return false;
-        }
         try {
             while (!batch.hasNext()) {
                 if (!responses.hasNext()) {
                     batch = Collections.emptyIterator();
-                    close();
+                    context.cancel(null);
                     return false;
                 }
                 batch = responses.next().getEntriesList().iterator();
             }
             return true;
         } catch (StatusRuntimeException error) {
-            close();
+            context.cancel(null);
             throw new PartDbException.Unavailable("the scan stream failed after it started", error);
         }
     }
@@ -54,13 +44,5 @@ public final class ScanCursor implements Iterator<KeyValue>, AutoCloseable {
             throw new NoSuchElementException();
         }
         return Protos.keyValue(batch.next());
-    }
-
-    @Override
-    public void close() {
-        if (!closed) {
-            closed = true;
-            context.cancel(null);
-        }
     }
 }

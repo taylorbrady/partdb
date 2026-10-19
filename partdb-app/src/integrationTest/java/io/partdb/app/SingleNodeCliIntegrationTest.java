@@ -32,6 +32,11 @@ class SingleNodeCliIntegrationTest {
             assertOutput(InProcessCli.run("kv", "put", "help", "me", "--endpoint", endpoint, "--output", "json"), null);
             assertOutput(InProcessCli.run("kv", "scan", "he", "hf", "--endpoint", endpoint), "hello=world\nhelp=me\n");
             assertOutput(InProcessCli.run("kv", "scan", "he", "hf", "--limit", "1", "--endpoint", endpoint), "hello=world\n");
+            var scanned = InProcessCli.run("kv", "scan", "he", "hf", "--endpoint", endpoint, "--output", "json");
+            assertEquals(0, scanned.exitCode(), scanned.stderr());
+            assertTrue(scanned.stdout().startsWith("{\"readRevision\":"), scanned.stdout());
+            assertTrue(scanned.stdout().contains("{\"key\":\"hello\",\"value\":\"world\""), scanned.stdout());
+            assertTrue(scanned.stdout().contains("{\"key\":\"help\",\"value\":\"me\""), scanned.stdout());
 
             var conflict = InProcessCli.run("kv", "put", "hello", "again", "--if-missing", "--endpoint", endpoint);
             assertEquals(ExitCode.CONDITION_FAILED.code(), conflict.exitCode());
