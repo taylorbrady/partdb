@@ -4,12 +4,12 @@ import io.partdb.raft.Input;
 import io.partdb.raft.NodeId;
 
 import java.nio.file.Path;
-import java.util.function.LongFunction;
+import java.util.concurrent.CompletableFuture;
 
 sealed interface LoopEvent {
     record Step(Input input) implements LoopEvent {}
 
-    record Submit(Requests.Pending pending, LongFunction<Input> input) implements LoopEvent {}
+    record Submit(CompletableFuture<?> future, Runnable register) implements LoopEvent {}
 
     record SnapshotReceived(NodeId from, long term, SnapshotInfo info, Path payload) implements LoopEvent {}
 

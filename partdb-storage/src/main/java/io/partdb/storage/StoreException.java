@@ -1,6 +1,6 @@
 package io.partdb.storage;
 
-public sealed class StoreException extends RuntimeException {
+public abstract sealed class StoreException extends RuntimeException {
 
     private StoreException(String message, Throwable cause) {
         super(message, cause);

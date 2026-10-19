@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package partdb.error.v1;
+
+option java_multiple_files = true;
+option java_outer_classname = "ErrorProto";
+option java_package = "io.partdb.grpc.error.v1";
+
+enum ErrorReason {
+  ERROR_REASON_UNSPECIFIED = 0;
+  NOT_LEADER = 1;
+  BUSY = 2;
+  OUTCOME_UNKNOWN = 3;
+}
+
+message LeaderHint {
+  string leader_id = 1;
+}

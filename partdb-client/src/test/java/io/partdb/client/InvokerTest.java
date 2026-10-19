@@ -13,6 +13,8 @@ import io.partdb.grpc.cluster.v1.ClusterServiceGrpc;
 import io.partdb.grpc.cluster.v1.GetStatusRequest;
 import io.partdb.grpc.cluster.v1.NodeStatus;
 import io.partdb.grpc.cluster.v1.RaftRole;
+import io.partdb.grpc.error.v1.ErrorReason;
+import io.partdb.grpc.error.v1.LeaderHint;
 import io.partdb.grpc.kv.v1.GetRequest;
 import io.partdb.grpc.kv.v1.GetResponse;
 import io.partdb.grpc.kv.v1.KeyValueServiceGrpc;
@@ -26,7 +28,6 @@ import java.net.ServerSocket;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -80,11 +81,14 @@ class InvokerTest {
         return "localhost:" + server.getPort();
     }
 
-    private static RuntimeException failure(Code code, String reason, Map<String, String> metadata) {
+    private static RuntimeException failure(Code code, ErrorReason reason) {
+        return failure(code, reason, Optional.empty());
+    }
+
+    private static RuntimeException failure(Code code, ErrorReason reason, Optional<String> leader) {
         var status = com.google.rpc.Status.newBuilder().setCode(code.getNumber()).setMessage(code.name());
-        if (reason != null) {
-            status.addDetails(Any.pack(ErrorInfo.newBuilder().setReason(reason).setDomain("partdb.io").putAllMetadata(metadata).build()));
-        }
+        status.addDetails(Any.pack(ErrorInfo.newBuilder().setReason(reason.name()).setDomain("partdb.io").build()));
+        leader.ifPresent(id -> status.addDetails(Any.pack(LeaderHint.newBuilder().setLeaderId(id).build())));
         return StatusProto.toStatusRuntimeException(status.build());
     }
 
@@ -96,7 +100,7 @@ class InvokerTest {
     void followsTheLeaderHintToTheRightEndpoint() throws IOException {
         var leaderPuts = new AtomicInteger();
         var followerPuts = new AtomicInteger();
-        String follower = start(new FakeNode("n1", _ -> failure(Code.UNAVAILABLE, "NOT_LEADER", Map.of("leader_id", "n2")), followerPuts));
+        String follower = start(new FakeNode("n1", _ -> failure(Code.UNAVAILABLE, ErrorReason.NOT_LEADER, Optional.of("n2")), followerPuts));
         String leader = start(new FakeNode("n2", _ -> PutResponse.newBuilder().setRevision(7).build(), leaderPuts));
 
         try (var client = client(follower, leader)) {
@@ -112,7 +116,7 @@ class InvokerTest {
     void retriesBusyWritesUntilTheyCommit() throws IOException {
         var attempts = new AtomicInteger();
         String node = start(new FakeNode("n1", _ -> attempts.get() < 3
-            ? failure(Code.UNAVAILABLE, "BUSY", Map.of())
+            ? failure(Code.UNAVAILABLE, ErrorReason.BUSY)
             : PutResponse.newBuilder().setRevision(3).build(), attempts));
 
         try (var client = client(node)) {
@@ -149,8 +153,8 @@ class InvokerTest {
     @Test
     void reportsServerOutcomeUnknownAndInvalidRequests() throws IOException {
         var puts = new AtomicInteger();
-        String unknown = start(new FakeNode("n1", _ -> failure(Code.UNKNOWN, "OUTCOME_UNKNOWN", Map.of()), puts));
-        String invalid = start(new FakeNode("n2", _ -> failure(Code.INVALID_ARGUMENT, null, Map.of()), puts));
+        String unknown = start(new FakeNode("n1", _ -> failure(Code.UNKNOWN, ErrorReason.OUTCOME_UNKNOWN), puts));
+        String invalid = start(new FakeNode("n2", _ -> Status.INVALID_ARGUMENT.asRuntimeException(), puts));
 
         try (var first = client(unknown); var second = client(invalid)) {
             assertThrows(PartDbException.OutcomeUnknown.class, () -> first.kv().put(Bytes.utf8("k"), Bytes.utf8("v")));
@@ -161,7 +165,7 @@ class InvokerTest {
     @Test
     void reportsUnavailableWhenNoLeaderAppearsBeforeTheDeadline() throws IOException {
         var puts = new AtomicInteger();
-        String node = start(new FakeNode("n1", _ -> failure(Code.UNAVAILABLE, "NOT_LEADER", Map.of()), puts));
+        String node = start(new FakeNode("n1", _ -> failure(Code.UNAVAILABLE, ErrorReason.NOT_LEADER), puts));
 
         try (var client = PartDbClient.builder().endpoints(node).requestTimeout(Duration.ofMillis(300)).build()) {
             assertThrows(PartDbException.Unavailable.class, () -> client.kv().put(Bytes.utf8("k"), Bytes.utf8("v")));

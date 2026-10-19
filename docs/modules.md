@@ -93,7 +93,7 @@ The module has two packages:
   Nodes are named by `NodeId`. It is deterministic and side-effect free;
   `RaftCorePurityTest` keeps JDK IO, clocks, threads, and runtime imports out
   of it.
-- `io.partdb.raft.runtime` drives the core from one virtual-thread event loop:
+- `io.partdb.raft.runtime` drives the core from one platform-thread event loop:
   it persists each `ready` with one sync, sends one-way messages through the
   `RaftTransport` SPI, applies committed entries to a `StateMachine<R>` (every
   index reaches it: commands through `apply`, no-ops and configuration entries
@@ -196,8 +196,10 @@ exposition, or transport endpoint parsing.
 Role: public protobuf schemas and generated gRPC classes.
 
 This is the wire contract shared by the client and the server
-(`partdb.kv.v1`, `partdb.cluster.v1`). Errors travel as gRPC status codes with
-a `google.rpc.ErrorInfo` detail; see [kv-semantics.md](kv-semantics.md). It
+(`partdb.kv.v1`, `partdb.cluster.v1`, `partdb.error.v1`). Errors travel as gRPC
+status codes with a `google.rpc.ErrorInfo` detail whose reason is a
+`partdb.error.v1.ErrorReason` name, plus a typed `LeaderHint` detail on
+`NOT_LEADER`; see [kv-semantics.md](kv-semantics.md). It
 does not depend on the runtime.
 
 Allowed dependencies: gRPC/protobuf libraries only.

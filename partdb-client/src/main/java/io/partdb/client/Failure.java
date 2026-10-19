@@ -1,20 +1,18 @@
 package io.partdb.client;
 
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
 import com.google.rpc.ErrorInfo;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
+import io.partdb.grpc.error.v1.ErrorReason;
+import io.partdb.grpc.error.v1.LeaderHint;
 
 import java.net.ConnectException;
 import java.util.Optional;
 
 sealed interface Failure {
-
-    String NOT_LEADER = "NOT_LEADER";
-    String BUSY = "BUSY";
-    String OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN";
-    String LEADER_ID = "leader_id";
 
     StatusRuntimeException cause();
 
@@ -35,21 +33,20 @@ sealed interface Failure {
     record Internal(StatusRuntimeException cause) implements Failure {}
 
     static Failure of(StatusRuntimeException error) {
-        var info = errorInfo(error);
-        if (info.isPresent()) {
-            switch (info.get().getReason()) {
-                case NOT_LEADER -> {
-                    String leader = info.get().getMetadataOrDefault(LEADER_ID, "");
-                    return new NotLeader(leader.isEmpty() ? Optional.empty() : Optional.of(leader), error);
-                }
-                case BUSY -> {
-                    return new Busy(error);
-                }
-                case OUTCOME_UNKNOWN -> {
-                    return new OutcomeUnknown(error);
-                }
-                default -> {
-                }
+        var details = StatusProto.fromThrowable(error);
+        var reason = detail(details, ErrorInfo.class).map(info -> reason(info.getReason())).orElse(ErrorReason.ERROR_REASON_UNSPECIFIED);
+        switch (reason) {
+            case NOT_LEADER -> {
+                var leader = detail(details, LeaderHint.class).map(LeaderHint::getLeaderId).filter(id -> !id.isEmpty());
+                return new NotLeader(leader, error);
+            }
+            case BUSY -> {
+                return new Busy(error);
+            }
+            case OUTCOME_UNKNOWN -> {
+                return new OutcomeUnknown(error);
+            }
+            case ERROR_REASON_UNSPECIFIED, UNRECOGNIZED -> {
             }
         }
         return switch (error.getStatus().getCode()) {
@@ -66,15 +63,22 @@ sealed interface Failure {
         return status.getDescription() != null ? status.getDescription() : status.getCode().name();
     }
 
-    private static Optional<ErrorInfo> errorInfo(StatusRuntimeException error) {
-        var status = StatusProto.fromThrowable(error);
+    private static ErrorReason reason(String name) {
+        try {
+            return ErrorReason.valueOf(name);
+        } catch (IllegalArgumentException _) {
+            return ErrorReason.ERROR_REASON_UNSPECIFIED;
+        }
+    }
+
+    private static <T extends Message> Optional<T> detail(com.google.rpc.Status status, Class<T> type) {
         if (status == null) {
             return Optional.empty();
         }
         for (var detail : status.getDetailsList()) {
-            if (detail.is(ErrorInfo.class)) {
+            if (detail.is(type)) {
                 try {
-                    return Optional.of(detail.unpack(ErrorInfo.class));
+                    return Optional.of(detail.unpack(type));
                 } catch (InvalidProtocolBufferException _) {
                     return Optional.empty();
                 }

@@ -1,6 +1,6 @@
 package io.partdb.raft.runtime;
 
-sealed class RaftStorageException extends RuntimeException permits RaftStorageException.IO, RaftStorageException.Corruption {
+abstract sealed class RaftStorageException extends RuntimeException permits RaftStorageException.IO, RaftStorageException.Corruption {
 
     private RaftStorageException(String message, Throwable cause) {
         super(message, cause);

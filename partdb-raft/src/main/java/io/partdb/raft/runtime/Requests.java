@@ -13,24 +13,24 @@ import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 
-final class Requests {
+final class Requests<R> {
 
-    sealed interface Pending {
+    sealed interface Pending<R> {
         CompletableFuture<?> future();
 
-        record Proposal(CompletableFuture<Object> future) implements Pending {}
+        record Proposal<R>(CompletableFuture<R> future) implements Pending<R> {}
 
-        record Change(CompletableFuture<Membership> future) implements Pending {}
+        record Change<R>(CompletableFuture<Membership> future) implements Pending<R> {}
 
-        record Read(CompletableFuture<Long> future) implements Pending {}
+        record Read<R>(CompletableFuture<Long> future) implements Pending<R> {}
 
-        record Transfer(CompletableFuture<Void> future) implements Pending {}
+        record Transfer<R>(CompletableFuture<Void> future) implements Pending<R> {}
     }
 
-    private record Commit(long term, Pending pending) {}
+    private record Commit<R>(long term, Pending<R> pending) {}
 
-    private final Map<Long, Pending> awaitingOutcome = new HashMap<>();
-    private final NavigableMap<Long, Commit> awaitingCommit = new TreeMap<>();
+    private final Map<Long, Pending<R>> awaitingOutcome = new HashMap<>();
+    private final NavigableMap<Long, Commit<R>> awaitingCommit = new TreeMap<>();
     private final NavigableMap<Long, List<CompletableFuture<Long>>> awaitingApply = new TreeMap<>();
     private long nextId;
     private long applied;
@@ -39,7 +39,7 @@ final class Requests {
         this.applied = applied;
     }
 
-    long register(Pending pending) {
+    long register(Pending<R> pending) {
         long id = ++nextId;
         awaitingOutcome.put(id, pending);
         return id;
@@ -55,29 +55,36 @@ final class Requests {
             return;
         }
         switch (outcome) {
-            case Outcome.Appended(_, long index, long term) -> awaitingCommit.put(index, new Commit(term, pending));
+            case Outcome.Appended(_, long index, long term) -> awaitingCommit.put(index, new Commit<>(term, pending));
             case Outcome.ReadReady(_, long index) -> {
-                var future = ((Pending.Read) pending).future();
+                if (!(pending instanceof Pending.Read<R>(var future))) {
+                    throw new IllegalStateException("read outcome for a " + pending.getClass().getSimpleName());
+                }
                 if (applied >= index) {
                     future.complete(index);
                 } else {
                     awaitingApply.computeIfAbsent(index, _ -> new ArrayList<>()).add(future);
                 }
             }
-            case Outcome.Transferred _ -> ((Pending.Transfer) pending).future().complete(null);
+            case Outcome.Transferred _ -> {
+                if (!(pending instanceof Pending.Transfer<R>(var future))) {
+                    throw new IllegalStateException("transfer outcome for a " + pending.getClass().getSimpleName());
+                }
+                future.complete(null);
+            }
             case Outcome.Rejected(_, var reason) -> pending.future().completeExceptionally(RaftException.of(reason));
         }
     }
 
-    void applied(LogEntry entry, Optional<Object> result) {
+    void applied(LogEntry entry, Optional<R> result) {
         var commit = awaitingCommit.remove(entry.index());
         if (commit != null) {
             boolean ours = commit.term() == entry.term();
             switch (commit.pending()) {
-                case Pending.Proposal(var future) when ours && result.isPresent() -> future.complete(result.get());
-                case Pending.Change(var future) when ours && entry instanceof LogEntry.Configuration configuration ->
+                case Pending.Proposal<R>(var future) when ours && result.isPresent() -> future.complete(result.get());
+                case Pending.Change<R>(var future) when ours && entry instanceof LogEntry.Configuration configuration ->
                     future.complete(configuration.membership());
-                case Pending pending -> pending.future().completeExceptionally(new RaftException.NotLeader(Optional.empty()));
+                case Pending<R> pending -> pending.future().completeExceptionally(new RaftException.NotLeader(Optional.empty()));
             }
         }
         advance(entry.index());

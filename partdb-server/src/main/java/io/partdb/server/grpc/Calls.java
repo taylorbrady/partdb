@@ -9,12 +9,14 @@ import io.grpc.Deadline;
 import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
+import io.partdb.grpc.error.v1.ErrorReason;
+import io.partdb.grpc.error.v1.LeaderHint;
 import io.partdb.node.NodeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
-import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
@@ -52,33 +54,39 @@ final class Calls {
     static StatusRuntimeException toStatus(RuntimeException error) {
         return switch (error) {
             case StatusRuntimeException status -> status;
-            case NodeException.NotLeader notLeader -> status(Code.UNAVAILABLE, notLeader.getMessage(), "NOT_LEADER",
-                notLeader.leader().map(leader -> Map.of("leader_id", leader.value())).orElse(Map.of()));
-            case NodeException.Busy busy -> status(Code.UNAVAILABLE, busy.getMessage(), "BUSY", Map.of());
-            case NodeException.Unavailable unavailable -> status(Code.UNAVAILABLE, unavailable.getMessage(), null, Map.of());
-            case NodeException.InvalidRequest invalid -> status(Code.INVALID_ARGUMENT, invalid.getMessage(), null, Map.of());
-            case NodeException.Timeout timeout -> status(Code.DEADLINE_EXCEEDED, timeout.getMessage(), null, Map.of());
-            case NodeException.OutcomeUnknown unknown -> status(Code.UNKNOWN, unknown.getMessage(), "OUTCOME_UNKNOWN", Map.of());
-            case NodeException.Cancelled cancelled -> status(Code.CANCELLED, cancelled.getMessage(), null, Map.of());
+            case NodeException.NotLeader notLeader -> status(Code.UNAVAILABLE, notLeader.getMessage(), ErrorReason.NOT_LEADER,
+                notLeader.leader().map(leader -> LeaderHint.newBuilder().setLeaderId(leader.value()).build()));
+            case NodeException.Busy busy -> status(Code.UNAVAILABLE, busy.getMessage(), ErrorReason.BUSY, Optional.empty());
+            case NodeException.Unavailable unavailable -> status(Code.UNAVAILABLE, unavailable.getMessage());
+            case NodeException.InvalidRequest invalid -> status(Code.INVALID_ARGUMENT, invalid.getMessage());
+            case NodeException.Timeout timeout -> status(Code.DEADLINE_EXCEEDED, timeout.getMessage());
+            case NodeException.OutcomeUnknown unknown -> status(Code.UNKNOWN, unknown.getMessage(), ErrorReason.OUTCOME_UNKNOWN, Optional.empty());
+            case NodeException.Cancelled cancelled -> status(Code.CANCELLED, cancelled.getMessage());
             case NodeException.Internal internal -> internal(internal);
             default -> internal(error);
         };
     }
 
     static StatusRuntimeException invalid(String message) {
-        return status(Code.INVALID_ARGUMENT, message, null, Map.of());
+        return status(Code.INVALID_ARGUMENT, message);
     }
 
     private static StatusRuntimeException internal(RuntimeException error) {
         log.atError().setCause(error).log("Request failed with an internal error");
-        return status(Code.INTERNAL, "internal error", null, Map.of());
+        return status(Code.INTERNAL, "internal error");
     }
 
-    private static StatusRuntimeException status(Code code, String message, String reason, Map<String, String> metadata) {
-        var status = Status.newBuilder().setCode(code.getNumber()).setMessage(message == null ? code.name() : message);
-        if (reason != null) {
-            status.addDetails(Any.pack(ErrorInfo.newBuilder().setReason(reason).setDomain(DOMAIN).putAllMetadata(metadata).build()));
-        }
+    private static StatusRuntimeException status(Code code, String message) {
+        return StatusProto.toStatusRuntimeException(base(code, message).build());
+    }
+
+    private static StatusRuntimeException status(Code code, String message, ErrorReason reason, Optional<LeaderHint> hint) {
+        var status = base(code, message).addDetails(Any.pack(ErrorInfo.newBuilder().setReason(reason.name()).setDomain(DOMAIN).build()));
+        hint.ifPresent(leader -> status.addDetails(Any.pack(leader)));
         return StatusProto.toStatusRuntimeException(status.build());
+    }
+
+    private static Status.Builder base(Code code, String message) {
+        return Status.newBuilder().setCode(code.getNumber()).setMessage(message == null ? code.name() : message);
     }
 }

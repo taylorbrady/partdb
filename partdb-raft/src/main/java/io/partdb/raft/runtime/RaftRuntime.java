@@ -43,7 +43,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
     private final LogStore storage;
     private final RaftTransport transport;
     private final StateMachine<R> stateMachine;
-    private final Requests requests;
+    private final Requests<R> requests;
     private final Snapshots snapshots;
     private final LogRetention retention;
     private final LinkedBlockingQueue<LoopEvent> events = new LinkedBlockingQueue<>();
@@ -66,8 +66,9 @@ public final class RaftRuntime<R> implements AutoCloseable {
         this.storage = storage;
         this.transport = transport;
         this.stateMachine = stateMachine;
-        this.requests = new Requests(raft.appliedIndex());
-        this.snapshots = new Snapshots(nodeId, storage, files, stateMachine, transport, CALLBACKS, this::enqueue);
+        this.requests = new Requests<>(raft.appliedIndex());
+        Executor snapshotThreads = task -> Thread.ofPlatform().name("raft-snapshot-" + nodeId).daemon(true).start(task);
+        this.snapshots = new Snapshots(nodeId, storage, files, stateMachine, transport, snapshotThreads, this::enqueue);
         this.retention = config.retention();
         this.syncedState = storage.hardState();
         this.lastRole = raft.role();
@@ -106,33 +107,32 @@ public final class RaftRuntime<R> implements AutoCloseable {
         }
     }
 
-    @SuppressWarnings("unchecked")
     public CompletionStage<R> propose(Bytes command) {
         Objects.requireNonNull(command, "command must not be null");
-        var pending = new Requests.Pending.Proposal(new CompletableFuture<>());
-        return submit(pending, id -> new Input.Propose(id, command)).thenApply(result -> (R) result);
+        var future = new CompletableFuture<R>();
+        return submit(future, new Requests.Pending.Proposal<>(future), id -> new Input.Propose(id, command));
     }
 
     public CompletionStage<Long> readBarrier() {
-        var pending = new Requests.Pending.Read(new CompletableFuture<>());
-        return submit(pending, Input.ReadIndex::new);
+        var future = new CompletableFuture<Long>();
+        return submit(future, new Requests.Pending.Read<>(future), Input.ReadIndex::new);
     }
 
     public CompletionStage<Membership> changeMembership(MembershipChange change) {
         Objects.requireNonNull(change, "change must not be null");
-        var pending = new Requests.Pending.Change(new CompletableFuture<>());
-        return submit(pending, id -> new Input.ChangeMembership(id, change));
+        var future = new CompletableFuture<Membership>();
+        return submit(future, new Requests.Pending.Change<>(future), id -> new Input.ChangeMembership(id, change));
     }
 
     public CompletionStage<Void> transferLeadership(NodeId target) {
         Objects.requireNonNull(target, "target must not be null");
-        var pending = new Requests.Pending.Transfer(new CompletableFuture<>());
-        return submit(pending, id -> new Input.TransferLeadership(id, target));
+        var future = new CompletableFuture<Void>();
+        return submit(future, new Requests.Pending.Transfer<>(future), id -> new Input.TransferLeadership(id, target));
     }
 
     public CompletionStage<Void> stepDown() {
-        var pending = new Requests.Pending.Transfer(new CompletableFuture<>());
-        return submit(pending, Input.StepDown::new);
+        var future = new CompletableFuture<Void>();
+        return submit(future, new Requests.Pending.Transfer<>(future), Input.StepDown::new);
     }
 
     public RaftStatus status() {
@@ -161,13 +161,11 @@ public final class RaftRuntime<R> implements AutoCloseable {
         publishStatus();
     }
 
-    @SuppressWarnings("unchecked")
-    private <T> CompletionStage<T> submit(Requests.Pending pending, LongFunction<Input> input) {
-        var future = (CompletableFuture<T>) pending.future();
+    private <T> CompletionStage<T> submit(CompletableFuture<T> future, Requests.Pending<R> pending, LongFunction<Input> input) {
         if (!running) {
             return CompletableFuture.failedFuture(new RaftException.Closed());
         }
-        events.add(new LoopEvent.Submit(pending, input));
+        events.add(new LoopEvent.Submit(future, () -> raft.step(input.apply(requests.register(pending)))));
         if (!running) {
             future.completeExceptionally(new RaftException.Closed());
         }
@@ -195,7 +193,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
             running = false;
             throw e;
         }
-        loop = Thread.ofVirtual().name("raft-" + nodeId).start(this::run);
+        loop = Thread.ofPlatform().name("raft-" + nodeId).daemon(true).start(this::run);
     }
 
     private void run() {
@@ -237,7 +235,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
     private void handle(LoopEvent event) {
         switch (event) {
             case LoopEvent.Step(var input) -> raft.step(input);
-            case LoopEvent.Submit(var pending, var input) -> raft.step(input.apply(requests.register(pending)));
+            case LoopEvent.Submit(_, var register) -> register.run();
             case LoopEvent.SnapshotReceived received -> {
                 snapshots.received(received);
                 raft.step(new Input.InstallSnapshot(received.from(), received.term(), received.info().metadata()));
@@ -362,7 +360,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
         requests.failAll(error);
         for (LoopEvent event; (event = events.poll()) != null; ) {
             switch (event) {
-                case LoopEvent.Submit(var pending, _) -> pending.future().completeExceptionally(error);
+                case LoopEvent.Submit(var future, _) -> future.completeExceptionally(error);
                 case LoopEvent.SnapshotReceived received -> SnapshotFiles.deleteQuietly(received.payload());
                 case LoopEvent.SnapshotGenerated generated -> SnapshotFiles.deleteQuietly(generated.payload());
                 case LoopEvent.Step _, LoopEvent.SnapshotDelivered _, LoopEvent.Shutdown _ -> {

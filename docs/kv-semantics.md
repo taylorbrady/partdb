@@ -87,7 +87,7 @@ to a client, the status carries a `google.rpc.ErrorInfo` detail in the
 
 | Status | `ErrorInfo.reason` | Meaning |
 | --- | --- | --- |
-| `UNAVAILABLE` | `NOT_LEADER` | The node is not the leader; `leader_id` metadata names the leader when known. The request was not applied. |
+| `UNAVAILABLE` | `NOT_LEADER` | The node is not the leader; a `partdb.error.v1.LeaderHint` detail names the leader when known. The request was not applied. |
 | `UNAVAILABLE` | `BUSY` | A leadership transfer or membership change is in progress. The request was not applied. |
 | `UNAVAILABLE` | none | The node is unreachable, shutting down, or has failed. |
 | `INVALID_ARGUMENT` | none | The request is malformed or over a limit. |

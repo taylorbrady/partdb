@@ -14,10 +14,15 @@ final class Disk {
 
     static final String TEMPORARY_SUFFIX = ".tmp";
 
+    private static final boolean DIRECTORY_SYNC = !System.getProperty("os.name", "").startsWith("Windows");
+
     private Disk() {
     }
 
     static void syncDirectory(Path directory) {
+        if (!DIRECTORY_SYNC) {
+            return;
+        }
         try (var channel = FileChannel.open(directory, StandardOpenOption.READ)) {
             channel.force(true);
         } catch (IOException e) {
