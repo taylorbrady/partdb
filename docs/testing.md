@@ -50,9 +50,10 @@ Keep focused suites by protocol concern:
   catch-up, snapshots, reads, membership, leadership transfer).
 - `SimulationTest`: randomized, seeded cluster histories. Each seed drives
   three or five cores through message loss, delay, duplication, reordering,
-  partitions, crashes, unreachable reports, leadership transfers, membership
-  changes (including leader self-removal), and log compaction while clients
-  issue reads and writes. Every run checks election
+  partitions, crashes (including crashes after a leader has sent entries but
+  before it persisted them), unreachable reports, leadership transfers,
+  membership changes (including leader self-removal), and log compaction while
+  clients issue reads and writes. Every run checks election
   safety, state machine safety, commit monotonicity, log matching,
   convergence after faults heal, and linearizability of the client history
   (`LinearizabilityChecker`, a WGL search over per-key register histories).

@@ -264,9 +264,10 @@ public final class RaftRuntime<R> implements AutoCloseable {
 
     private void processReady() {
         for (var ready = raft.ready(); !ready.isEmpty(); ready = raft.ready()) {
+            ready.messages().forEach(transport::send);
             ready.snapshot().ifPresent(this::installSnapshot);
             persist(ready);
-            ready.messages().forEach(transport::send);
+            ready.persistedMessages().forEach(transport::send);
             ready.outcomes().forEach(requests::resolve);
             for (LogEntry entry : ready.committed()) {
                 apply(entry);

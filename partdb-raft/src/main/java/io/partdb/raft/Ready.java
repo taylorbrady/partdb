@@ -12,6 +12,7 @@ public record Ready(
     Optional<SnapshotMetadata> snapshot,
     List<LogEntry> entries,
     List<Envelope> messages,
+    List<Envelope> persistedMessages,
     List<LogEntry> committed,
     List<Outcome> outcomes,
     Set<NodeId> snapshotRequests
@@ -21,6 +22,7 @@ public record Ready(
         Objects.requireNonNull(snapshot, "snapshot must not be null");
         entries = List.copyOf(entries);
         messages = List.copyOf(messages);
+        persistedMessages = List.copyOf(persistedMessages);
         committed = List.copyOf(committed);
         outcomes = List.copyOf(outcomes);
         snapshotRequests = Collections.unmodifiableSortedSet(new TreeSet<>(snapshotRequests));
@@ -31,6 +33,7 @@ public record Ready(
             && snapshot.isEmpty()
             && entries.isEmpty()
             && messages.isEmpty()
+            && persistedMessages.isEmpty()
             && committed.isEmpty()
             && outcomes.isEmpty()
             && snapshotRequests.isEmpty();

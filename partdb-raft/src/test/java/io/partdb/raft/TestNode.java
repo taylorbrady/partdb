@@ -131,10 +131,11 @@ final class TestNode {
         var snapshots = new ArrayList<SnapshotMetadata>();
         var hardStates = new ArrayList<HardState>();
         for (var ready = raft.ready(); !ready.isEmpty(); ready = raft.ready()) {
+            messages.addAll(ready.messages());
             log.persist(ready);
             ready.hardState().ifPresent(hardStates::add);
             ready.snapshot().ifPresent(snapshots::add);
-            messages.addAll(ready.messages());
+            messages.addAll(ready.persistedMessages());
             persisted.addAll(ready.entries());
             committed.addAll(ready.committed());
             outcomes.addAll(ready.outcomes());

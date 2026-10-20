@@ -34,7 +34,8 @@ final class Simulation {
         double transferRate,
         double membershipRate,
         int spares,
-        int compactionThreshold
+        int compactionThreshold,
+        double unpersistedCrashRate
     ) {
         static Settings forSeed(long seed) {
             var random = new SplittableRandom(~seed);
@@ -51,7 +52,8 @@ final class Simulation {
                 random.nextDouble(0.01),
                 random.nextDouble(0.01),
                 random.nextInt(3),
-                10 + random.nextInt(60)
+                10 + random.nextInt(60),
+                random.nextDouble(0.01)
             );
         }
     }
@@ -60,6 +62,8 @@ final class Simulation {
 
     private static final int CLIENT_TIMEOUT_TICKS = 200;
     private static final int CONVERGENCE_TICKS = 2000;
+    private static final int MAX_READIES_PER_STEP = 1000;
+    private static final int MAX_IN_FLIGHT = 100_000;
 
     private final long seed;
     private final Settings settings;
@@ -67,8 +71,8 @@ final class Simulation {
     private final Options options = Options.defaults();
     private final Membership membership;
     private final Map<NodeId, Node> nodes = new LinkedHashMap<>();
-    private final PriorityQueue<Envelope> network = new PriorityQueue<>(
-        Comparator.comparingLong(Envelope::deliverAt).thenComparingLong(Envelope::sequence));
+    private final PriorityQueue<InFlight> network = new PriorityQueue<>(
+        Comparator.comparingLong(InFlight::deliverAt).thenComparingLong(InFlight::sequence));
     private final List<Client> clients = new ArrayList<>();
     private final List<Operation> history = new ArrayList<>();
     private final List<PendingWrite> indeterminate = new ArrayList<>();
@@ -278,7 +282,7 @@ final class Simulation {
                 continue;
             }
             drainInbox(node);
-            if (random.nextDouble() < 0.95) {
+            if (node.up && random.nextDouble() < 0.95) {
                 step(node, new Input.Tick());
             }
         }
@@ -292,15 +296,15 @@ final class Simulation {
 
     private void deliverMessages() {
         while (!network.isEmpty() && network.peek().deliverAt() <= now) {
-            var envelope = network.poll();
-            Node target = nodes.get(envelope.to());
-            if (!target.up || partitioned.contains(envelope.from()) != partitioned.contains(envelope.to())) {
+            var delivery = network.poll();
+            Node target = nodes.get(delivery.to());
+            if (!target.up || partitioned.contains(delivery.from()) != partitioned.contains(delivery.to())) {
                 continue;
             }
-            if (envelope.input() instanceof Input.InstallSnapshot install) {
-                target.incomingSnapshots.put(install.snapshot().index(), envelope.snapshot());
+            if (delivery.input() instanceof Input.InstallSnapshot install) {
+                target.incomingSnapshots.put(install.snapshot().index(), delivery.snapshot());
             }
-            step(target, envelope.input());
+            step(target, delivery.input());
         }
     }
 
@@ -411,6 +415,9 @@ final class Simulation {
     }
 
     private void step(Node node, Input input) {
+        if (!node.up) {
+            return;
+        }
         if (trace != null && !(input instanceof Input.Tick)) {
             trace.printf("%5d %s %-13s t=%d c=%d a=%d log=[%d..%d] <- %s%n", now, node.id, node.raft.role(), node.raft.term(),
                 node.raft.commitIndex(), node.raft.appliedIndex(), node.log.firstIndex(), node.log.lastIndex(), input);
@@ -420,13 +427,23 @@ final class Simulation {
     }
 
     private void drain(Node node) {
+        int readies = 0;
         for (var effects = node.raft.ready(); !effects.isEmpty(); effects = node.raft.ready()) {
+            if (++readies > MAX_READIES_PER_STEP) {
+                fail(node.id + " kept producing work without new input: " + effects);
+            }
             observe(node);
+            effects.messages().forEach(this::send);
+            if (crashesBeforePersisting(effects)) {
+                if (trace != null) {
+                    trace.printf("%5d %s crashed before persisting %d entries%n", now, node.id, effects.entries().size());
+                }
+                crash(node);
+                return;
+            }
             effects.snapshot().ifPresent(metadata -> restoreSnapshot(node, metadata));
             node.log.persist(effects);
-            for (var envelope : effects.messages()) {
-                send(envelope.from(), envelope.to(), new Input.Receive(envelope.from(), envelope.message()), null);
-            }
+            effects.persistedMessages().forEach(this::send);
             effects.outcomes().forEach(result -> resolveProposal(node, result));
             effects.committed().forEach(entry -> apply(node, entry));
             effects.outcomes().forEach(result -> resolveRead(node, result));
@@ -435,6 +452,17 @@ final class Simulation {
             effects.persisted().ifPresent(node.raft::step);
         }
         observe(node);
+    }
+
+    private boolean crashesBeforePersisting(Ready effects) {
+        return now < settings.ticks()
+            && !effects.messages().isEmpty()
+            && effects.snapshot().isEmpty()
+            && random.nextDouble() < settings.unpersistedCrashRate();
+    }
+
+    private void send(Envelope envelope) {
+        send(envelope.from(), envelope.to(), new Input.Receive(envelope.from(), envelope.message()), null);
     }
 
     private void restoreSnapshot(Node node, SnapshotMetadata metadata) {
@@ -551,9 +579,12 @@ final class Simulation {
             }
             return false;
         }
-        network.add(new Envelope(now + 1 + random.nextInt(settings.maxDelay()), sequence++, from, to, input, snapshot));
+        if (network.size() >= MAX_IN_FLIGHT) {
+            fail("message storm: " + network.size() + " messages in flight");
+        }
+        network.add(new InFlight(now + 1 + random.nextInt(settings.maxDelay()), sequence++, from, to, input, snapshot));
         if (random.nextDouble() < settings.duplicateRate()) {
-            network.add(new Envelope(now + 1 + random.nextInt(settings.maxDelay()), sequence++, from, to, input, snapshot));
+            network.add(new InFlight(now + 1 + random.nextInt(settings.maxDelay()), sequence++, from, to, input, snapshot));
         }
         return true;
     }
@@ -576,7 +607,7 @@ final class Simulation {
         throw new AssertionError("seed " + seed + " at tick " + now + ": " + message);
     }
 
-    private record Envelope(long deliverAt, long sequence, NodeId from, NodeId to, Input input, Map<String, String> snapshot) {}
+    private record InFlight(long deliverAt, long sequence, NodeId from, NodeId to, Input input, Map<String, String> snapshot) {}
 
     private sealed interface Pending permits PendingWrite, PendingRead {}
 

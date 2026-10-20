@@ -209,8 +209,9 @@ final class ClusterHarness {
             if (ready.snapshot().isPresent()) {
                 applied.get(node).clear();
             }
-            log.persist(ready);
             inFlight.addAll(ready.messages());
+            log.persist(ready);
+            inFlight.addAll(ready.persistedMessages());
             applied.get(node).addAll(ready.committed());
             outcomes.get(node).addAll(ready.outcomes());
             for (NodeId peer : ready.snapshotRequests()) {

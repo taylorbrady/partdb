@@ -200,13 +200,20 @@ public final class Raft {
 
         var hardState = new HardState(term, Optional.ofNullable(votedFor), commitIndex);
         var changedHardState = hardState.equals(lastHardState) ? Optional.<HardState>empty() : Optional.of(hardState);
+        boolean voteDurable = hardState.term() == lastHardState.term() && hardState.votedFor().equals(lastHardState.votedFor());
         lastHardState = hardState;
 
+        var immediate = new ArrayList<Envelope>();
+        var afterPersist = new ArrayList<Envelope>();
+        for (Envelope envelope : messages) {
+            (voteDurable && replicates(envelope.message()) ? immediate : afterPersist).add(envelope);
+        }
         var ready = new Ready(
             changedHardState,
             unstable.takeSnapshot(),
             unstable.takeEntries(),
-            messages,
+            immediate,
+            afterPersist,
             committed,
             outcomes,
             snapshotRequests
@@ -1080,6 +1087,10 @@ public final class Raft {
             bytes += entry.payloadSize();
         }
         return result;
+    }
+
+    private static boolean replicates(Message message) {
+        return message instanceof Message.AppendEntries || message instanceof Message.Heartbeat;
     }
 
     private void send(NodeId to, Message message) {

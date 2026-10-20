@@ -80,7 +80,14 @@ The module has two packages:
 - `io.partdb.raft` is the pure core. `Raft.step(Input)` mutates state and
   `Raft.ready()` drains everything that must happen next as one `Ready`: hard
   state, snapshot and entries to persist, messages to send, committed entries
-  to apply, request `Outcome`s, and snapshot requests. Every request (proposal,
+  to apply, request `Outcome`s, and snapshot requests. Messages come in two
+  lists: `messages` may be sent before the `Ready` is persisted, and
+  `persistedMessages` only after. Only a leader's appends and heartbeats in a
+  `Ready` that keeps the term and vote are immediate, so the leader writes to
+  its own log while its followers write to theirs; acknowledgments, votes, and
+  vote requests promise durable state and wait. The leader counts its own copy
+  toward commit only once `Input.Persisted` reports it, and each `Ready` must
+  be persisted before the next `ready()`. Every request (proposal,
   read, membership change, leadership transfer) carries an id and ends in
   exactly one outcome; a rejection names its `Rejection` reason. Any number of
   inputs batch into one `ready`. The leader tracks each peer with a `Progress`
@@ -94,8 +101,9 @@ The module has two packages:
   `RaftCorePurityTest` keeps JDK IO, clocks, threads, and runtime imports out
   of it.
 - `io.partdb.raft.runtime` drives the core from one platform-thread event loop:
-  it persists each `ready` with one sync, sends one-way messages through the
-  `RaftTransport` SPI, applies committed entries to a `StateMachine<R>` (every
+  for each `ready` it sends the immediate messages, persists with one sync,
+  then sends the persisted messages, all one-way through the `RaftTransport`
+  SPI. It applies committed entries to a `StateMachine<R>` (every
   index reaches it: commands through `apply`, no-ops and configuration entries
   through `skip`), and completes proposals, read barriers, membership changes,
   and leadership transfers. `Requests` owns every pending future; `Snapshots`
