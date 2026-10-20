@@ -88,7 +88,8 @@ final class RaftService extends RaftPeerGrpc.RaftPeerImplBase {
                 if (sink != null) {
                     sink.abort();
                 }
-                log.atDebug().addKeyValue("from", from).addKeyValue("error", error.getMessage()).log("Snapshot stream failed");
+                log.atWarn().addKeyValue("nodeId", self).addKeyValue("from", from).addKeyValue("reason", PeerErrors.describe(error))
+                    .log("Snapshot transfer from peer was interrupted");
             }
 
             @Override
@@ -115,7 +116,7 @@ final class RaftService extends RaftPeerGrpc.RaftPeerImplBase {
                 if (sink != null) {
                     sink.abort();
                 }
-                log.atDebug().addKeyValue("from", from).addKeyValue("error", error.getMessage()).log("Snapshot install failed");
+                log.atWarn().addKeyValue("nodeId", self).addKeyValue("from", from).setCause(error).log("Rejected a snapshot from peer");
                 responses.onError(Status.INTERNAL.withDescription(error.getMessage()).withCause(error).asRuntimeException());
             }
         };

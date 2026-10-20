@@ -1,6 +1,8 @@
 package io.partdb.storage;
 
 import io.partdb.bytes.Bytes;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -25,6 +27,7 @@ import java.util.function.UnaryOperator;
 
 public final class Store implements AutoCloseable {
 
+    private static final Logger log = LoggerFactory.getLogger(Store.class);
     private static final long STALL_RECHECK_MILLIS = 100;
 
     private final StoreDirectory directory;
@@ -70,6 +73,13 @@ public final class Store implements AutoCloseable {
                 levels.get(placement.level()).add(table);
             }
             version = Version.of(levels);
+            log.atInfo()
+                .addKeyValue("directory", directory)
+                .addKeyValue("durableRevision", manifest.durableRevision())
+                .addKeyValue("tables", tables.size())
+                .addKeyValue("tableBytes", tables.stream().mapToLong(table -> table.metadata().sizeBytes()).sum())
+                .addKeyValue("levelZeroTables", version.levelZeroCount())
+                .log("Opened store");
         } finally {
             tables.forEach(TableReader::release);
         }
@@ -274,6 +284,11 @@ public final class Store implements AutoCloseable {
             return;
         }
         stalledWrites.incrementAndGet();
+        long started = System.nanoTime();
+        log.atWarn()
+            .addKeyValue("levelZeroTables", current.get().version().levelZeroCount())
+            .addKeyValue("stopTrigger", options.levelZeroStopTrigger())
+            .log("Stalling writes until level zero compaction catches up");
         while (current.get().version().levelZeroCount() >= options.levelZeroStopTrigger()) {
             ensureOpen();
             flusher.throwIfFailed();
@@ -290,9 +305,11 @@ public final class Store implements AutoCloseable {
                 stateLock.unlock();
             }
         }
+        log.atInfo().addKeyValue("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis()).log("Resumed writes");
     }
 
     private void flush(Memtable memtable) {
+        long started = System.nanoTime();
         Optional<TableReader> table = Optional.empty();
         try {
             if (!memtable.isEmpty()) {
@@ -305,6 +322,14 @@ public final class Store implements AutoCloseable {
                 commit(memtable.revision(), next);
                 durableRevision = memtable.revision();
                 publish(state -> state.flushed(memtable, next));
+                table.ifPresent(flushed -> log.atInfo()
+                    .addKeyValue("table", flushed.metadata().id())
+                    .addKeyValue("revision", memtable.revision())
+                    .addKeyValue("memtableBytes", memtable.sizeBytes())
+                    .addKeyValue("tableBytes", flushed.metadata().sizeBytes())
+                    .addKeyValue("levelZeroTables", next.levelZeroCount())
+                    .addKeyValue("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis())
+                    .log("Flushed memtable"));
             } finally {
                 editLock.unlock();
             }

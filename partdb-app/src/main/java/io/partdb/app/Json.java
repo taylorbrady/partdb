@@ -2,6 +2,7 @@ package io.partdb.app;
 
 import java.lang.reflect.RecordComponent;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 final class Json {
@@ -32,6 +33,20 @@ final class Json {
                     write(out, list.get(i));
                 }
                 out.append(']');
+            }
+            case Map<?, ?> map -> {
+                out.append('{');
+                boolean first = true;
+                for (var entry : map.entrySet()) {
+                    if (!first) {
+                        out.append(',');
+                    }
+                    first = false;
+                    string(out, String.valueOf(entry.getKey()));
+                    out.append(':');
+                    write(out, entry.getValue());
+                }
+                out.append('}');
             }
             case Record record -> {
                 out.append('{');

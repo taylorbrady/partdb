@@ -13,7 +13,9 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 public final class PartDbServer implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(PartDbServer.class);
@@ -34,7 +36,7 @@ public final class PartDbServer implements AutoCloseable {
 
     public static PartDbServer start(ServerConfig config) throws IOException {
         Objects.requireNonNull(config, "config must not be null");
-        log.atInfo().addKeyValue("nodeId", config.nodeId()).log("Starting PartDB server");
+        long started = System.nanoTime();
         var resources = new ArrayDeque<AutoCloseable>();
         try {
             RaftTransport transport = RaftTransport.standalone();
@@ -51,11 +53,17 @@ public final class PartDbServer implements AutoCloseable {
             var admin = new AdminHttpServer(node, config.adminPort());
             resources.push(admin);
             admin.start();
-            log.atInfo()
+            var event = log.atInfo()
                 .addKeyValue("nodeId", config.nodeId())
+                .addKeyValue("clusterId", config.clusterId())
                 .addKeyValue("clientPort", config.clientPort())
-                .addKeyValue("raftPort", config.raftPort().orElse(null))
-                .addKeyValue("adminPort", config.adminPort())
+                .addKeyValue("adminPort", config.adminPort());
+            config.raftPort().ifPresent(port -> event.addKeyValue("raftPort", port));
+            event
+                .addKeyValue("peers", peers(config))
+                .addKeyValue("logRetentionEntries", config.retention().entries())
+                .addKeyValue("logRetentionBytes", config.retention().bytes())
+                .addKeyValue("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis())
                 .log("PartDB server started");
             return new PartDbServer(config, node, admin, resources);
         } catch (IOException | RuntimeException e) {
@@ -77,7 +85,7 @@ public final class PartDbServer implements AutoCloseable {
         admin.drain();
         handOffLeadership();
         var failure = closeAll(resources);
-        log.atInfo().addKeyValue("nodeId", config.nodeId()).log("PartDB server shut down");
+        log.atInfo().addKeyValue("nodeId", config.nodeId()).log("PartDB server stopped");
         if (failure != null) {
             throw failure;
         }
@@ -90,8 +98,18 @@ public final class PartDbServer implements AutoCloseable {
         try {
             node.stepDown(HAND_OFF_TIMEOUT);
         } catch (NodeException e) {
-            log.atInfo().addKeyValue("reason", e.getMessage()).log("Leadership hand-off skipped");
+            log.atInfo().addKeyValue("nodeId", config.nodeId()).addKeyValue("reason", e.getMessage()).log("Leadership hand-off skipped");
         }
+    }
+
+    private static String peers(ServerConfig config) {
+        if (config.peers().isEmpty()) {
+            return "none";
+        }
+        return config.peers().entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .map(peer -> peer.getKey() + "=" + peer.getValue().host() + ":" + peer.getValue().port())
+            .collect(Collectors.joining(","));
     }
 
     private static RuntimeException closeAll(Deque<AutoCloseable> resources) {

@@ -152,9 +152,11 @@ Use this suite for:
 - CLI `put`, `get`, `status`, and `members`
 - clean shutdown on SIGTERM
 
-Each node process writes its stdout and stderr to per-start log files under the
-test's temp directory, which is kept when the test fails. Stopping a node fails
-the test unless the process exits within ten seconds and logs `Server stopped`.
+Each node process logs JSON (`--log-format json`) and writes its stdout and
+stderr to per-start log files under the test's temp directory, which is kept
+when the test fails. Stopping a node fails the test unless the process exits
+within ten seconds, logs `PartDB server stopped`, and wrote only JSON log
+records to stdout.
 
 Keep this suite focused on shipped-artifact smoke coverage. Behavioral cluster
 scenarios such as failover, restart, and catch-up belong in `integrationTest`.

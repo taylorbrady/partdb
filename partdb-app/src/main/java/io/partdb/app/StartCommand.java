@@ -2,16 +2,20 @@ package io.partdb.app;
 
 import io.partdb.server.PartDbServer;
 import io.partdb.server.ServerConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.event.Level;
 
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Objects;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
 
-record StartCommand(ServerConfig config) implements AppCommand {
+record StartCommand(ServerConfig config, OutputFormat logFormat, Level logLevel) implements AppCommand {
     private static final String USAGE = """
         Usage: partdb server start [options]
 
@@ -28,6 +32,8 @@ record StartCommand(ServerConfig config) implements AppCommand {
               --log-retention-entries <n>
                                          Durable log entries kept for lagging peers (default: %d)
               --log-retention-bytes <n>  Durable log bytes kept for lagging peers (default: %d)
+              --log-format <format>      Log format: text or json (default: text)
+              --log-level <level>        Log level: error, warn, info, debug, or trace (default: info)
           -h, --help                     Show this help message
 
         Examples:
@@ -42,11 +48,15 @@ record StartCommand(ServerConfig config) implements AppCommand {
 
     StartCommand {
         Objects.requireNonNull(config, "config must not be null");
+        Objects.requireNonNull(logFormat, "logFormat must not be null");
+        Objects.requireNonNull(logLevel, "logLevel must not be null");
     }
 
     static AppCommand parse(Args args) {
         String nodeId = null;
         Path dataDir = null;
+        OutputFormat logFormat = OutputFormat.TEXT;
+        Level logLevel = Level.INFO;
         List<Consumer<ServerConfig.Builder>> settings = new ArrayList<>();
         try {
             while (args.hasNext()) {
@@ -87,6 +97,19 @@ record StartCommand(ServerConfig config) implements AppCommand {
                         long bytes = args.longValue(arg);
                         settings.add(builder -> builder.logRetentionBytes(bytes));
                     }
+                    case "--log-format" -> logFormat = switch (args.value(arg)) {
+                        case "text" -> OutputFormat.TEXT;
+                        case "json" -> OutputFormat.JSON;
+                        case String other -> throw new IllegalArgumentException("--log-format must be text or json, got: " + other);
+                    };
+                    case "--log-level" -> logLevel = switch (args.value(arg)) {
+                        case "error" -> Level.ERROR;
+                        case "warn" -> Level.WARN;
+                        case "info" -> Level.INFO;
+                        case "debug" -> Level.DEBUG;
+                        case "trace" -> Level.TRACE;
+                        case String other -> throw new IllegalArgumentException("--log-level must be error, warn, info, debug, or trace, got: " + other);
+                    };
                     default -> throw new IllegalArgumentException("unknown option: " + arg);
                 }
             }
@@ -98,7 +121,7 @@ record StartCommand(ServerConfig config) implements AppCommand {
             }
             var builder = ServerConfig.builder(nodeId, dataDir);
             settings.forEach(setting -> setting.accept(builder));
-            return new StartCommand(builder.build());
+            return new StartCommand(builder.build(), logFormat, logLevel);
         } catch (IllegalArgumentException e) {
             return new UsageError(e.getMessage(), USAGE);
         }
@@ -106,16 +129,18 @@ record StartCommand(ServerConfig config) implements AppCommand {
 
     @Override
     public ExitCode execute(PrintStream out, PrintStream err) {
+        System.setProperty("partdb.log.format", logFormat.name().toLowerCase(Locale.ROOT));
+        System.setProperty("partdb.log.level", logLevel.name());
+        Logger log = LoggerFactory.getLogger(StartCommand.class);
         var shutdownRequested = new CountDownLatch(1);
         var stopped = new CountDownLatch(1);
         Thread hook = Thread.ofPlatform().name("shutdown-hook").unstarted(() -> {
-            out.println("Received shutdown signal");
             shutdownRequested.countDown();
             awaitUninterruptibly(stopped);
         });
         Runtime.getRuntime().addShutdownHook(hook);
         try {
-            return serve(out, err, shutdownRequested);
+            return serve(log, shutdownRequested);
         } finally {
             stopped.countDown();
             try {
@@ -125,26 +150,21 @@ record StartCommand(ServerConfig config) implements AppCommand {
         }
     }
 
-    private ExitCode serve(PrintStream out, PrintStream err, CountDownLatch shutdownRequested) {
+    private ExitCode serve(Logger log, CountDownLatch shutdownRequested) {
+        log.atInfo()
+            .addKeyValue("version", PartDbApp.VERSION)
+            .addKeyValue("java", Runtime.version())
+            .addKeyValue("nodeId", config.nodeId())
+            .addKeyValue("dataDir", config.dataDirectory().toAbsolutePath())
+            .log("Starting PartDB");
         try (var _ = PartDbServer.start(config)) {
-            out.println("PartDB node '" + config.nodeId() + "' started");
-            out.println("  Cluster:     " + config.clusterId());
-            out.println("  Client port: " + config.clientPort());
-            out.println("  Admin port:  " + config.adminPort());
-            config.raftPort().ifPresentOrElse(
-                port -> out.println("  Raft port:   " + port + " (" + config.peers().size() + " members)"),
-                () -> out.println("  Mode:        single-node"));
-            out.println("  Data dir:    " + config.dataDirectory().toAbsolutePath());
             shutdownRequested.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
-            err.println("Failed to start server: " + e.getMessage());
-            e.printStackTrace(err);
+            log.atError().setCause(e).log("PartDB server failed");
             return ExitCode.FAILED;
         }
-        out.println("Server stopped");
-        out.flush();
         return ExitCode.OK;
     }
 

@@ -12,7 +12,8 @@ dependencies {
 
     testFixturesApi(project(":partdb-client"))
 
-    runtimeOnly(libs.logback.classic)
+    implementation(libs.slf4j.api)
+    implementation(libs.logback.classic)
 }
 
 tasks.jar {

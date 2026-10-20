@@ -17,10 +17,12 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.zip.CRC32C;
@@ -30,7 +32,7 @@ final class Snapshots {
 
     private static final Logger log = LoggerFactory.getLogger(Snapshots.class);
 
-    private record Staged(SnapshotInfo info, Path payload) {}
+    private record Staged(NodeId from, SnapshotInfo info, Path payload) {}
 
     private static final class Outgoing {
         private final Path payload;
@@ -55,6 +57,7 @@ final class Snapshots {
     private final Map<NodeId, Outgoing> sending = new HashMap<>();
     private Outgoing current;
     private CompletableFuture<Void> generation;
+    private long generationStarted;
 
     Snapshots(
         NodeId self,
@@ -81,6 +84,7 @@ final class Snapshots {
             Path installing = files.installing(base).orElseThrow(() -> new RaftStorageException.Corruption(
                 "state machine at " + applied + " is behind the raft log, which starts after " + base));
             restore(stateMachine, installing, base);
+            log.atInfo().addKeyValue("index", base).log("Finished a snapshot install interrupted by a restart");
         }
         files.clearInstalls();
     }
@@ -112,6 +116,8 @@ final class Snapshots {
         }
         var metadata = new SnapshotMetadata(index, storage.term(index), raft.membershipAt(index));
         var fresh = new Outgoing(generated.payload(), new SnapshotInfo(metadata, generated.size(), generated.checksum()));
+        log.atInfo().addKeyValue("nodeId", self).addKeyValue("index", index).addKeyValue("bytes", generated.size())
+            .addKeyValue("durationMs", millisSince(generationStarted)).log("Generated snapshot");
         current = fresh;
         waiting.forEach((peer, term) -> transfer(peer, term, fresh));
         waiting.clear();
@@ -131,7 +137,7 @@ final class Snapshots {
     }
 
     void received(LoopEvent.SnapshotReceived received) {
-        var previous = staged.put(received.info().metadata().index(), new Staged(received.info(), received.payload()));
+        var previous = staged.put(received.info().metadata().index(), new Staged(received.from(), received.info(), received.payload()));
         if (previous != null) {
             SnapshotFiles.deleteQuietly(previous.payload());
         }
@@ -145,10 +151,19 @@ final class Snapshots {
         if (generation != null) {
             generation.join();
         }
+        long started = System.nanoTime();
         Path installing = files.promote(snapshot.payload(), metadata.index());
         storage.reset(metadata);
         restore(stateMachine, installing, metadata.index());
         SnapshotFiles.deleteQuietly(installing);
+        log.atInfo()
+            .addKeyValue("nodeId", self)
+            .addKeyValue("from", snapshot.from())
+            .addKeyValue("index", metadata.index())
+            .addKeyValue("term", metadata.term())
+            .addKeyValue("bytes", snapshot.info().size())
+            .addKeyValue("durationMs", millisSince(started))
+            .log("Installed snapshot");
     }
 
     void discardStaged() {
@@ -168,6 +183,7 @@ final class Snapshots {
         Path payload = files.stagingFile("outgoing");
         var done = new CompletableFuture<Void>();
         generation = done;
+        generationStarted = System.nanoTime();
         executor.execute(() -> {
             try (FileChannel channel = FileChannel.open(payload, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
                 var crc = new CRC32C();
@@ -195,10 +211,20 @@ final class Snapshots {
         outgoing.transfers++;
         sending.put(peer, outgoing);
         var source = new Source(outgoing.info, channel);
+        long started = System.nanoTime();
         transport.sendSnapshot(peer, term, source).whenComplete((_, error) -> {
             source.close();
-            if (error != null) {
-                log.atDebug().addKeyValue("nodeId", self).addKeyValue("peer", peer).setCause(error).log("Snapshot transfer failed");
+            var event = error == null ? log.atInfo() : log.atWarn();
+            event.addKeyValue("nodeId", self)
+                .addKeyValue("peer", peer)
+                .addKeyValue("index", outgoing.info.metadata().index())
+                .addKeyValue("bytes", outgoing.info.size())
+                .addKeyValue("durationMs", millisSince(started));
+            if (error == null) {
+                event.log("Sent snapshot");
+            } else {
+                var cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+                event.addKeyValue("reason", cause.toString()).log("Failed to send snapshot");
             }
             events.accept(new LoopEvent.SnapshotDelivered(peer, error == null));
         });
@@ -212,6 +238,10 @@ final class Snapshots {
         if (current == outgoing) {
             current = null;
         }
+    }
+
+    private static long millisSince(long started) {
+        return Duration.ofNanos(System.nanoTime() - started).toMillis();
     }
 
     private static void restore(StateMachine<?> stateMachine, Path payload, long index) {

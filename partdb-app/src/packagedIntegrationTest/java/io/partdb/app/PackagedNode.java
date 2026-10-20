@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 
 final class PackagedNode implements TestClusterNode {
     private static final Duration STOP_TIMEOUT = Duration.ofSeconds(10);
-    private static final String CLEAN_STOP_MARKER = "Server stopped";
+    private static final String CLEAN_STOP_MARKER = "PartDB server stopped";
 
     private final Path executable;
     private final Path nodeDir;
@@ -74,6 +74,8 @@ final class PackagedNode implements TestClusterNode {
         command.add(Integer.toString(spec.clientPort()));
         command.add("--admin-port");
         command.add(Integer.toString(spec.adminPort()));
+        command.add("--log-format");
+        command.add("json");
 
         process = new ProcessBuilder(command)
             .redirectOutput(stdoutLog.toFile())
@@ -92,8 +94,12 @@ final class PackagedNode implements TestClusterNode {
                 process.destroyForcibly();
                 throw new AssertionError(nodeId() + " did not exit within " + STOP_TIMEOUT + " of SIGTERM" + output());
             }
-            if (!read(stdoutLog).contains(CLEAN_STOP_MARKER)) {
+            String stdout = read(stdoutLog);
+            if (!stdout.contains(CLEAN_STOP_MARKER)) {
                 throw new AssertionError(nodeId() + " did not shut down cleanly" + output());
+            }
+            if (!stdout.lines().allMatch(line -> line.startsWith("{\"time\":") && line.endsWith("}"))) {
+                throw new AssertionError(nodeId() + " wrote a stdout line that is not a JSON log record" + output());
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

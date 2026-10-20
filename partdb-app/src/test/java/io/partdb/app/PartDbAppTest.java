@@ -6,6 +6,7 @@ import io.partdb.client.KeyRange;
 import io.partdb.client.ReadConsistency;
 import io.partdb.client.ScanOptions;
 import org.junit.jupiter.api.Test;
+import org.slf4j.event.Level;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -98,6 +99,19 @@ class PartDbAppTest {
 
         assertEquals(Optional.of(8100), command.config().raftPort());
         assertEquals(50, command.config().retention().entries());
+        assertEquals(OutputFormat.TEXT, command.logFormat());
+        assertEquals(Level.INFO, command.logLevel());
+    }
+
+    @Test
+    void parsesServerLogOptions() {
+        var command = assertInstanceOf(StartCommand.class, parse(
+            "server", "start", "--node-id", "node1", "--data-dir", "/tmp/partdb", "--log-format", "json", "--log-level", "debug"));
+
+        assertEquals(OutputFormat.JSON, command.logFormat());
+        assertEquals(Level.DEBUG, command.logLevel());
+        assertInstanceOf(AppCommand.UsageError.class, parse("server", "start", "-n", "n1", "-d", "/tmp/p", "--log-format", "xml"));
+        assertInstanceOf(AppCommand.UsageError.class, parse("server", "start", "-n", "n1", "-d", "/tmp/p", "--log-level", "loud"));
     }
 
     record Sample(String text, List<Object> values, Optional<String> missing, ExitCode exit) {}

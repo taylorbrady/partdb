@@ -1,15 +1,14 @@
 <configuration>
-    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder>
-            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
+    <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="io.partdb.app.LogEncoder">
+            <format>${partdb.log.format:-text}</format>
         </encoder>
     </appender>
 
     <logger name="io.grpc" level="WARN"/>
     <logger name="io.netty" level="WARN"/>
-    <logger name="io.grpc.netty" level="WARN"/>
 
-    <root level="INFO">
-        <appender-ref ref="STDOUT"/>
+    <root level="${partdb.log.level:-INFO}">
+        <appender-ref ref="console"/>
     </root>
 </configuration>

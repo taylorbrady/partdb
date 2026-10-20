@@ -52,7 +52,13 @@ partdb cluster members
 Cluster members are configured with repeatable `--peer nodeId=host:raftPort`
 arguments (including the local node). Client commands read endpoints from
 `--endpoints` or `PARTDB_ENDPOINTS`; exit codes are 0 (ok), 1 (error), 2
-(usage), and 3 (key not found).
+(usage), 3 (key not found), and 4 (condition failed).
+
+A server logs one record per line to stdout, as `key=value` text by default or
+as flat JSON objects with `--log-format json`; `--log-level` sets the threshold.
+At `info` it records startup and recovery, role and leader changes, peer
+connectivity, snapshot transfers and installs, memtable flushes, and
+compactions; slow log syncs, slow applies, and write stalls are warnings.
 
 ## Building and testing
 

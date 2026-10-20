@@ -8,12 +8,19 @@ import io.partdb.raft.runtime.RaftTransport;
 import io.partdb.server.peer.proto.PeerMessage;
 import io.partdb.server.peer.proto.RaftPeerGrpc;
 import io.partdb.server.peer.proto.SendResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
 import java.util.Queue;
 
 final class PeerStream {
 
+    private static final Logger log = LoggerFactory.getLogger(PeerStream.class);
+
+    private enum Connection { UNKNOWN, CONNECTED, UNREACHABLE }
+
+    private final NodeId self;
     private final NodeId peer;
     private final RaftPeerGrpc.RaftPeerStub stub;
     private final RaftTransport.Receiver receiver;
@@ -21,9 +28,11 @@ final class PeerStream {
     private final Queue<PeerMessage> queue = new ArrayDeque<>();
     private long queuedBytes;
     private ClientCallStreamObserver<PeerMessage> stream;
+    private Connection connection = Connection.UNKNOWN;
     private boolean closed;
 
-    PeerStream(NodeId peer, RaftPeerGrpc.RaftPeerStub stub, RaftTransport.Receiver receiver, long capacityBytes) {
+    PeerStream(NodeId self, NodeId peer, RaftPeerGrpc.RaftPeerStub stub, RaftTransport.Receiver receiver, long capacityBytes) {
+        this.self = self;
         this.peer = peer;
         this.stub = stub;
         this.receiver = receiver;
@@ -39,6 +48,8 @@ final class PeerStream {
             }
             overflow = queuedBytes + proto.getSerializedSize() > capacityBytes && !queue.isEmpty();
             if (overflow) {
+                log.atWarn().addKeyValue("nodeId", self).addKeyValue("peer", peer).addKeyValue("queuedBytes", queuedBytes)
+                    .log("Dropping messages for a peer that is not keeping up");
                 reset();
             } else {
                 queue.add(proto);
@@ -84,6 +95,7 @@ final class PeerStream {
                 requests.setOnReadyHandler(() -> {
                     synchronized (PeerStream.this) {
                         if (stream == call) {
+                            connected();
                             drain();
                         }
                     }
@@ -96,12 +108,12 @@ final class PeerStream {
 
             @Override
             public void onError(Throwable error) {
-                disconnected(call);
+                disconnected(call, PeerErrors.describe(error));
             }
 
             @Override
             public void onCompleted() {
-                disconnected(call);
+                disconnected(call, "stream closed by peer");
             }
         });
     }
@@ -114,7 +126,14 @@ final class PeerStream {
         }
     }
 
-    private void disconnected(ClientCallStreamObserver<PeerMessage> call) {
+    private void connected() {
+        if (connection != Connection.CONNECTED) {
+            connection = Connection.CONNECTED;
+            log.atInfo().addKeyValue("nodeId", self).addKeyValue("peer", peer).log("Connected to peer");
+        }
+    }
+
+    private void disconnected(ClientCallStreamObserver<PeerMessage> call, String reason) {
         synchronized (this) {
             if (stream != call) {
                 return;
@@ -122,6 +141,10 @@ final class PeerStream {
             stream = null;
             queue.clear();
             queuedBytes = 0;
+            if (connection != Connection.UNREACHABLE && !closed) {
+                connection = Connection.UNREACHABLE;
+                log.atWarn().addKeyValue("nodeId", self).addKeyValue("peer", peer).addKeyValue("reason", reason).log("Peer is unreachable");
+            }
         }
         receiver.unreachable(peer);
     }

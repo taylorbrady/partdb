@@ -104,8 +104,8 @@ final class Compactor implements AutoCloseable {
         try {
             List<TableReader> inputs = task.inputs().stream().map(input -> version.table(input.id()).orElseThrow()).toList();
             installed = switch (task) {
-                case CompactionPlanner.Move move -> store.installCompaction(inputs, inputs, move.targetLevel());
-                case CompactionPlanner.Merge merge -> merge(merge, inputs);
+                case CompactionPlanner.Move move -> move(move, inputs);
+                case CompactionPlanner.Merge merge -> merge(merge, inputs, started);
             };
             if (installed) {
                 completed.incrementAndGet();
@@ -136,12 +136,36 @@ final class Compactor implements AutoCloseable {
         }
     }
 
-    private boolean merge(CompactionPlanner.Merge merge, List<TableReader> inputs) {
+    private boolean move(CompactionPlanner.Move move, List<TableReader> inputs) {
+        boolean installed = store.installCompaction(inputs, inputs, move.targetLevel());
+        if (installed) {
+            log.atInfo()
+                .addKeyValue("table", move.table().id())
+                .addKeyValue("sourceLevel", move.sourceLevel())
+                .addKeyValue("targetLevel", move.targetLevel())
+                .addKeyValue("bytes", move.table().sizeBytes())
+                .log("Moved table");
+        }
+        return installed;
+    }
+
+    private boolean merge(CompactionPlanner.Merge merge, List<TableReader> inputs, long started) {
         List<TableReader> outputs = new ArrayList<>();
         try {
             write(merge, inputs, outputs);
             boolean installed = store.installCompaction(inputs, outputs, merge.targetLevel());
-            if (!installed) {
+            if (installed) {
+                log.atInfo()
+                    .addKeyValue("sourceLevel", merge.sourceLevel())
+                    .addKeyValue("targetLevel", merge.targetLevel())
+                    .addKeyValue("inputTables", inputs.size())
+                    .addKeyValue("inputBytes", bytes(inputs))
+                    .addKeyValue("outputTables", outputs.size())
+                    .addKeyValue("outputBytes", bytes(outputs))
+                    .addKeyValue("droppedTombstones", merge.dropTombstones())
+                    .addKeyValue("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis())
+                    .log("Compacted tables");
+            } else {
                 outputs.forEach(TableReader::markObsolete);
             }
             return installed;
@@ -188,6 +212,10 @@ final class Compactor implements AutoCloseable {
         if (!outputs.isEmpty()) {
             directory.sync();
         }
+    }
+
+    private static long bytes(List<TableReader> tables) {
+        return tables.stream().mapToLong(table -> table.metadata().sizeBytes()).sum();
     }
 
     private TableReader finish(TableWriter writer, StoreDirectory directory) {

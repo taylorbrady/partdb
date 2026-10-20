@@ -118,7 +118,7 @@ public final class GrpcRaftTransport implements RaftTransport, AutoCloseable {
 
     private PeerStream openStream(NodeId peer) {
         var stub = stub(peer);
-        return stub == null ? null : new PeerStream(peer, stub, receiver, STREAM_CAPACITY_BYTES);
+        return stub == null ? null : new PeerStream(nodeId, peer, stub, receiver, STREAM_CAPACITY_BYTES);
     }
 
     private RaftPeerGrpc.RaftPeerStub stub(NodeId peer) {

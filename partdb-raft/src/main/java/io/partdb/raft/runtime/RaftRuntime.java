@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Objects;
@@ -36,6 +37,8 @@ public final class RaftRuntime<R> implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(RaftRuntime.class);
     private static final Executor CALLBACKS = Thread::startVirtualThread;
     private static final int MAX_BATCH = 4096;
+    private static final long SLOW_SYNC_NANOS = Duration.ofSeconds(1).toNanos();
+    private static final long SLOW_APPLY_NANOS = Duration.ofMillis(100).toNanos();
 
     private final NodeId nodeId;
     private final long tickNanos;
@@ -96,6 +99,15 @@ public final class RaftRuntime<R> implements AutoCloseable {
                 stateMachine.appliedIndex(),
                 new SplittableRandom()
             );
+            var event = log.atInfo()
+                .addKeyValue("nodeId", config.nodeId())
+                .addKeyValue("term", storage.hardState().term())
+                .addKeyValue("commitIndex", storage.hardState().commit())
+                .addKeyValue("appliedIndex", stateMachine.appliedIndex())
+                .addKeyValue("firstIndex", storage.firstIndex())
+                .addKeyValue("lastIndex", storage.lastIndex());
+            storage.hardState().votedFor().ifPresent(vote -> event.addKeyValue("votedFor", vote));
+            event.log("Recovered raft log");
             var runtime = new RaftRuntime<>(config, raft, storage, files, transport, stateMachine);
             runtime.start();
             return runtime;
@@ -272,7 +284,13 @@ public final class RaftRuntime<R> implements AutoCloseable {
         var state = ready.hardState().orElse(syncedState);
         boolean voteChanged = state.term() != syncedState.term() || !state.votedFor().equals(syncedState.votedFor());
         if (!ready.entries().isEmpty() || voteChanged) {
+            long started = System.nanoTime();
             storage.sync();
+            long elapsed = System.nanoTime() - started;
+            if (elapsed > SLOW_SYNC_NANOS) {
+                log.atWarn().addKeyValue("nodeId", nodeId).addKeyValue("entries", ready.entries().size())
+                    .addKeyValue("durationMs", Duration.ofNanos(elapsed).toMillis()).log("Slow raft log sync");
+            }
         }
         syncedState = state;
     }
@@ -304,12 +322,18 @@ public final class RaftRuntime<R> implements AutoCloseable {
     }
 
     private void apply(LogEntry entry) {
+        long started = System.nanoTime();
         switch (entry) {
             case LogEntry.Command command -> requests.applied(entry, Optional.ofNullable(stateMachine.apply(command.index(), command.command())));
             case LogEntry.Configuration _, LogEntry.NoOp _ -> {
                 stateMachine.skip(entry.index());
                 requests.applied(entry, Optional.empty());
             }
+        }
+        long elapsed = System.nanoTime() - started;
+        if (elapsed > SLOW_APPLY_NANOS) {
+            log.atWarn().addKeyValue("nodeId", nodeId).addKeyValue("index", entry.index())
+                .addKeyValue("durationMs", Duration.ofNanos(elapsed).toMillis()).log("Slow state machine apply");
         }
     }
 
@@ -319,22 +343,24 @@ public final class RaftRuntime<R> implements AutoCloseable {
         if (role == lastRole && leader.equals(lastLeader)) {
             return;
         }
-        log.atInfo()
+        var event = log.atInfo()
             .addKeyValue("nodeId", nodeId)
             .addKeyValue("term", raft.term())
-            .addKeyValue("previousRole", lastRole)
-            .addKeyValue("role", role)
-            .addKeyValue("leader", leader.orElse(null))
-            .log("Raft role changed");
+            .addKeyValue("role", role);
+        if (role != lastRole) {
+            event.addKeyValue("previousRole", lastRole);
+        }
+        leader.ifPresent(id -> event.addKeyValue("leader", id));
+        event.log(role != lastRole ? "Raft role changed" : leader.isPresent() ? "Raft leader changed" : "Raft leader lost");
 
-        var event = new LeaderChangeEvent();
-        event.nodeId = nodeId.value();
-        event.term = raft.term();
-        event.previousRole = lastRole.name();
-        event.newRole = role.name();
-        event.previousLeaderId = lastLeader.map(NodeId::value).orElse(null);
-        event.newLeaderId = leader.map(NodeId::value).orElse(null);
-        event.commit();
+        var change = new LeaderChangeEvent();
+        change.nodeId = nodeId.value();
+        change.term = raft.term();
+        change.previousRole = lastRole.name();
+        change.newRole = role.name();
+        change.previousLeaderId = lastLeader.map(NodeId::value).orElse(null);
+        change.newLeaderId = leader.map(NodeId::value).orElse(null);
+        change.commit();
 
         lastRole = role;
         lastLeader = leader;
