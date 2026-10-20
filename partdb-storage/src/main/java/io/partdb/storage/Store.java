@@ -1,12 +1,12 @@
 package io.partdb.storage;
 
 import io.partdb.bytes.Bytes;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -25,9 +25,11 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.UnaryOperator;
 
+import static java.util.Map.entry;
+
 public final class Store implements AutoCloseable {
 
-    private static final Logger log = LoggerFactory.getLogger(Store.class);
+    private static final Logger log = System.getLogger(Store.class.getName());
     private static final long STALL_RECHECK_MILLIS = 100;
 
     private final StoreDirectory directory;
@@ -73,13 +75,12 @@ public final class Store implements AutoCloseable {
                 levels.get(placement.level()).add(table);
             }
             version = Version.of(levels);
-            log.atInfo()
-                .addKeyValue("directory", directory)
-                .addKeyValue("durableRevision", manifest.durableRevision())
-                .addKeyValue("tables", tables.size())
-                .addKeyValue("tableBytes", tables.stream().mapToLong(table -> table.metadata().sizeBytes()).sum())
-                .addKeyValue("levelZeroTables", version.levelZeroCount())
-                .log("Opened store");
+            log.log(Level.INFO, "Opened store",
+                entry("directory", directory),
+                entry("durableRevision", manifest.durableRevision()),
+                entry("tables", tables.size()),
+                entry("tableBytes", tables.stream().mapToLong(table -> table.metadata().sizeBytes()).sum()),
+                entry("levelZeroTables", version.levelZeroCount()));
         } finally {
             tables.forEach(TableReader::release);
         }
@@ -285,10 +286,9 @@ public final class Store implements AutoCloseable {
         }
         stalledWrites.incrementAndGet();
         long started = System.nanoTime();
-        log.atWarn()
-            .addKeyValue("levelZeroTables", current.get().version().levelZeroCount())
-            .addKeyValue("stopTrigger", options.levelZeroStopTrigger())
-            .log("Stalling writes until level zero compaction catches up");
+        log.log(Level.WARNING, "Stalling writes until level zero compaction catches up",
+            entry("levelZeroTables", current.get().version().levelZeroCount()),
+            entry("stopTrigger", options.levelZeroStopTrigger()));
         while (current.get().version().levelZeroCount() >= options.levelZeroStopTrigger()) {
             ensureOpen();
             flusher.throwIfFailed();
@@ -305,7 +305,7 @@ public final class Store implements AutoCloseable {
                 stateLock.unlock();
             }
         }
-        log.atInfo().addKeyValue("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis()).log("Resumed writes");
+        log.log(Level.INFO, "Resumed writes", entry("stalled", Duration.ofNanos(System.nanoTime() - started)));
     }
 
     private void flush(Memtable memtable) {
@@ -322,14 +322,13 @@ public final class Store implements AutoCloseable {
                 commit(memtable.revision(), next);
                 durableRevision = memtable.revision();
                 publish(state -> state.flushed(memtable, next));
-                table.ifPresent(flushed -> log.atInfo()
-                    .addKeyValue("table", flushed.metadata().id())
-                    .addKeyValue("revision", memtable.revision())
-                    .addKeyValue("memtableBytes", memtable.sizeBytes())
-                    .addKeyValue("tableBytes", flushed.metadata().sizeBytes())
-                    .addKeyValue("levelZeroTables", next.levelZeroCount())
-                    .addKeyValue("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis())
-                    .log("Flushed memtable"));
+                table.ifPresent(flushed -> log.log(Level.INFO, "Flushed memtable",
+                    entry("table", flushed.metadata().id()),
+                    entry("revision", memtable.revision()),
+                    entry("memtableBytes", memtable.sizeBytes()),
+                    entry("tableBytes", flushed.metadata().sizeBytes()),
+                    entry("levelZeroTables", next.levelZeroCount()),
+                    entry("duration", Duration.ofNanos(System.nanoTime() - started))));
             } finally {
                 editLock.unlock();
             }

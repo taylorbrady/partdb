@@ -5,6 +5,4 @@ plugins {
 
 dependencies {
     jmh(project(":partdb-storage"))
-
-    jmhRuntimeOnly(libs.logback.classic)
 }

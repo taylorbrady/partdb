@@ -6,10 +6,10 @@ import io.partdb.raft.Role;
 import io.partdb.raft.runtime.RaftTransport;
 import io.partdb.server.grpc.GrpcServer;
 import io.partdb.server.peer.GrpcRaftTransport;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -17,8 +17,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import static java.util.Map.entry;
+
 public final class PartDbServer implements AutoCloseable {
-    private static final Logger log = LoggerFactory.getLogger(PartDbServer.class);
+    private static final Logger log = System.getLogger(PartDbServer.class.getName());
     private static final Duration HAND_OFF_TIMEOUT = Duration.ofSeconds(2);
 
     private final ServerConfig config;
@@ -53,18 +55,15 @@ public final class PartDbServer implements AutoCloseable {
             var admin = new AdminHttpServer(node, config.adminPort());
             resources.push(admin);
             admin.start();
-            var event = log.atInfo()
-                .addKeyValue("nodeId", config.nodeId())
-                .addKeyValue("clusterId", config.clusterId())
-                .addKeyValue("clientPort", config.clientPort())
-                .addKeyValue("adminPort", config.adminPort());
-            config.raftPort().ifPresent(port -> event.addKeyValue("raftPort", port));
-            event
-                .addKeyValue("peers", peers(config))
-                .addKeyValue("logRetentionEntries", config.retention().entries())
-                .addKeyValue("logRetentionBytes", config.retention().bytes())
-                .addKeyValue("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis())
-                .log("PartDB server started");
+            log.log(Level.INFO, "PartDB server started",
+                entry("clusterId", config.clusterId()),
+                entry("clientPort", config.clientPort()),
+                entry("adminPort", config.adminPort()),
+                entry("raftPort", config.raftPort()),
+                entry("peers", peers(config)),
+                entry("logRetentionEntries", config.retention().entries()),
+                entry("logRetentionBytes", config.retention().bytes()),
+                entry("duration", Duration.ofNanos(System.nanoTime() - started)));
             return new PartDbServer(config, node, admin, resources);
         } catch (IOException | RuntimeException e) {
             var failure = closeAll(resources);
@@ -81,11 +80,11 @@ public final class PartDbServer implements AutoCloseable {
             return;
         }
         closed = true;
-        log.atInfo().addKeyValue("nodeId", config.nodeId()).log("Shutting down PartDB server");
+        log.log(Level.INFO, "Shutting down PartDB server");
         admin.drain();
         handOffLeadership();
         var failure = closeAll(resources);
-        log.atInfo().addKeyValue("nodeId", config.nodeId()).log("PartDB server stopped");
+        log.log(Level.INFO, "PartDB server stopped");
         if (failure != null) {
             throw failure;
         }
@@ -98,7 +97,7 @@ public final class PartDbServer implements AutoCloseable {
         try {
             node.stepDown(HAND_OFF_TIMEOUT);
         } catch (NodeException e) {
-            log.atInfo().addKeyValue("nodeId", config.nodeId()).addKeyValue("reason", e.getMessage()).log("Leadership hand-off skipped");
+            log.log(Level.INFO, "Leadership hand-off skipped", entry("reason", e.getMessage()));
         }
     }
 

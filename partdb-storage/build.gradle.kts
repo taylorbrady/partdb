@@ -6,6 +6,4 @@ plugins {
 
 dependencies {
     api(project(":partdb-bytes"))
-
-    implementation(libs.slf4j.api)
 }

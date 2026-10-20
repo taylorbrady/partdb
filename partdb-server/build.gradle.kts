@@ -12,7 +12,6 @@ dependencies {
     implementation(libs.grpc.protobuf)
     implementation(libs.grpc.stub)
     implementation(libs.protobuf.java)
-    implementation(libs.slf4j.api)
 }
 
 protobuf {

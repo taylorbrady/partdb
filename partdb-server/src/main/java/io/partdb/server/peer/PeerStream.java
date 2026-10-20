@@ -8,19 +8,20 @@ import io.partdb.raft.runtime.RaftTransport;
 import io.partdb.server.peer.proto.PeerMessage;
 import io.partdb.server.peer.proto.RaftPeerGrpc;
 import io.partdb.server.peer.proto.SendResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.util.ArrayDeque;
 import java.util.Queue;
 
+import static java.util.Map.entry;
+
 final class PeerStream {
 
-    private static final Logger log = LoggerFactory.getLogger(PeerStream.class);
+    private static final Logger log = System.getLogger(PeerStream.class.getName());
 
     private enum Connection { UNKNOWN, CONNECTED, UNREACHABLE }
 
-    private final NodeId self;
     private final NodeId peer;
     private final RaftPeerGrpc.RaftPeerStub stub;
     private final RaftTransport.Receiver receiver;
@@ -31,8 +32,7 @@ final class PeerStream {
     private Connection connection = Connection.UNKNOWN;
     private boolean closed;
 
-    PeerStream(NodeId self, NodeId peer, RaftPeerGrpc.RaftPeerStub stub, RaftTransport.Receiver receiver, long capacityBytes) {
-        this.self = self;
+    PeerStream(NodeId peer, RaftPeerGrpc.RaftPeerStub stub, RaftTransport.Receiver receiver, long capacityBytes) {
         this.peer = peer;
         this.stub = stub;
         this.receiver = receiver;
@@ -48,8 +48,7 @@ final class PeerStream {
             }
             overflow = queuedBytes + proto.getSerializedSize() > capacityBytes && !queue.isEmpty();
             if (overflow) {
-                log.atWarn().addKeyValue("nodeId", self).addKeyValue("peer", peer).addKeyValue("queuedBytes", queuedBytes)
-                    .log("Dropping messages for a peer that is not keeping up");
+                log.log(Level.WARNING, "Dropping messages for a peer that is not keeping up", entry("peer", peer), entry("queuedBytes", queuedBytes));
                 reset();
             } else {
                 queue.add(proto);
@@ -129,7 +128,7 @@ final class PeerStream {
     private void connected() {
         if (connection != Connection.CONNECTED) {
             connection = Connection.CONNECTED;
-            log.atInfo().addKeyValue("nodeId", self).addKeyValue("peer", peer).log("Connected to peer");
+            log.log(Level.INFO, "Connected to peer", entry("peer", peer));
         }
     }
 
@@ -143,7 +142,7 @@ final class PeerStream {
             queuedBytes = 0;
             if (connection != Connection.UNREACHABLE && !closed) {
                 connection = Connection.UNREACHABLE;
-                log.atWarn().addKeyValue("nodeId", self).addKeyValue("peer", peer).addKeyValue("reason", reason).log("Peer is unreachable");
+                log.log(Level.WARNING, "Peer is unreachable", entry("peer", peer), entry("reason", reason));
             }
         }
         receiver.unreachable(peer);

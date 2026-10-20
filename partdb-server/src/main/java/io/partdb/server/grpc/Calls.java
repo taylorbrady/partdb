@@ -12,9 +12,9 @@ import io.grpc.stub.StreamObserver;
 import io.partdb.grpc.error.v1.ErrorReason;
 import io.partdb.grpc.error.v1.LeaderHint;
 import io.partdb.node.NodeException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -22,7 +22,7 @@ import java.util.function.Function;
 
 final class Calls {
 
-    private static final Logger log = LoggerFactory.getLogger(Calls.class);
+    private static final Logger log = System.getLogger(Calls.class.getName());
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
     private static final String DOMAIN = "partdb.io";
 
@@ -72,7 +72,7 @@ final class Calls {
     }
 
     private static StatusRuntimeException internal(RuntimeException error) {
-        log.atError().setCause(error).log("Request failed with an internal error");
+        log.log(Level.ERROR, "Request failed with an internal error", error);
         return status(Code.INTERNAL, "internal error");
     }
 

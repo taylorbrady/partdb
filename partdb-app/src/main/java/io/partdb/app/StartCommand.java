@@ -2,18 +2,18 @@ package io.partdb.app;
 
 import io.partdb.server.PartDbServer;
 import io.partdb.server.ServerConfig;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.slf4j.event.Level;
 
 import java.io.PrintStream;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
+
+import static java.util.Map.entry;
 
 record StartCommand(ServerConfig config, OutputFormat logFormat, Level logLevel) implements AppCommand {
     private static final String USAGE = """
@@ -104,7 +104,7 @@ record StartCommand(ServerConfig config, OutputFormat logFormat, Level logLevel)
                     };
                     case "--log-level" -> logLevel = switch (args.value(arg)) {
                         case "error" -> Level.ERROR;
-                        case "warn" -> Level.WARN;
+                        case "warn" -> Level.WARNING;
                         case "info" -> Level.INFO;
                         case "debug" -> Level.DEBUG;
                         case "trace" -> Level.TRACE;
@@ -129,9 +129,8 @@ record StartCommand(ServerConfig config, OutputFormat logFormat, Level logLevel)
 
     @Override
     public ExitCode execute(PrintStream out, PrintStream err) {
-        System.setProperty("partdb.log.format", logFormat.name().toLowerCase(Locale.ROOT));
-        System.setProperty("partdb.log.level", logLevel.name());
-        Logger log = LoggerFactory.getLogger(StartCommand.class);
+        Logging.configure(logFormat, logLevel, config.nodeId().value());
+        Logger log = System.getLogger(StartCommand.class.getName());
         var shutdownRequested = new CountDownLatch(1);
         var stopped = new CountDownLatch(1);
         Thread hook = Thread.ofPlatform().name("shutdown-hook").unstarted(() -> {
@@ -151,18 +150,16 @@ record StartCommand(ServerConfig config, OutputFormat logFormat, Level logLevel)
     }
 
     private ExitCode serve(Logger log, CountDownLatch shutdownRequested) {
-        log.atInfo()
-            .addKeyValue("version", PartDbApp.VERSION)
-            .addKeyValue("java", Runtime.version())
-            .addKeyValue("nodeId", config.nodeId())
-            .addKeyValue("dataDir", config.dataDirectory().toAbsolutePath())
-            .log("Starting PartDB");
+        log.log(Level.INFO, "Starting PartDB",
+            entry("version", PartDbApp.VERSION),
+            entry("java", Runtime.version()),
+            entry("dataDir", config.dataDirectory().toAbsolutePath()));
         try (var _ = PartDbServer.start(config)) {
             shutdownRequested.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
-            log.atError().setCause(e).log("PartDB server failed");
+            log.log(Level.ERROR, "PartDB server failed", e);
             return ExitCode.FAILED;
         }
         return ExitCode.OK;

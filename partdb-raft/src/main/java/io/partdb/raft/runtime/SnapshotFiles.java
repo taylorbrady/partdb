@@ -1,9 +1,8 @@
 package io.partdb.raft.runtime;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -11,9 +10,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+import static java.util.Map.entry;
+
 final class SnapshotFiles {
 
-    private static final Logger log = LoggerFactory.getLogger(SnapshotFiles.class);
+    private static final Logger log = System.getLogger(SnapshotFiles.class.getName());
     private static final String STAGING_SUFFIX = ".tmp";
     private static final String INSTALL_SUFFIX = ".install";
 
@@ -67,7 +68,7 @@ final class SnapshotFiles {
         try {
             Files.deleteIfExists(path);
         } catch (IOException e) {
-            log.atWarn().addKeyValue("path", path).setCause(e).log("Failed to delete snapshot file");
+            log.log(Level.WARNING, "Failed to delete snapshot file", entry("path", path), e);
         }
     }
 

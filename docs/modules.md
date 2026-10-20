@@ -129,7 +129,7 @@ The module has two packages:
 Membership, role, and status are modeled once (`Membership`, `Role`,
 `RaftStatus`) and used as-is by the node API.
 
-Allowed dependencies: `partdb-bytes`, SLF4J.
+Allowed dependencies: `partdb-bytes`.
 
 Must not own: gRPC, sockets, PartDB KV commands, storage engine details, or
 process lifecycle.
@@ -269,6 +269,12 @@ This module parses commands, starts servers, and acts as an operational client.
 Each command (`StartCommand`, `KvCommand`, `ClusterCommand`) owns its parsing
 and usage text; `PartDbApp` only routes namespaces. Server defaults come from
 `ServerConfig`, so the CLI never imports Raft or node types.
+It owns logging configuration: `Logging` installs one stdout handler on the JUL
+root logger with `LogFormatter` (text or JSON, stamped with the node id), so
+PartDB's `System.Logger` calls, gRPC, and Netty all share one output.
+`ProcessLogManager`, selected by the start scripts, keeps that handler through
+JVM shutdown, which the default `LogManager` would reset before the server's
+final records are written.
 Its test fixtures hold `TestCluster`, the shared driver for both cluster test
 suites.
 

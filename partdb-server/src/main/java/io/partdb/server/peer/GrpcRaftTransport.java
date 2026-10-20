@@ -15,11 +15,11 @@ import io.partdb.server.peer.proto.InstallSnapshotRequest;
 import io.partdb.server.peer.proto.InstallSnapshotResponse;
 import io.partdb.server.peer.proto.RaftPeerGrpc;
 import io.partdb.server.peer.proto.SnapshotHeader;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.time.Duration;
@@ -31,9 +31,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import static java.util.Map.entry;
+
 public final class GrpcRaftTransport implements RaftTransport, AutoCloseable {
 
-    private static final Logger log = LoggerFactory.getLogger(GrpcRaftTransport.class);
+    private static final Logger log = System.getLogger(GrpcRaftTransport.class.getName());
     private static final int SNAPSHOT_CHUNK_BYTES = 1 << 20;
     private static final long STREAM_CAPACITY_BYTES = 64L << 20;
     private static final int MAX_MESSAGE_BYTES = 64 << 20;
@@ -74,7 +76,7 @@ public final class GrpcRaftTransport implements RaftTransport, AutoCloseable {
         } catch (IOException e) {
             throw new UncheckedIOException("failed to start raft transport on port " + port, e);
         }
-        log.atInfo().addKeyValue("nodeId", nodeId).addKeyValue("port", port).log("Raft transport started");
+        log.log(Level.INFO, "Raft transport started", entry("port", port));
     }
 
     @Override
@@ -113,12 +115,12 @@ public final class GrpcRaftTransport implements RaftTransport, AutoCloseable {
             awaitTermination(channel::awaitTermination);
         }
         channels.clear();
-        log.atInfo().addKeyValue("nodeId", nodeId).log("Raft transport stopped");
+        log.log(Level.INFO, "Raft transport stopped");
     }
 
     private PeerStream openStream(NodeId peer) {
         var stub = stub(peer);
-        return stub == null ? null : new PeerStream(nodeId, peer, stub, receiver, STREAM_CAPACITY_BYTES);
+        return stub == null ? null : new PeerStream(peer, stub, receiver, STREAM_CAPACITY_BYTES);
     }
 
     private RaftPeerGrpc.RaftPeerStub stub(NodeId peer) {

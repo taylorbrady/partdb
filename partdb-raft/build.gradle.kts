@@ -7,8 +7,6 @@ plugins {
 
 dependencies {
     api(project(":partdb-bytes"))
-
-    implementation(libs.slf4j.api)
 }
 
 val simulationTest by tasks.registering(Test::class) {

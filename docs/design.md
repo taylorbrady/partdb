@@ -55,6 +55,11 @@ PartDB should read like idiomatic modern Java:
 - Declare an interface only for an SPI or a family with several
   implementations; otherwise expose a `final class`.
 - Return `CompletionStage` from operations that finish later.
+- Log through `System.Logger`; no logging library is a dependency. A record is
+  a fixed message plus fields passed as `Map.entry(key, value)` parameters:
+  `Optional` values appear only when present, `Duration` values render as
+  durations, and a `Throwable` parameter is the record's error. The node id is
+  added by the process, never at call sites.
 
 ## Module Intent
 

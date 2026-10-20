@@ -12,10 +12,10 @@ import io.partdb.raft.Raft;
 import io.partdb.raft.Ready;
 import io.partdb.raft.Role;
 import io.partdb.raft.SnapshotMetadata;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -32,13 +32,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.LongFunction;
 
+import static java.util.Map.entry;
+
 public final class RaftRuntime<R> implements AutoCloseable {
 
-    private static final Logger log = LoggerFactory.getLogger(RaftRuntime.class);
+    private static final Logger log = System.getLogger(RaftRuntime.class.getName());
     private static final Executor CALLBACKS = Thread::startVirtualThread;
     private static final int MAX_BATCH = 4096;
-    private static final long SLOW_SYNC_NANOS = Duration.ofSeconds(1).toNanos();
-    private static final long SLOW_APPLY_NANOS = Duration.ofMillis(100).toNanos();
+    private static final Duration SLOW_SYNC = Duration.ofSeconds(1);
+    private static final Duration SLOW_APPLY = Duration.ofMillis(100);
 
     private final NodeId nodeId;
     private final long tickNanos;
@@ -71,7 +73,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
         this.stateMachine = stateMachine;
         this.requests = new Requests<>(raft.appliedIndex());
         Executor snapshotThreads = task -> Thread.ofPlatform().name("raft-snapshot-" + nodeId).daemon(true).start(task);
-        this.snapshots = new Snapshots(nodeId, storage, files, stateMachine, transport, snapshotThreads, this::enqueue);
+        this.snapshots = new Snapshots(storage, files, stateMachine, transport, snapshotThreads, this::enqueue);
         this.retention = config.retention();
         this.syncedState = storage.hardState();
         this.lastRole = raft.role();
@@ -99,15 +101,13 @@ public final class RaftRuntime<R> implements AutoCloseable {
                 stateMachine.appliedIndex(),
                 new SplittableRandom()
             );
-            var event = log.atInfo()
-                .addKeyValue("nodeId", config.nodeId())
-                .addKeyValue("term", storage.hardState().term())
-                .addKeyValue("commitIndex", storage.hardState().commit())
-                .addKeyValue("appliedIndex", stateMachine.appliedIndex())
-                .addKeyValue("firstIndex", storage.firstIndex())
-                .addKeyValue("lastIndex", storage.lastIndex());
-            storage.hardState().votedFor().ifPresent(vote -> event.addKeyValue("votedFor", vote));
-            event.log("Recovered raft log");
+            log.log(Level.INFO, "Recovered raft log",
+                entry("term", storage.hardState().term()),
+                entry("votedFor", storage.hardState().votedFor()),
+                entry("commitIndex", storage.hardState().commit()),
+                entry("appliedIndex", stateMachine.appliedIndex()),
+                entry("firstIndex", storage.firstIndex()),
+                entry("lastIndex", storage.lastIndex()));
             var runtime = new RaftRuntime<>(config, raft, storage, files, transport, stateMachine);
             runtime.start();
             return runtime;
@@ -237,7 +237,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (RuntimeException | Error e) {
-            log.atError().addKeyValue("nodeId", nodeId).setCause(e).log("Raft runtime failed");
+            log.log(Level.ERROR, "Raft runtime failed", e);
             running = false;
             failPending(new RaftException.Failed(e));
             publishStatus();
@@ -287,10 +287,9 @@ public final class RaftRuntime<R> implements AutoCloseable {
         if (!ready.entries().isEmpty() || voteChanged) {
             long started = System.nanoTime();
             storage.sync();
-            long elapsed = System.nanoTime() - started;
-            if (elapsed > SLOW_SYNC_NANOS) {
-                log.atWarn().addKeyValue("nodeId", nodeId).addKeyValue("entries", ready.entries().size())
-                    .addKeyValue("durationMs", Duration.ofNanos(elapsed).toMillis()).log("Slow raft log sync");
+            var elapsed = Duration.ofNanos(System.nanoTime() - started);
+            if (elapsed.compareTo(SLOW_SYNC) > 0) {
+                log.log(Level.WARNING, "Slow raft log sync", entry("entries", ready.entries().size()), entry("duration", elapsed));
             }
         }
         syncedState = state;
@@ -308,7 +307,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
             long base = storage.compactionIndex(durable, retention);
             if (base >= storage.firstIndex()) {
                 storage.compact(new SnapshotMetadata(base, storage.term(base), raft.membershipAt(base)));
-                log.atDebug().addKeyValue("nodeId", nodeId).addKeyValue("index", base).log("Compacted raft log");
+                log.log(Level.DEBUG, "Compacted raft log", entry("index", base));
             }
         }
         boolean oversized = storage.retainedEntries() > 2 * retention.entries() || storage.retainedBytes() > 2 * retention.bytes();
@@ -316,7 +315,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
             stateMachine.flush().whenComplete((_, error) -> {
                 flushing.set(false);
                 if (error != null) {
-                    log.atWarn().addKeyValue("nodeId", nodeId).setCause(error).log("State machine flush failed");
+                    log.log(Level.WARNING, "State machine flush failed", error);
                 }
             });
         }
@@ -331,10 +330,9 @@ public final class RaftRuntime<R> implements AutoCloseable {
                 requests.applied(entry, Optional.empty());
             }
         }
-        long elapsed = System.nanoTime() - started;
-        if (elapsed > SLOW_APPLY_NANOS) {
-            log.atWarn().addKeyValue("nodeId", nodeId).addKeyValue("index", entry.index())
-                .addKeyValue("durationMs", Duration.ofNanos(elapsed).toMillis()).log("Slow state machine apply");
+        var elapsed = Duration.ofNanos(System.nanoTime() - started);
+        if (elapsed.compareTo(SLOW_APPLY) > 0) {
+            log.log(Level.WARNING, "Slow state machine apply", entry("index", entry.index()), entry("duration", elapsed));
         }
     }
 
@@ -344,15 +342,11 @@ public final class RaftRuntime<R> implements AutoCloseable {
         if (role == lastRole && leader.equals(lastLeader)) {
             return;
         }
-        var event = log.atInfo()
-            .addKeyValue("nodeId", nodeId)
-            .addKeyValue("term", raft.term())
-            .addKeyValue("role", role);
-        if (role != lastRole) {
-            event.addKeyValue("previousRole", lastRole);
-        }
-        leader.ifPresent(id -> event.addKeyValue("leader", id));
-        event.log(role != lastRole ? "Raft role changed" : leader.isPresent() ? "Raft leader changed" : "Raft leader lost");
+        log.log(Level.INFO, role != lastRole ? "Raft role changed" : leader.isPresent() ? "Raft leader changed" : "Raft leader lost",
+            entry("term", raft.term()),
+            entry("role", role),
+            entry("previousRole", Optional.of(lastRole).filter(previous -> previous != role)),
+            entry("leader", leader));
 
         var change = new LeaderChangeEvent();
         change.nodeId = nodeId.value();

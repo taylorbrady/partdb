@@ -147,7 +147,7 @@ Use this suite for:
 
 - installed executable startup
 - generated start scripts
-- runtime classpath and logging dependencies
+- runtime classpath and logging configuration
 - default JVM arguments
 - 3-node leader election
 - CLI `put`, `get`, `status`, and `members`

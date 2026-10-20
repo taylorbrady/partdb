@@ -10,7 +10,8 @@ val libs = the<VersionCatalogsExtension>().named("libs")
 val jmhJvmArgs = listOf(
     "--sun-misc-unsafe-memory-access=allow",
     "-Xms2g",
-    "-Xmx2g"
+    "-Xmx2g",
+    "-Djava.util.logging.config.file=" + rootProject.file("build-logic/jmh-logging.properties").absolutePath
 )
 
 extensions.configure<JmhParameters>("jmh") {

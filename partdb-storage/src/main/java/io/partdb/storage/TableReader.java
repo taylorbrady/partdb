@@ -1,9 +1,8 @@
 package io.partdb.storage;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.channels.FileChannel;
@@ -16,9 +15,11 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static java.util.Map.entry;
+
 final class TableReader {
 
-    private static final Logger log = LoggerFactory.getLogger(TableReader.class);
+    private static final Logger log = System.getLogger(TableReader.class.getName());
     private static final AtomicLong CACHE_IDS = new AtomicLong();
 
     private final Path path;
@@ -167,7 +168,7 @@ final class TableReader {
                     Disk.syncDirectory(path.getParent());
                 }
             } catch (IOException | StoreException e) {
-                log.atWarn().setCause(e).addKeyValue("table", path).log("Failed to delete obsolete table");
+                log.log(Level.WARNING, "Failed to delete obsolete table", entry("table", path), e);
             }
         }
     }

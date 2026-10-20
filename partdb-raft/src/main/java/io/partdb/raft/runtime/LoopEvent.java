@@ -4,6 +4,7 @@ import io.partdb.raft.Input;
 import io.partdb.raft.NodeId;
 
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 sealed interface LoopEvent {
@@ -15,7 +16,7 @@ sealed interface LoopEvent {
 
     record SnapshotDelivered(NodeId peer, boolean delivered) implements LoopEvent {}
 
-    record SnapshotGenerated(Path payload, long index, long size, int checksum, Throwable failure) implements LoopEvent {}
+    record SnapshotGenerated(Path payload, long index, long size, int checksum, Optional<Throwable> failure) implements LoopEvent {}
 
     record Shutdown() implements LoopEvent {}
 }

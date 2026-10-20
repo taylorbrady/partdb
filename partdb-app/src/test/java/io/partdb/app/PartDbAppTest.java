@@ -6,10 +6,10 @@ import io.partdb.client.KeyRange;
 import io.partdb.client.ReadConsistency;
 import io.partdb.client.ScanOptions;
 import org.junit.jupiter.api.Test;
-import org.slf4j.event.Level;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.lang.System.Logger.Level;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;

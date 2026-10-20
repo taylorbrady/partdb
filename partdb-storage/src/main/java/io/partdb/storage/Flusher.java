@@ -1,8 +1,7 @@
 package io.partdb.storage;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -13,7 +12,7 @@ import java.util.function.Consumer;
 
 final class Flusher implements AutoCloseable {
 
-    private static final Logger log = LoggerFactory.getLogger(Flusher.class);
+    private static final Logger log = System.getLogger(Flusher.class.getName());
     private static final int MAX_PENDING = 4;
 
     private final Consumer<Memtable> flush;
@@ -49,7 +48,7 @@ final class Flusher implements AutoCloseable {
                 flush.accept(memtable);
                 done.complete(null);
             } catch (RuntimeException e) {
-                log.atError().setCause(e).log("Memtable flush failed");
+                log.log(Level.ERROR, "Memtable flush failed", e);
                 failure.compareAndSet(null, e instanceof StoreException storeException
                     ? storeException
                     : new StoreException.IO("Memtable flush failed", e));

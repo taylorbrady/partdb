@@ -3,10 +3,10 @@ package io.partdb.raft.runtime;
 import io.partdb.raft.HardState;
 import io.partdb.raft.LogEntry;
 import io.partdb.raft.SnapshotMetadata;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -14,9 +14,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+import static java.util.Map.entry;
+
 final class WriteAheadLog implements AutoCloseable {
 
-    private static final Logger log = LoggerFactory.getLogger(WriteAheadLog.class);
+    private static final Logger log = System.getLogger(WriteAheadLog.class.getName());
     private static final String SUFFIX = ".wal";
 
     record Replay(HardState hardState, Optional<SnapshotMetadata> base, List<LogEntry> entries) {}
@@ -145,8 +147,7 @@ final class WriteAheadLog implements AutoCloseable {
             long sequence = sequenceOf(path);
             if (last) {
                 if (!scan.complete()) {
-                    log.atWarn().addKeyValue("segment", path).addKeyValue("validBytes", scan.validBytes())
-                        .log("Truncating torn WAL tail");
+                    log.log(Level.WARNING, "Truncating torn WAL tail", entry("segment", path), entry("validBytes", scan.validBytes()));
                 }
                 active = WalSegment.reopen(path, scan.validBytes());
                 activeSequence = sequence;

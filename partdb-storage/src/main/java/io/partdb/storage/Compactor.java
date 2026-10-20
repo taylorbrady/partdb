@@ -1,8 +1,7 @@
 package io.partdb.storage;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -14,9 +13,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
+import static java.util.Map.entry;
+
 final class Compactor implements AutoCloseable {
 
-    private static final Logger log = LoggerFactory.getLogger(Compactor.class);
+    private static final Logger log = System.getLogger(Compactor.class.getName());
 
     private final Store store;
     private final StoreOptions options;
@@ -113,12 +114,11 @@ final class Compactor implements AutoCloseable {
         } catch (RuntimeException e) {
             if (!closed) {
                 failed.incrementAndGet();
-                log.atError()
-                    .setCause(e)
-                    .addKeyValue("sourceLevel", task.sourceLevel())
-                    .addKeyValue("targetLevel", task.targetLevel())
-                    .addKeyValue("inputs", task.inputs().size())
-                    .log("Compaction failed");
+                log.log(Level.ERROR, "Compaction failed",
+                    entry("sourceLevel", task.sourceLevel()),
+                    entry("targetLevel", task.targetLevel()),
+                    entry("inputTables", task.inputs().size()),
+                    e);
             }
         } finally {
             version.release();
@@ -139,12 +139,11 @@ final class Compactor implements AutoCloseable {
     private boolean move(CompactionPlanner.Move move, List<TableReader> inputs) {
         boolean installed = store.installCompaction(inputs, inputs, move.targetLevel());
         if (installed) {
-            log.atInfo()
-                .addKeyValue("table", move.table().id())
-                .addKeyValue("sourceLevel", move.sourceLevel())
-                .addKeyValue("targetLevel", move.targetLevel())
-                .addKeyValue("bytes", move.table().sizeBytes())
-                .log("Moved table");
+            log.log(Level.INFO, "Moved table",
+                entry("table", move.table().id()),
+                entry("sourceLevel", move.sourceLevel()),
+                entry("targetLevel", move.targetLevel()),
+                entry("bytes", move.table().sizeBytes()));
         }
         return installed;
     }
@@ -155,16 +154,15 @@ final class Compactor implements AutoCloseable {
             write(merge, inputs, outputs);
             boolean installed = store.installCompaction(inputs, outputs, merge.targetLevel());
             if (installed) {
-                log.atInfo()
-                    .addKeyValue("sourceLevel", merge.sourceLevel())
-                    .addKeyValue("targetLevel", merge.targetLevel())
-                    .addKeyValue("inputTables", inputs.size())
-                    .addKeyValue("inputBytes", bytes(inputs))
-                    .addKeyValue("outputTables", outputs.size())
-                    .addKeyValue("outputBytes", bytes(outputs))
-                    .addKeyValue("droppedTombstones", merge.dropTombstones())
-                    .addKeyValue("durationMs", Duration.ofNanos(System.nanoTime() - started).toMillis())
-                    .log("Compacted tables");
+                log.log(Level.INFO, "Compacted tables",
+                    entry("sourceLevel", merge.sourceLevel()),
+                    entry("targetLevel", merge.targetLevel()),
+                    entry("inputTables", inputs.size()),
+                    entry("inputBytes", bytes(inputs)),
+                    entry("outputTables", outputs.size()),
+                    entry("outputBytes", bytes(outputs)),
+                    entry("droppedTombstones", merge.dropTombstones()),
+                    entry("duration", Duration.ofNanos(System.nanoTime() - started)));
             } else {
                 outputs.forEach(TableReader::markObsolete);
             }

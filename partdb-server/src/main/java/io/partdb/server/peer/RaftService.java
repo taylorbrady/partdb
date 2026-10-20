@@ -10,14 +10,16 @@ import io.partdb.server.peer.proto.InstallSnapshotResponse;
 import io.partdb.server.peer.proto.PeerMessage;
 import io.partdb.server.peer.proto.RaftPeerGrpc;
 import io.partdb.server.peer.proto.SendResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+
+import static java.util.Map.entry;
 
 final class RaftService extends RaftPeerGrpc.RaftPeerImplBase {
 
-    private static final Logger log = LoggerFactory.getLogger(RaftService.class);
+    private static final Logger log = System.getLogger(RaftService.class.getName());
 
     private final NodeId self;
     private final RaftTransport.Receiver receiver;
@@ -38,7 +40,7 @@ final class RaftService extends RaftPeerGrpc.RaftPeerImplBase {
 
             @Override
             public void onError(Throwable error) {
-                log.atDebug().addKeyValue("from", from).addKeyValue("error", error.getMessage()).log("Peer stream closed");
+                log.log(Level.DEBUG, "Peer stream closed", entry("from", from), entry("reason", PeerErrors.describe(error)));
             }
 
             @Override
@@ -88,8 +90,7 @@ final class RaftService extends RaftPeerGrpc.RaftPeerImplBase {
                 if (sink != null) {
                     sink.abort();
                 }
-                log.atWarn().addKeyValue("nodeId", self).addKeyValue("from", from).addKeyValue("reason", PeerErrors.describe(error))
-                    .log("Snapshot transfer from peer was interrupted");
+                log.log(Level.WARNING, "Snapshot transfer from peer was interrupted", entry("from", from), entry("reason", PeerErrors.describe(error)));
             }
 
             @Override
@@ -116,7 +117,7 @@ final class RaftService extends RaftPeerGrpc.RaftPeerImplBase {
                 if (sink != null) {
                     sink.abort();
                 }
-                log.atWarn().addKeyValue("nodeId", self).addKeyValue("from", from).setCause(error).log("Rejected a snapshot from peer");
+                log.log(Level.WARNING, "Rejected a snapshot from peer", entry("from", from), error);
                 responses.onError(Status.INTERNAL.withDescription(error.getMessage()).withCause(error).asRuntimeException());
             }
         };

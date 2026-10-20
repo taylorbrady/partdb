@@ -11,9 +11,6 @@ dependencies {
     implementation(project(":partdb-client"))
 
     testFixturesApi(project(":partdb-client"))
-
-    implementation(libs.slf4j.api)
-    implementation(libs.logback.classic)
 }
 
 tasks.jar {
@@ -24,7 +21,10 @@ tasks.jar {
 
 application {
     mainClass.set("io.partdb.app.PartDbApp")
-    applicationDefaultJvmArgs = listOf("--sun-misc-unsafe-memory-access=allow")
+    applicationDefaultJvmArgs = listOf(
+        "--sun-misc-unsafe-memory-access=allow",
+        "-Djava.util.logging.manager=io.partdb.app.ProcessLogManager"
+    )
 }
 
 testing {
