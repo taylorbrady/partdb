@@ -1,9 +1,14 @@
 package io.partdb.storage;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -28,6 +33,25 @@ class StoreTest {
             assertEquals(0, store.appliedRevision());
             assertEquals(0, store.durableRevision());
             assertNull(value(store, "missing"));
+        }
+    }
+
+    @Test
+    void refusesADirectoryThatIsAlreadyOpen() {
+        try (Store store = Store.open(directory, StoreOptions.defaults())) {
+            assertThrows(IllegalStateException.class, () -> Store.open(directory, StoreOptions.defaults()));
+            store.apply(1, List.of(put("a", "one")));
+        }
+        try (Store reopened = Store.open(directory, StoreOptions.defaults())) {
+            assertEquals("one", value(reopened, "a"));
+        }
+    }
+
+    @Test
+    void keepsItsDirectoryPrivateToTheOwner() throws IOException {
+        Assumptions.assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"));
+        try (Store _ = Store.open(directory.resolve("store"), StoreOptions.defaults())) {
+            assertEquals(PosixFilePermissions.fromString("rwx------"), Files.getPosixFilePermissions(directory.resolve("store")));
         }
     }
 

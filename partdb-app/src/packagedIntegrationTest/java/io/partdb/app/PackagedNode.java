@@ -72,7 +72,7 @@ final class PackagedNode implements TestClusterNode {
             command.add(peer.getKey() + "=" + peer.getValue());
         }
         command.add("--data-dir");
-        command.add(nodeDir.resolve("data").toString());
+        command.add(dataDirectory().toString());
         command.add("--client-port");
         command.add(Integer.toString(spec.clientPort()));
         command.add("--admin-port");
@@ -111,6 +111,10 @@ final class PackagedNode implements TestClusterNode {
         } finally {
             process = null;
         }
+    }
+
+    Path dataDirectory() {
+        return nodeDir.resolve("data");
     }
 
     void kill() {

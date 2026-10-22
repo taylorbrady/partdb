@@ -13,9 +13,7 @@ import java.lang.System.Logger.Level;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 import static java.util.Map.entry;
 
@@ -43,7 +41,7 @@ public final class PartDbServer implements AutoCloseable {
         try {
             RaftTransport transport = RaftTransport.standalone();
             if (!config.peers().isEmpty()) {
-                var peers = new GrpcRaftTransport(config.clusterId(), config.nodeId(), config.raftPort().orElseThrow(), config.peers());
+                var peers = new GrpcRaftTransport(config.nodeId(), config.raftPort().orElseThrow(), config.peers());
                 resources.push(peers);
                 transport = peers;
             }
@@ -56,11 +54,10 @@ public final class PartDbServer implements AutoCloseable {
             resources.push(admin);
             admin.start();
             log.log(Level.INFO, "PartDB server started",
-                entry("clusterId", config.clusterId()),
                 entry("clientPort", config.clientPort()),
                 entry("adminPort", config.adminPort()),
                 entry("raftPort", config.raftPort()),
-                entry("peers", peers(config)),
+                entry("peers", config.peers().isEmpty() ? "none" : config.peerList()),
                 entry("logRetentionEntries", config.retention().entries()),
                 entry("logRetentionBytes", config.retention().bytes()),
                 entry("duration", Duration.ofNanos(System.nanoTime() - started)));
@@ -99,16 +96,6 @@ public final class PartDbServer implements AutoCloseable {
         } catch (NodeException e) {
             log.log(Level.INFO, "Leadership hand-off skipped", entry("reason", e.getMessage()));
         }
-    }
-
-    private static String peers(ServerConfig config) {
-        if (config.peers().isEmpty()) {
-            return "none";
-        }
-        return config.peers().entrySet().stream()
-            .sorted(Map.Entry.comparingByKey())
-            .map(peer -> peer.getKey() + "=" + peer.getValue().host() + ":" + peer.getValue().port())
-            .collect(Collectors.joining(","));
     }
 
     private static RuntimeException closeAll(Deque<AutoCloseable> resources) {

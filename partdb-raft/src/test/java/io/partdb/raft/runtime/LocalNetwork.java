@@ -15,12 +15,18 @@ import java.util.concurrent.ConcurrentHashMap;
 final class LocalNetwork {
 
     private final Map<NodeId, RaftTransport.Receiver> receivers = new ConcurrentHashMap<>();
+    private final Map<NodeId, ClusterId> clusters = new ConcurrentHashMap<>();
     private final Set<NodeId> isolated = ConcurrentHashMap.newKeySet();
+
+    ClusterId clusterId(NodeId node) {
+        return clusters.get(node);
+    }
 
     RaftTransport transport(NodeId self) {
         return new RaftTransport() {
             @Override
-            public void start(Receiver receiver) {
+            public void start(ClusterId clusterId, Receiver receiver) {
+                clusters.put(self, clusterId);
                 receivers.put(self, receiver);
             }
 

@@ -16,6 +16,7 @@ import io.partdb.raft.SnapshotMetadata;
 import java.io.IOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.nio.channels.FileLock;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -43,6 +44,8 @@ public final class RaftRuntime<R> implements AutoCloseable {
     private static final Duration SLOW_APPLY = Duration.ofMillis(100);
 
     private final NodeId nodeId;
+    private final ClusterId clusterId;
+    private final FileLock lock;
     private final long tickNanos;
     private final Raft raft;
     private final LogStore storage;
@@ -64,8 +67,19 @@ public final class RaftRuntime<R> implements AutoCloseable {
     private volatile Membership membership;
     private Thread loop;
 
-    private RaftRuntime(RaftConfig config, Raft raft, LogStore storage, SnapshotFiles files, RaftTransport transport, StateMachine<R> stateMachine) {
+    private RaftRuntime(
+        RaftConfig config,
+        Identity identity,
+        FileLock lock,
+        Raft raft,
+        LogStore storage,
+        SnapshotFiles files,
+        RaftTransport transport,
+        StateMachine<R> stateMachine
+    ) {
         this.nodeId = config.nodeId();
+        this.clusterId = identity.clusterId();
+        this.lock = lock;
         this.tickNanos = config.tickInterval().toNanos();
         this.raft = raft;
         this.storage = storage;
@@ -86,35 +100,44 @@ public final class RaftRuntime<R> implements AutoCloseable {
         Objects.requireNonNull(transport, "transport must not be null");
         Objects.requireNonNull(stateMachine, "stateMachine must not be null");
 
+        Disk.createPrivateDirectory(directory);
+        var lock = Disk.lock(directory);
         LogStore storage = null;
         try {
             storage = LogStore.open(directory);
             var files = SnapshotFiles.open(directory.resolve("snap"));
-            var cluster = clusterFile(directory, config, storage);
+            var identity = Identity.open(directory, config, storage);
             Snapshots.recover(stateMachine, storage, files);
+            long applied = stateMachine.appliedIndex();
+            if (applied < storage.firstIndex() - 1 || applied > storage.lastIndex()) {
+                throw new RaftStorageException.Corruption("state machine applied index " + applied + " is outside the raft log ["
+                    + (storage.firstIndex() - 1) + ", " + storage.lastIndex() + "] in " + directory);
+            }
             var raft = Raft.recover(
                 config.nodeId(),
-                storage.base().map(SnapshotMetadata::membership).orElse(cluster.initialMembership()),
+                storage.base().map(SnapshotMetadata::membership).orElse(identity.initialMembership()),
                 config.options(),
                 storage,
                 storage.hardState(),
-                stateMachine.appliedIndex(),
+                applied,
                 new SplittableRandom()
             );
             log.log(Level.INFO, "Recovered raft log",
+                entry("clusterId", identity.clusterId()),
                 entry("term", storage.hardState().term()),
                 entry("votedFor", storage.hardState().votedFor()),
                 entry("commitIndex", storage.hardState().commit()),
-                entry("appliedIndex", stateMachine.appliedIndex()),
+                entry("appliedIndex", applied),
                 entry("firstIndex", storage.firstIndex()),
                 entry("lastIndex", storage.lastIndex()));
-            var runtime = new RaftRuntime<>(config, raft, storage, files, transport, stateMachine);
+            var runtime = new RaftRuntime<>(config, identity, lock, raft, storage, files, transport, stateMachine);
             runtime.start();
             return runtime;
         } catch (RuntimeException e) {
             if (storage != null) {
                 storage.close();
             }
+            Disk.unlock(lock);
             throw e;
         }
     }
@@ -170,6 +193,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
         failPending(new RaftException.Closed());
         snapshots.close();
         storage.close();
+        Disk.unlock(lock);
         publishStatus();
     }
 
@@ -198,7 +222,7 @@ public final class RaftRuntime<R> implements AutoCloseable {
 
     private void start() {
         try {
-            transport.start(new Receiver());
+            transport.start(clusterId, new Receiver());
             processReady();
             publishStatus();
         } catch (RuntimeException e) {
@@ -388,24 +412,6 @@ public final class RaftRuntime<R> implements AutoCloseable {
                 }
             }
         }
-    }
-
-    private static ClusterFile clusterFile(Path directory, RaftConfig config, LogStore storage) {
-        var existing = ClusterFile.read(directory);
-        if (existing.isEmpty()) {
-            if (!storage.isEmpty()) {
-                throw new RaftStorageException.Corruption("raft directory " + directory + " has a log but no cluster file");
-            }
-            var created = new ClusterFile(config.clusterId(), config.initialMembership());
-            created.write(directory);
-            return created;
-        }
-        var cluster = existing.get();
-        if (!cluster.clusterId().equals(config.clusterId())) {
-            throw new IllegalStateException(
-                "raft directory " + directory + " belongs to cluster " + cluster.clusterId() + ", not " + config.clusterId());
-        }
-        return cluster;
     }
 
     private final class Receiver implements RaftTransport.Receiver {

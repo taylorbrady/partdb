@@ -30,9 +30,9 @@ class CrashRecoveryTest {
     }
 
     @Test
-    void openCreatesAnEmptyManifest() {
+    void openCreatesAnEmptyManifestAndALock() {
         try (Store _ = Store.open(root, StoreOptions.defaults())) {
-            assertEquals(List.of(Manifest.FILE_NAME), fileNames(root));
+            assertEquals(List.of("LOCK", Manifest.FILE_NAME), fileNames(root));
         }
     }
 

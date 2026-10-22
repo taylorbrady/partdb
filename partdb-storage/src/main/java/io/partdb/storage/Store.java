@@ -63,6 +63,17 @@ public final class Store implements AutoCloseable {
         Objects.requireNonNull(directory, "directory must not be null");
         Objects.requireNonNull(options, "options must not be null");
         StoreDirectory.Opened opened = StoreDirectory.open(directory);
+        try {
+            Store store = load(directory, opened, options);
+            store.compactor.request();
+            return store;
+        } catch (RuntimeException e) {
+            opened.directory().close();
+            throw e;
+        }
+    }
+
+    private static Store load(Path directory, StoreDirectory.Opened opened, StoreOptions options) {
         BlockCache cache = new BlockCache(options.blockCacheBytes());
         Manifest manifest = opened.manifest();
         List<List<TableReader>> levels = Version.emptyLevels();
@@ -84,9 +95,7 @@ public final class Store implements AutoCloseable {
         } finally {
             tables.forEach(TableReader::release);
         }
-        Store store = new Store(opened.directory(), options, cache, manifest.durableRevision(), version);
-        store.compactor.request();
-        return store;
+        return new Store(opened.directory(), options, cache, manifest.durableRevision(), version);
     }
 
     public long appliedRevision() {
@@ -237,6 +246,7 @@ public final class Store implements AutoCloseable {
             compactor.close();
             flusher.close();
             current.get().release();
+            directory.close();
         }
     }
 

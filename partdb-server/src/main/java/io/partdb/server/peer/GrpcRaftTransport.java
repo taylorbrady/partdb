@@ -44,24 +44,24 @@ public final class GrpcRaftTransport implements RaftTransport, AutoCloseable {
     private static final Duration SNAPSHOT_BASE_DEADLINE = Duration.ofSeconds(30);
     private static final long SNAPSHOT_MIN_BYTES_PER_SECOND = 4L << 20;
 
-    private final ClusterId clusterId;
     private final NodeId nodeId;
     private final int port;
     private final Map<NodeId, PeerEndpoint> peers;
     private final Map<NodeId, ManagedChannel> channels = new ConcurrentHashMap<>();
     private final Map<NodeId, PeerStream> streams = new ConcurrentHashMap<>();
+    private volatile ClusterId clusterId;
     private volatile Receiver receiver;
     private volatile Server server;
 
-    public GrpcRaftTransport(ClusterId clusterId, NodeId nodeId, int port, Map<NodeId, PeerEndpoint> peers) {
-        this.clusterId = Objects.requireNonNull(clusterId, "clusterId must not be null");
+    public GrpcRaftTransport(NodeId nodeId, int port, Map<NodeId, PeerEndpoint> peers) {
         this.nodeId = Objects.requireNonNull(nodeId, "nodeId must not be null");
         this.port = port;
         this.peers = Map.copyOf(Objects.requireNonNull(peers, "peers must not be null"));
     }
 
     @Override
-    public void start(Receiver receiver) {
+    public void start(ClusterId clusterId, Receiver receiver) {
+        this.clusterId = Objects.requireNonNull(clusterId, "clusterId must not be null");
         this.receiver = Objects.requireNonNull(receiver, "receiver must not be null");
         try {
             server = NettyServerBuilder.forPort(port)

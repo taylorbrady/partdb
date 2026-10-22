@@ -66,10 +66,11 @@ threads. `WriteAheadLogTest` and `LogStoreTest` cover durability, replay,
 torn tails, base resets, compaction, and retention. `SnapshotsTest` covers
 finishing an interrupted install. `RaftRuntimeTest` runs real runtimes over
 `LocalNetwork`, an in-memory transport, and covers replication, follower
-reads, restart from durable state plus log replay, the cluster file,
-leadership transfer, membership changes including leader self-removal,
-partitions, entry- and byte-driven compaction that never passes the durable
-index, and catch-up from a generated snapshot.
+reads, restart from durable state plus log replay, the identity file,
+directory lock, and owner-only permissions, leadership transfer, membership
+changes including leader self-removal, partitions, entry- and byte-driven
+compaction that never passes the durable index, and catch-up from a generated
+snapshot.
 
 ## Project Checks
 
@@ -154,6 +155,7 @@ Use this suite for:
 - 3-node leader election
 - CLI `put`, `get`, `status`, and `members`
 - clean shutdown on SIGTERM
+- a second server refusing a data directory a live server holds
 - crash recovery after SIGKILL: a killed follower catches up from a snapshot,
   and killing the leader under concurrent writes loses no acknowledged write
 

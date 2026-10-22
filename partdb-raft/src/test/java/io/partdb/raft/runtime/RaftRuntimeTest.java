@@ -8,6 +8,7 @@ import io.partdb.raft.NodeId;
 import io.partdb.raft.Options;
 import io.partdb.raft.Role;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -15,8 +16,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -55,7 +58,11 @@ class RaftRuntimeTest {
     }
 
     private RaftConfig config(String id, Membership membership) {
-        return new RaftConfig(ClusterId.of("test"), Ids.id(id), membership, Duration.ofMillis(5), Options.defaults(), retention);
+        return config(id, ClusterId.of("test"), membership);
+    }
+
+    private RaftConfig config(String id, ClusterId clusterId, Membership membership) {
+        return new RaftConfig(Ids.id(id), new Bootstrap(clusterId, membership), Duration.ofMillis(5), Options.defaults(), retention);
     }
 
     private RaftRuntime<Bytes> start(String id, Membership membership) {
@@ -186,14 +193,53 @@ class RaftRuntimeTest {
     }
 
     @Test
-    void refusesADirectoryFromAnotherCluster() {
+    void refusesADirectoryOwnedByAnotherNode() {
+        var pair = Ids.voters("n1", "n2");
+        start("n1", pair);
+        runtimes.remove("n1").close();
+
+        var failure = assertThrows(IllegalStateException.class,
+            () -> RaftRuntime.open(directory.resolve("n1"), config("n2", pair), network.transport(Ids.id("n2")), new RecordingStateMachine()));
+        assertTrue(failure.getMessage().contains("belongs to node n1"), failure.getMessage());
+    }
+
+    @Test
+    void refusesADirectoryThatIsAlreadyOpen() {
+        var running = start("n1", Ids.voters("n1"));
+
+        assertThrows(IllegalStateException.class,
+            () -> RaftRuntime.open(directory.resolve("n1"), config("n1", Ids.voters("n1")), network.transport(Ids.id("n1")), new RecordingStateMachine()));
+        assertTrue(running.status().running());
+    }
+
+    @Test
+    void keepsTheRecordedClusterIdAcrossRestarts() {
         start("n1", Ids.voters("n1"));
         runtimes.remove("n1").close();
 
-        var other = new RaftConfig(ClusterId.of("other"), Ids.id("n1"), Ids.voters("n1"), Duration.ofMillis(5), Options.defaults(), retention);
+        var reopened = RaftRuntime.open(directory.resolve("n1"), config("n1", ClusterId.of("renamed"), Ids.voters("n1")),
+            network.transport(Ids.id("n1")), machines.get("n1").reopen());
+        runtimes.put("n1", reopened);
 
-        assertThrows(IllegalStateException.class,
-            () -> RaftRuntime.open(directory.resolve("n1"), other, network.transport(Ids.id("n1")), new RecordingStateMachine()));
+        assertEquals(ClusterId.of("test"), network.clusterId(Ids.id("n1")));
+    }
+
+    @Test
+    void refusesAStateMachineAheadOfTheLog() {
+        var machine = new RecordingStateMachine();
+        machine.applied = 3;
+        machine.durable = 3;
+
+        assertThrows(RaftStorageException.Corruption.class,
+            () -> RaftRuntime.open(directory.resolve("n1"), config("n1", Ids.voters("n1")), network.transport(Ids.id("n1")), machine));
+    }
+
+    @Test
+    void keepsItsDirectoryPrivateToTheOwner() throws IOException {
+        Assumptions.assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"));
+        start("n1", Ids.voters("n1"));
+
+        assertEquals(PosixFilePermissions.fromString("rwx------"), Files.getPosixFilePermissions(directory.resolve("n1")));
     }
 
     @Test

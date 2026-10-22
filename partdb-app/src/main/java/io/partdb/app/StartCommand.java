@@ -28,7 +28,7 @@ record StartCommand(ServerConfig config, OutputFormat logFormat, Level logLevel)
                                          (repeatable; omit for a single-node cluster)
               --client-port <port>       Port for client gRPC traffic (default: %d)
               --admin-port <port>        Port for health checks and metrics (default: %d)
-              --cluster-id <id>          Cluster identifier (default: derived from the peers)
+              --cluster-id <id>          Cluster identifier for a new node (default: derived from the peers)
               --log-retention-entries <n>
                                          Durable log entries kept for lagging peers (default: %d)
               --log-retention-bytes <n>  Durable log bytes kept for lagging peers (default: %d)

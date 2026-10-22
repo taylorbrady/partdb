@@ -15,7 +15,6 @@ import static java.util.Map.entry;
 final class SnapshotFiles {
 
     private static final Logger log = System.getLogger(SnapshotFiles.class.getName());
-    private static final String STAGING_SUFFIX = ".tmp";
     private static final String INSTALL_SUFFIX = ".install";
 
     private final Path directory;
@@ -27,18 +26,18 @@ final class SnapshotFiles {
     static SnapshotFiles open(Path directory) {
         try {
             Files.createDirectories(directory);
-            Fsync.directory(directory.getParent());
+            Disk.syncDirectory(directory.getParent());
         } catch (IOException e) {
             throw new RaftStorageException.IO("failed to open snapshot directory " + directory, e);
         }
         var files = new SnapshotFiles(directory);
-        files.deleteAll(STAGING_SUFFIX);
+        files.deleteAll(Disk.TEMPORARY_SUFFIX);
         return files;
     }
 
     Path stagingFile(String prefix) {
         try {
-            return Files.createTempFile(directory, prefix + "-", STAGING_SUFFIX);
+            return Files.createTempFile(directory, prefix + "-", Disk.TEMPORARY_SUFFIX);
         } catch (IOException e) {
             throw new RaftStorageException.IO("failed to create a snapshot staging file in " + directory, e);
         }
@@ -51,7 +50,7 @@ final class SnapshotFiles {
         } catch (IOException e) {
             throw new RaftStorageException.IO("failed to stage snapshot " + index + " for install", e);
         }
-        Fsync.directory(directory);
+        Disk.syncDirectory(directory);
         return installing;
     }
 
@@ -73,7 +72,7 @@ final class SnapshotFiles {
     }
 
     private Path installPath(long index) {
-        return directory.resolve("%016x%s".formatted(index, INSTALL_SUFFIX));
+        return directory.resolve("%06d%s".formatted(index, INSTALL_SUFFIX));
     }
 
     private void deleteAll(String suffix) {
@@ -93,6 +92,6 @@ final class SnapshotFiles {
         } catch (IOException e) {
             throw new RaftStorageException.IO("failed to delete snapshot files in " + directory, e);
         }
-        Fsync.directory(directory);
+        Disk.syncDirectory(directory);
     }
 }

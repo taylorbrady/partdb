@@ -5,6 +5,7 @@ import io.partdb.raft.Membership;
 import io.partdb.raft.NodeId;
 import io.partdb.raft.Options;
 import io.partdb.raft.Role;
+import io.partdb.raft.runtime.Bootstrap;
 import io.partdb.raft.runtime.ClusterId;
 import io.partdb.raft.runtime.RaftConfig;
 import io.partdb.raft.runtime.RaftTransport;
@@ -39,7 +40,7 @@ class NodeTest {
 
     private NodeConfig config(Path data, LogRetention retention, KvLimits limits) {
         var membership = Membership.ofVoters(Set.of(SELF));
-        var raft = new RaftConfig(ClusterId.of("test"), SELF, membership, Duration.ofMillis(1), Options.defaults(), retention);
+        var raft = new RaftConfig(SELF, new Bootstrap(ClusterId.of("test"), membership), Duration.ofMillis(1), Options.defaults(), retention);
         return new NodeConfig(data, raft, limits);
     }
 

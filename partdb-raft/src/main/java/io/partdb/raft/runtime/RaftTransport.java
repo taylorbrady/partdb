@@ -11,7 +11,7 @@ import java.util.concurrent.CompletionStage;
 
 public interface RaftTransport {
 
-    void start(Receiver receiver);
+    void start(ClusterId clusterId, Receiver receiver);
 
     void send(Envelope envelope);
 
@@ -45,7 +45,7 @@ public interface RaftTransport {
     static RaftTransport standalone() {
         return new RaftTransport() {
             @Override
-            public void start(Receiver receiver) {
+            public void start(ClusterId clusterId, Receiver receiver) {
             }
 
             @Override

@@ -2,11 +2,16 @@ package io.partdb.storage;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channel;
 import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -14,9 +19,50 @@ final class Disk {
 
     static final String TEMPORARY_SUFFIX = ".tmp";
 
+    private static final String LOCK_FILE = "LOCK";
     private static final boolean DIRECTORY_SYNC = !System.getProperty("os.name", "").startsWith("Windows");
+    private static final boolean POSIX = FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
 
     private Disk() {
+    }
+
+    static void createPrivateDirectory(Path directory) {
+        try {
+            Files.createDirectories(directory);
+            if (POSIX) {
+                Files.setPosixFilePermissions(directory, PosixFilePermissions.fromString("rwx------"));
+            }
+        } catch (IOException e) {
+            throw new StoreException.IO("Failed to create " + directory, e);
+        }
+    }
+
+    static FileLock lock(Path directory) {
+        Path path = directory.resolve(LOCK_FILE);
+        FileChannel channel;
+        FileLock lock;
+        try {
+            channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+        } catch (IOException e) {
+            throw new StoreException.IO("Failed to open " + path, e);
+        }
+        try {
+            lock = channel.tryLock();
+        } catch (OverlappingFileLockException _) {
+            lock = null;
+        } catch (IOException e) {
+            close(channel);
+            throw new StoreException.IO("Failed to lock " + path, e);
+        }
+        if (lock == null) {
+            close(channel);
+            throw new IllegalStateException("Store directory " + directory + " is already in use");
+        }
+        return lock;
+    }
+
+    static void unlock(FileLock lock) {
+        close(lock.acquiredBy());
     }
 
     static void syncDirectory(Path directory) {
@@ -67,6 +113,13 @@ final class Disk {
             Files.deleteIfExists(path);
         } catch (IOException e) {
             throw new StoreException.IO("Failed to delete " + path, e);
+        }
+    }
+
+    private static void close(Channel channel) {
+        try {
+            channel.close();
+        } catch (IOException _) {
         }
     }
 }

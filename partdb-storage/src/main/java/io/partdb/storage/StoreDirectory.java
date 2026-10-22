@@ -1,6 +1,6 @@
 package io.partdb.storage;
 
-import java.io.IOException;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
@@ -11,27 +11,34 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-final class StoreDirectory {
+final class StoreDirectory implements AutoCloseable {
 
     private static final Pattern TABLE = Pattern.compile("(\\d+)\\.sst");
 
     private final Path root;
+    private final FileLock lock;
     private final AtomicLong nextTableId;
 
     record Opened(StoreDirectory directory, Manifest manifest) {}
 
-    private StoreDirectory(Path root, long nextTableId) {
+    private StoreDirectory(Path root, FileLock lock, long nextTableId) {
         this.root = root;
+        this.lock = lock;
         this.nextTableId = new AtomicLong(nextTableId);
     }
 
     static Opened open(Path root) {
+        Disk.createPrivateDirectory(root);
+        FileLock lock = Disk.lock(root);
         try {
-            Files.createDirectories(root);
-        } catch (IOException e) {
-            throw new StoreException.IO("Failed to create " + root, e);
+            return open(root, lock);
+        } catch (RuntimeException e) {
+            Disk.unlock(lock);
+            throw e;
         }
+    }
 
+    private static Opened open(Path root, FileLock lock) {
         boolean changed = false;
         Set<Long> present = new HashSet<>();
         long maxId = 0;
@@ -59,7 +66,7 @@ final class StoreDirectory {
 
         Set<Long> referenced = new HashSet<>();
         manifest.tables().forEach(table -> referenced.add(table.id()));
-        StoreDirectory directory = new StoreDirectory(root, Math.max(manifest.nextTableId(), maxId + 1));
+        StoreDirectory directory = new StoreDirectory(root, lock, Math.max(manifest.nextTableId(), maxId + 1));
         for (long id : present) {
             if (!referenced.contains(id)) {
                 Disk.delete(directory.tablePath(id));
@@ -92,5 +99,10 @@ final class StoreDirectory {
 
     void sync() {
         Disk.syncDirectory(root);
+    }
+
+    @Override
+    public void close() {
+        Disk.unlock(lock);
     }
 }

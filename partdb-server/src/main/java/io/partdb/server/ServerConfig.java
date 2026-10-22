@@ -5,17 +5,23 @@ import io.partdb.node.NodeConfig;
 import io.partdb.raft.Membership;
 import io.partdb.raft.NodeId;
 import io.partdb.raft.Options;
+import io.partdb.raft.runtime.Bootstrap;
 import io.partdb.raft.runtime.ClusterId;
-import io.partdb.raft.runtime.RaftConfig;
 import io.partdb.raft.runtime.LogRetention;
+import io.partdb.raft.runtime.RaftConfig;
 import io.partdb.server.peer.PeerEndpoint;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 public record ServerConfig(
     NodeId nodeId,
@@ -61,8 +67,30 @@ public record ServerConfig(
     }
 
     NodeConfig node() {
-        var raft = new RaftConfig(clusterId, nodeId, membership(nodeId, peers), RaftConfig.DEFAULT_TICK_INTERVAL, Options.defaults(), retention);
+        var bootstrap = new Bootstrap(clusterId, membership(nodeId, peers));
+        var raft = new RaftConfig(nodeId, bootstrap, RaftConfig.DEFAULT_TICK_INTERVAL, Options.defaults(), retention);
         return new NodeConfig(dataDirectory, raft, KvLimits.DEFAULT);
+    }
+
+    String peerList() {
+        return peerList(peers);
+    }
+
+    private static String peerList(Map<NodeId, PeerEndpoint> peers) {
+        return peers.entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .map(peer -> peer.getKey() + "=" + peer.getValue())
+            .collect(Collectors.joining(","));
+    }
+
+    private static ClusterId derivedClusterId(NodeId nodeId, Map<NodeId, PeerEndpoint> peers) {
+        String members = peers.isEmpty() ? nodeId.value() : peerList(peers);
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(members.getBytes(StandardCharsets.UTF_8));
+            return ClusterId.of("partdb-" + HexFormat.of().formatHex(digest, 0, 8));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
     }
 
     private static Membership membership(NodeId nodeId, Map<NodeId, PeerEndpoint> peers) {
@@ -126,7 +154,7 @@ public record ServerConfig(
             return new ServerConfig(
                 nodeId,
                 dataDirectory,
-                clusterId.orElseGet(() -> ClusterId.derivedFrom(membership(nodeId, peers))),
+                clusterId.orElseGet(() -> derivedClusterId(nodeId, peers)),
                 peers,
                 clientPort,
                 adminPort,

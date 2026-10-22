@@ -110,9 +110,13 @@ The module has two packages:
   owns generating snapshots for lagging peers, staging received ones, and
   installing them. Storage is a versioned, checksummed write-ahead log replayed
   into memory; every file create, rename, and delete is followed by a
-  directory sync. The first open records the cluster id and initial membership
-  in a `cluster` file; later opens use that record and refuse a directory from
-  another cluster.
+  directory sync. The runtime holds an exclusive `LOCK` on its directory for
+  as long as it is open, and the directory is readable only by its owner. The
+  `RaftConfig`'s `Bootstrap` (cluster id and initial membership) is used once:
+  the first open records it with the node id in an `IDENTITY` file. Later
+  opens use the recorded cluster id and membership, refuse a directory recorded
+  for another node, and hand the recorded cluster id to the transport when it
+  starts.
   The state machine is the snapshot: there is no on-disk snapshot copy. The
   `StateMachine` reports a `durableIndex()`, and the runtime compacts the log
   only behind it, keeping the last `LogRetention` entries and bytes for peers
@@ -140,6 +144,9 @@ Role: local durable versioned state store.
 
 This module owns the LSM engine, memtables, tables, manifests, compaction,
 block cache, streamed checkpoints, and storage-level tests/benchmarks.
+
+A `Store` holds an exclusive `LOCK` on its directory while open, and the
+directory is readable only by its owner.
 
 Its public surface is `Store` and a handful of values (`Snapshot`,
 `KeyValue`, `Mutation`, `KeyRange`, `StoreOptions`, `StoreStats`,
@@ -193,6 +200,16 @@ proposed, so oversized or invalid commands never reach the log. Everything is
 in `io.partdb.node`; `KvStateMachine` and the versioned, strictly decoded
 `TxnCodec` are package-private, so nothing outside the module can touch the
 log format.
+
+A node's data directory holds one directory per engine:
+
+```text
+<data-dir>/
+  raft/   LOCK, IDENTITY, wal/000001.wal ..., snap/ (snapshots in transit)
+  db/     LOCK, MANIFEST, 000001.sst ...
+```
+
+Metadata files are upper case; numbered files are zero-padded decimal.
 
 Allowed dependencies: `partdb-raft`, `partdb-storage`, `partdb-bytes`.
 
@@ -254,6 +271,10 @@ This is the one place gRPC is implemented on the server side:
   flow-controlled message stream per peer, plus chunked snapshot uploads with
   a size-scaled deadline. Every call carries the cluster id, sender, and
   recipient; a peer rejects calls for another cluster or another node. The
+  transport learns the cluster id from the Raft runtime when it starts, so a
+  node always speaks for the cluster its directory belongs to. Without
+  `--cluster-id`, a new cluster's id is derived from its node ids and peer
+  addresses, so separate clusters with the same node names do not share one. The
   server owns the transport and closes it after the node.
 
 Allowed dependencies: `partdb-node`, `partdb-grpc`, gRPC/protobuf libraries.

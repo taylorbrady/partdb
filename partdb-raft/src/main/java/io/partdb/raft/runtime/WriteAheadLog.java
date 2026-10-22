@@ -10,6 +10,7 @@ import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -46,7 +47,7 @@ final class WriteAheadLog implements AutoCloseable {
         } catch (IOException e) {
             throw new RaftStorageException.IO("failed to create WAL directory " + directory, e);
         }
-        Fsync.directory(directory.getParent());
+        Disk.syncDirectory(directory.getParent());
         return new WriteAheadLog(directory, segmentBytes);
     }
 
@@ -82,7 +83,7 @@ final class WriteAheadLog implements AutoCloseable {
         active.sync();
         sealed.clear();
         previous.forEach(segment -> delete(segment.path()));
-        Fsync.directory(directory);
+        Disk.syncDirectory(directory);
     }
 
     void compact(SnapshotMetadata base) {
@@ -100,7 +101,7 @@ final class WriteAheadLog implements AutoCloseable {
             deleted = true;
         }
         if (deleted) {
-            Fsync.directory(directory);
+            Disk.syncDirectory(directory);
         }
     }
 
@@ -162,7 +163,7 @@ final class WriteAheadLog implements AutoCloseable {
         if (active == null) {
             openSegment(0);
         } else if (firstLive > 0) {
-            Fsync.directory(directory);
+            Disk.syncDirectory(directory);
         }
         return new Replay(hardState, base, List.copyOf(entries));
     }
@@ -181,15 +182,17 @@ final class WriteAheadLog implements AutoCloseable {
     }
 
     private void openSegment(long sequence) {
-        active = WalSegment.create(directory.resolve("%016x%s".formatted(sequence, SUFFIX)));
-        Fsync.directory(directory);
+        active = WalSegment.create(directory.resolve("%06d%s".formatted(sequence, SUFFIX)));
+        Disk.syncDirectory(directory);
         activeSequence = sequence;
         activeMaxIndex = 0;
     }
 
     private List<Path> segmentPaths() {
         try (Stream<Path> files = Files.list(directory)) {
-            return files.filter(path -> path.getFileName().toString().endsWith(SUFFIX)).sorted().toList();
+            return files.filter(path -> path.getFileName().toString().endsWith(SUFFIX))
+                .sorted(Comparator.comparingLong(WriteAheadLog::sequenceOf))
+                .toList();
         } catch (IOException e) {
             throw new RaftStorageException.IO("failed to list WAL segments in " + directory, e);
         }
@@ -197,7 +200,11 @@ final class WriteAheadLog implements AutoCloseable {
 
     private static long sequenceOf(Path path) {
         String name = path.getFileName().toString();
-        return Long.parseUnsignedLong(name.substring(0, name.length() - SUFFIX.length()), 16);
+        try {
+            return Long.parseLong(name.substring(0, name.length() - SUFFIX.length()));
+        } catch (NumberFormatException e) {
+            throw new RaftStorageException.Corruption("unexpected file " + path + " in the WAL directory");
+        }
     }
 
     private static void delete(Path path) {
