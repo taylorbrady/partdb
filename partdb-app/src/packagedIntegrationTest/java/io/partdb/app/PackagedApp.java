@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 final class PackagedApp {
@@ -28,8 +29,8 @@ final class PackagedApp {
         return new PackagedApp(installDir.resolve("bin").resolve(windows ? "partdb-app.bat" : "partdb-app"));
     }
 
-    PackagedNode newNode(Path rootDir, NodeSpec spec) {
-        return new PackagedNode(executable, rootDir.resolve(spec.nodeId()), spec);
+    PackagedNode newNode(Path rootDir, NodeSpec spec, String... options) {
+        return new PackagedNode(executable, rootDir.resolve(spec.nodeId()), spec, List.of(options));
     }
 
     CommandResult run(String... args) throws IOException, InterruptedException {

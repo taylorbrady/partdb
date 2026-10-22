@@ -123,6 +123,8 @@ Use this suite for:
 - follower restart and catch-up
 - full cluster restart
 - range scan through the public client, with its read revision
+- concurrent writers checked against a model, on every node
+- concurrent compare-and-set increments losing no update
 - snapshot install over the peer transport
 - CLI commands against a live cluster
 
@@ -152,6 +154,8 @@ Use this suite for:
 - 3-node leader election
 - CLI `put`, `get`, `status`, and `members`
 - clean shutdown on SIGTERM
+- crash recovery after SIGKILL: a killed follower catches up from a snapshot,
+  and killing the leader under concurrent writes loses no acknowledged write
 
 Each node process logs JSON (`--log-format json`) and writes its stdout and
 stderr to per-start log files under the test's temp directory, which is kept
@@ -159,8 +163,11 @@ when the test fails. Stopping a node fails the test unless the process exits
 within ten seconds, logs `PartDB server stopped`, and wrote only JSON log
 records to stdout.
 
-Keep this suite focused on shipped-artifact smoke coverage. Behavioral cluster
-scenarios such as failover, restart, and catch-up belong in `integrationTest`.
+Keep this suite focused on shipped-artifact smoke coverage and on scenarios
+that need a real OS process, such as a crash that skips graceful shutdown.
+Behavioral cluster scenarios such as failover, restart, and catch-up belong in
+`integrationTest`. `PackagedNode.kill()` sends SIGKILL; the start script
+`exec`s the JVM, so the signal reaches the server itself.
 
 ## CI Gate
 
@@ -183,8 +190,8 @@ checks, and must not be attached to `check` or `ci`. See
 
 - Tests use local ephemeral ports but do not simulate port conflicts or partial
   bind failures during startup.
-- Process tests use graceful process termination. They do not yet cover forced
-  kills during log writes, compaction, snapshot creation, or shutdown.
+- Crash tests kill a node wherever it happens to be. They do not yet aim kills
+  at log writes, compaction, snapshot creation, or shutdown.
 - Network partitions are simulated in `partdb-raft` (`SimulationTest`,
   `ClusterTest`, `RaftRuntimeTest`) but not over the gRPC peer transport;
   process-level failover tests stop a node rather than dropping traffic.
@@ -198,6 +205,5 @@ checks, and must not be attached to `check` or `ci`. See
 1. Add startup failure tests for occupied ports and invalid peer configuration.
 2. Add health endpoint lifecycle tests for starting, ready, leaderless, and
    shutting-down states.
-3. Add crash-recovery tests that kill a process without graceful shutdown.
-4. Add fault injection to the gRPC peer transport so process-level tests can
+3. Add fault injection to the gRPC peer transport so process-level tests can
    drop and delay Raft traffic.

@@ -1,11 +1,14 @@
 package io.partdb.app.testing;
 
 import io.partdb.bytes.Bytes;
+import io.partdb.client.KeyRange;
+import io.partdb.client.KeyValue;
 import io.partdb.client.Membership;
 import io.partdb.client.NodeStatus;
 import io.partdb.client.PartDbClient;
 import io.partdb.client.ReadConsistency;
 import io.partdb.client.RaftRole;
+import io.partdb.client.ScanOptions;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -121,6 +124,12 @@ public final class TestCluster<N extends TestClusterNode> implements AutoCloseab
 
     public Membership members(String nodeId) {
         return probe(nodeId).cluster().membership();
+    }
+
+    public List<KeyValue> localScan(String nodeId, KeyRange range) {
+        try (var entries = probe(nodeId).kv().scan(range, ScanOptions.DEFAULT.withConsistency(ReadConsistency.LOCAL)).value()) {
+            return entries.toList();
+        }
     }
 
     public N awaitStableLeader(Duration timeout) throws InterruptedException {

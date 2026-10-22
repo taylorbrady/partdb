@@ -4,6 +4,7 @@ import io.partdb.app.testing.TestCluster;
 import io.partdb.bytes.Bytes;
 import io.partdb.client.Condition;
 import io.partdb.client.KeyRange;
+import io.partdb.client.KeyValue;
 import io.partdb.client.Mutation;
 import io.partdb.client.PartDbClient;
 import io.partdb.client.ReadConsistency;
@@ -17,7 +18,15 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.TreeMap;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.function.IntFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -27,6 +36,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MultiNodeClusterIntegrationTest {
     private static final Duration CLUSTER_TIMEOUT = Duration.ofSeconds(10);
     private static final int BURST = 32;
+    private static final int THREADS = 8;
+    private static final int KEYS_PER_THREAD = 50;
+    private static final int OPS_PER_THREAD = 150;
+    private static final int COUNTERS = 2;
+    private static final int INCREMENTS_PER_THREAD = 25;
 
     @TempDir(cleanup = CleanupMode.ON_SUCCESS)
     Path tempDir;
@@ -192,6 +206,101 @@ class MultiNodeClusterIntegrationTest {
             }
             assertTrue(scan.revision() >= last);
         }
+    }
+
+    @Test
+    void concurrentWritersLeaveEveryNodeWithTheSameData() throws Exception {
+        try (var cluster = newCluster()) {
+            cluster.startAll();
+            cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+            var kv = cluster.client().kv();
+
+            var expected = new TreeMap<String, String>();
+            for (var written : runConcurrently(thread -> () -> {
+                var random = new Random(thread);
+                var model = new HashMap<String, String>();
+                for (int op = 0; op < OPS_PER_THREAD; op++) {
+                    String key = "load/" + thread + "/" + random.nextInt(KEYS_PER_THREAD);
+                    if (random.nextInt(10) == 0) {
+                        kv.delete(bytes(key));
+                        model.remove(key);
+                    } else {
+                        String value = "value-" + op;
+                        kv.put(bytes(key), bytes(value));
+                        model.put(key, value);
+                    }
+                }
+                return model;
+            })) {
+                expected.putAll(written);
+            }
+
+            var range = KeyRange.between(bytes("load/"), bytes("load0"));
+            try (var entries = kv.scan(range).value()) {
+                assertEquals(expected, contents(entries.toList()));
+            }
+            for (String nodeId : cluster.startedNodeIds()) {
+                cluster.awaitCaughtUp(nodeId, CLUSTER_TIMEOUT);
+                assertEquals(expected, contents(cluster.localScan(nodeId, range)), nodeId);
+            }
+        }
+    }
+
+    @Test
+    void concurrentCompareAndSetIncrementsLoseNoUpdate() throws Exception {
+        try (var cluster = newCluster()) {
+            cluster.startAll();
+            cluster.awaitStableLeader(CLUSTER_TIMEOUT);
+            var kv = cluster.client().kv();
+            for (int counter = 0; counter < COUNTERS; counter++) {
+                kv.put(bytes("counter-" + counter), bytes("0"));
+            }
+
+            var committed = new int[COUNTERS];
+            for (var increments : runConcurrently(thread -> () -> {
+                var perCounter = new int[COUNTERS];
+                for (int i = 0; i < INCREMENTS_PER_THREAD; i++) {
+                    int counter = (thread + i) % COUNTERS;
+                    var key = bytes("counter-" + counter);
+                    TxnResult result;
+                    do {
+                        var current = kv.get(key).value().orElseThrow();
+                        var next = bytes(Integer.toString(Integer.parseInt(current.value().utf8()) + 1));
+                        result = kv.transact(Txn.when(List.of(Condition.revisionEquals(key, current.revision())), List.of(Mutation.put(key, next))));
+                    } while (result instanceof TxnResult.ConditionFailed);
+                    perCounter[counter]++;
+                }
+                return perCounter;
+            })) {
+                for (int counter = 0; counter < COUNTERS; counter++) {
+                    committed[counter] += increments[counter];
+                }
+            }
+
+            for (int counter = 0; counter < COUNTERS; counter++) {
+                assertEquals(Integer.toString(committed[counter]), value(cluster.client(), "counter-" + counter));
+            }
+        }
+    }
+
+    private static <T> List<T> runConcurrently(IntFunction<Callable<T>> task) throws Exception {
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var futures = new ArrayList<Future<T>>();
+            for (int thread = 0; thread < THREADS; thread++) {
+                futures.add(executor.submit(task.apply(thread)));
+            }
+            var results = new ArrayList<T>();
+            for (var future : futures) {
+                results.add(future.get());
+            }
+            return results;
+        }
+    }
+
+    private static Map<String, String> contents(List<KeyValue> entries) {
+        var contents = new TreeMap<String, String>();
+        entries.forEach(entry -> contents.put(entry.key().utf8(), entry.value().utf8()));
+        return contents;
     }
 
     private TestCluster<InProcessNode> newCluster() throws IOException {

@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 final class PackagedNode implements TestClusterNode {
@@ -20,16 +21,18 @@ final class PackagedNode implements TestClusterNode {
     private final Path executable;
     private final Path nodeDir;
     private final NodeSpec spec;
+    private final List<String> options;
 
     private int startCount;
     private Process process;
     private Path stdoutLog;
     private Path stderrLog;
 
-    PackagedNode(Path executable, Path nodeDir, NodeSpec spec) {
+    PackagedNode(Path executable, Path nodeDir, NodeSpec spec, List<String> options) {
         this.executable = executable;
         this.nodeDir = nodeDir;
         this.spec = spec;
+        this.options = List.copyOf(options);
     }
 
     @Override
@@ -76,6 +79,7 @@ final class PackagedNode implements TestClusterNode {
         command.add(Integer.toString(spec.adminPort()));
         command.add("--log-format");
         command.add("json");
+        command.addAll(options);
 
         process = new ProcessBuilder(command)
             .redirectOutput(stdoutLog.toFile())
@@ -107,6 +111,26 @@ final class PackagedNode implements TestClusterNode {
         } finally {
             process = null;
         }
+    }
+
+    void kill() {
+        if (process == null) {
+            return;
+        }
+        try {
+            process.destroyForcibly();
+            if (!process.waitFor(STOP_TIMEOUT.toSeconds(), TimeUnit.SECONDS)) {
+                throw new AssertionError(nodeId() + " did not exit within " + STOP_TIMEOUT + " of SIGKILL");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            process = null;
+        }
+    }
+
+    String log() {
+        return read(stdoutLog);
     }
 
     @Override
