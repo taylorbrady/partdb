@@ -26,7 +26,7 @@ final class Version {
             TableReader[] tables = levels[level];
             for (int i = 1; i < tables.length; i++) {
                 if (tables[i - 1].metadata().largest().compareTo(tables[i].metadata().smallest()) >= 0) {
-                    throw new IllegalStateException("Tables %d and %d overlap in level %d".formatted(tables[i - 1].id(), tables[i].id(), level));
+                    throw new IllegalStateException("tables %d and %d overlap in level %d".formatted(tables[i - 1].id(), tables[i].id(), level));
                 }
             }
         }
@@ -52,7 +52,7 @@ final class Version {
 
     static Version of(List<List<TableReader>> levels) {
         if (levels.size() != LEVELS) {
-            throw new IllegalArgumentException("Expected " + LEVELS + " levels, got " + levels.size());
+            throw new IllegalArgumentException("expected " + LEVELS + " levels, got " + levels.size());
         }
         TableReader[][] sorted = new TableReader[LEVELS][];
         for (int level = 0; level < LEVELS; level++) {
@@ -66,7 +66,7 @@ final class Version {
 
     Version retain() {
         if (refs.getAndIncrement() <= 0) {
-            throw new IllegalStateException("Version was already released");
+            throw new IllegalStateException("version was already released");
         }
         return this;
     }
@@ -74,7 +74,7 @@ final class Version {
     void release() {
         int remaining = refs.decrementAndGet();
         if (remaining < 0) {
-            throw new IllegalStateException("Version released too many times");
+            throw new IllegalStateException("version released too many times");
         }
         if (remaining == 0) {
             for (TableReader[] level : levels) {

@@ -28,15 +28,15 @@ final class BlockCodec {
 
     static byte[] decode(MemorySegment frame) {
         long size = frame.byteSize();
-        Encoding.check(size >= HEADER + CHECKSUM, "Block frame too small: " + size);
+        Encoding.check(size >= HEADER + CHECKSUM, "block frame too small: " + size);
         int stored = frame.get(Encoding.INT, size - CHECKSUM);
-        Encoding.check(stored == Encoding.crc(frame.asSlice(0, size - CHECKSUM)), "Block checksum mismatch");
+        Encoding.check(stored == Encoding.crc(frame.asSlice(0, size - CHECKSUM)), "block checksum mismatch");
 
         StoreOptions.Compression compression = compression(frame.get(ValueLayout.JAVA_BYTE, 0));
         int rawSize = frame.get(Encoding.INT, 1);
         int dataSize = frame.get(Encoding.INT, 1 + Integer.BYTES);
-        Encoding.check(rawSize >= 0 && dataSize >= 0, "Negative block frame size");
-        Encoding.check((long) HEADER + dataSize + CHECKSUM == size, "Block frame size mismatch");
+        Encoding.check(rawSize >= 0 && dataSize >= 0, "negative block frame size");
+        Encoding.check((long) HEADER + dataSize + CHECKSUM == size, "block frame size mismatch");
         byte[] data = frame.asSlice(HEADER, dataSize).toArray(ValueLayout.JAVA_BYTE);
         return decompress(compression, data, rawSize);
     }
@@ -53,7 +53,7 @@ final class BlockCodec {
             case NONE -> data;
             case DEFLATE -> inflate(data, rawSize);
         };
-        Encoding.check(raw.length == rawSize, "Block size mismatch: expected " + rawSize + ", got " + raw.length);
+        Encoding.check(raw.length == rawSize, "block size mismatch: expected " + rawSize + ", got " + raw.length);
         return raw;
     }
 
@@ -68,7 +68,7 @@ final class BlockCodec {
         return switch (id) {
             case 0 -> StoreOptions.Compression.NONE;
             case 1 -> StoreOptions.Compression.DEFLATE;
-            default -> throw new StoreException.Corruption("Unknown block compression: " + id);
+            default -> throw new StoreException.Corruption("unknown block compression: " + id);
         };
     }
 
@@ -101,10 +101,10 @@ final class BlockCodec {
                 }
                 filled += read;
             }
-            Encoding.check(inflater.finished() && filled == rawSize, "Block decompression size mismatch");
+            Encoding.check(inflater.finished() && filled == rawSize, "block decompression size mismatch");
             return raw;
         } catch (DataFormatException e) {
-            throw new StoreException.Corruption("Block decompression failed", e);
+            throw new StoreException.Corruption("block decompression failed", e);
         } finally {
             inflater.end();
         }

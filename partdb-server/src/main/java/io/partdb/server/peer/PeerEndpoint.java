@@ -24,18 +24,18 @@ public record PeerEndpoint(String host, int port) {
         try {
             uri = URI.create("partdb://" + value);
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid endpoint: " + value, e);
+            throw new IllegalArgumentException("invalid endpoint: " + value, e);
         }
 
         if (uri.getHost() == null || uri.getPort() < 0) {
-            throw new IllegalArgumentException("Invalid endpoint: " + value);
+            throw new IllegalArgumentException("invalid endpoint: " + value);
         }
         if (uri.getRawUserInfo() != null) {
-            throw new IllegalArgumentException("Invalid endpoint: " + value);
+            throw new IllegalArgumentException("invalid endpoint: " + value);
         }
         String path = uri.getRawPath();
         if (path != null && !path.isEmpty()) {
-            throw new IllegalArgumentException("Invalid endpoint: " + value);
+            throw new IllegalArgumentException("invalid endpoint: " + value);
         }
 
         return new PeerEndpoint(normalizeHost(uri.getHost()), uri.getPort());

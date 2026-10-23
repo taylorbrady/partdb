@@ -30,7 +30,7 @@ public final class Bytes implements Comparable<Bytes> {
     public static Bytes copyOf(byte[] data, int offset, int length) {
         Objects.requireNonNull(data, "data must not be null");
         if (offset < 0 || length < 0 || offset + length > data.length) {
-            throw new IndexOutOfBoundsException("Invalid offset/length for byte array of length " + data.length);
+            throw new IndexOutOfBoundsException("invalid offset/length for byte array of length " + data.length);
         }
         if (length == 0) {
             return EMPTY;

@@ -15,24 +15,24 @@ final class BlockIndex {
     }
 
     static BlockIndex decode(MemorySegment segment, int count) {
-        Encoding.check(count >= 0, "Negative block count: " + count);
+        Encoding.check(count >= 0, "negative block count: " + count);
         List<Handle> handles = new ArrayList<>(count);
         long offset = 0;
         long size = segment.byteSize();
         for (int i = 0; i < count; i++) {
-            Encoding.check(offset + Integer.BYTES <= size, "Truncated block index");
+            Encoding.check(offset + Integer.BYTES <= size, "truncated block index");
             int keyLength = segment.get(Encoding.INT, offset);
-            Encoding.check(keyLength >= 0, "Negative block index key length");
+            Encoding.check(keyLength >= 0, "negative block index key length");
             long keyOffset = offset + Integer.BYTES;
-            Encoding.check(keyOffset + keyLength + Long.BYTES + Integer.BYTES <= size, "Truncated block index entry");
+            Encoding.check(keyOffset + keyLength + Long.BYTES + Integer.BYTES <= size, "truncated block index entry");
             Slice key = Slice.wrap(segment.asSlice(keyOffset, keyLength));
             long blockOffset = segment.get(Encoding.LONG, keyOffset + keyLength);
             int blockSize = segment.get(Encoding.INT, keyOffset + keyLength + Long.BYTES);
-            Encoding.check(blockOffset >= 0 && blockSize > 0, "Invalid block handle");
+            Encoding.check(blockOffset >= 0 && blockSize > 0, "invalid block handle");
             handles.add(new Handle(key, blockOffset, blockSize));
             offset = keyOffset + keyLength + Long.BYTES + Integer.BYTES;
         }
-        Encoding.check(offset == size, "Trailing block index data");
+        Encoding.check(offset == size, "trailing block index data");
         return new BlockIndex(handles);
     }
 

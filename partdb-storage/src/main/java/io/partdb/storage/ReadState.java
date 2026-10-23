@@ -51,7 +51,7 @@ final class ReadState {
     void release() {
         int remaining = refs.decrementAndGet();
         if (remaining < 0) {
-            throw new IllegalStateException("Read state released too many times");
+            throw new IllegalStateException("read state released too many times");
         }
         if (remaining == 0) {
             version.release();
@@ -71,7 +71,7 @@ final class ReadState {
 
     ReadState flushed(Memtable memtable, Version next) {
         if (frozen.isEmpty() || frozen.getLast() != memtable) {
-            throw new IllegalStateException("Flushed memtable is not the oldest frozen memtable");
+            throw new IllegalStateException("flushed memtable is not the oldest frozen memtable");
         }
         return new ReadState(revision, active, frozen.subList(0, frozen.size() - 1), next);
     }

@@ -59,7 +59,7 @@ final class StoreDirectory implements AutoCloseable {
         if (Files.exists(root.resolve(Manifest.FILE_NAME))) {
             manifest = Manifest.read(root);
         } else {
-            Encoding.check(present.isEmpty(), "Tables without a manifest in " + root);
+            Encoding.check(present.isEmpty(), "tables without a manifest in " + root);
             manifest = new Manifest(0, 1, List.of());
             manifest.write(root);
         }
@@ -77,7 +77,7 @@ final class StoreDirectory implements AutoCloseable {
             directory.sync();
         }
         referenced.removeAll(present);
-        Encoding.check(referenced.isEmpty(), "Manifest references missing tables " + referenced + " in " + root);
+        Encoding.check(referenced.isEmpty(), "manifest references missing tables " + referenced + " in " + root);
         return new Opened(directory, manifest);
     }
 

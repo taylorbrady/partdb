@@ -51,13 +51,13 @@ final class Checkpoint {
 
     static Restored read(InputStream in, StoreDirectory directory, BlockCache cache) {
         ByteBuffer header = Encoding.wrap(readFully(in, HEADER_SIZE));
-        Encoding.check(header.getInt() == MAGIC, "Invalid checkpoint magic");
+        Encoding.check(header.getInt() == MAGIC, "invalid checkpoint magic");
         int version = header.getInt();
-        Encoding.check(version == VERSION, "Unsupported checkpoint version: " + version);
+        Encoding.check(version == VERSION, "unsupported checkpoint version: " + version);
         long revision = header.getLong();
         int count = header.getInt();
-        Encoding.check(header.getInt() == Encoding.crc(header.array(), 0, HEADER_SIZE - Integer.BYTES), "Checkpoint header checksum mismatch");
-        Encoding.check(revision >= 0 && count >= 0, "Invalid checkpoint header");
+        Encoding.check(header.getInt() == Encoding.crc(header.array(), 0, HEADER_SIZE - Integer.BYTES), "checkpoint header checksum mismatch");
+        Encoding.check(revision >= 0 && count >= 0, "invalid checkpoint header");
 
         List<List<TableReader>> levels = Version.emptyLevels();
         List<TableReader> opened = new ArrayList<>(count);
@@ -66,7 +66,7 @@ final class Checkpoint {
                 ByteBuffer tableHeader = Encoding.wrap(readFully(in, TABLE_HEADER_SIZE));
                 int level = tableHeader.getInt();
                 long size = tableHeader.getLong();
-                Encoding.check(level >= 0 && level < Version.LEVELS && size > 0, "Invalid checkpoint table header");
+                Encoding.check(level >= 0 && level < Version.LEVELS && size > 0, "invalid checkpoint table header");
                 long id = directory.allocateTableId();
                 Path path = directory.tablePath(id);
                 copy(in, path, size);
@@ -91,7 +91,7 @@ final class Checkpoint {
             long remaining = size;
             while (remaining > 0) {
                 int read = in.readNBytes(chunk, 0, (int) Math.min(CHUNK, remaining));
-                Encoding.check(read > 0, "Truncated checkpoint table");
+                Encoding.check(read > 0, "truncated checkpoint table");
                 crc.update(chunk, 0, read);
                 ByteBuffer buffer = ByteBuffer.wrap(chunk, 0, read);
                 while (buffer.hasRemaining()) {
@@ -100,11 +100,11 @@ final class Checkpoint {
                 remaining -= read;
             }
             int expected = Encoding.wrap(readFully(in, Integer.BYTES)).getInt();
-            Encoding.check(expected == (int) crc.getValue(), "Checkpoint table checksum mismatch");
+            Encoding.check(expected == (int) crc.getValue(), "checkpoint table checksum mismatch");
             channel.force(true);
         } catch (IOException e) {
             discard(path, e);
-            throw new StoreException.IO("Failed to stage checkpoint table " + path, e);
+            throw new StoreException.IO("failed to stage checkpoint table " + path, e);
         } catch (RuntimeException e) {
             discard(path, e);
             throw e;
@@ -122,10 +122,10 @@ final class Checkpoint {
     private static byte[] readFully(InputStream in, int length) {
         try {
             byte[] bytes = in.readNBytes(length);
-            Encoding.check(bytes.length == length, "Truncated checkpoint");
+            Encoding.check(bytes.length == length, "truncated checkpoint");
             return bytes;
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to read checkpoint", e);
+            throw new StoreException.IO("failed to read checkpoint", e);
         }
     }
 }

@@ -33,7 +33,7 @@ final class Disk {
                 Files.setPosixFilePermissions(directory, PosixFilePermissions.fromString("rwx------"));
             }
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to create " + directory, e);
+            throw new StoreException.IO("failed to create " + directory, e);
         }
     }
 
@@ -44,7 +44,7 @@ final class Disk {
         try {
             channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to open " + path, e);
+            throw new StoreException.IO("failed to open " + path, e);
         }
         try {
             lock = channel.tryLock();
@@ -52,11 +52,11 @@ final class Disk {
             lock = null;
         } catch (IOException e) {
             close(channel);
-            throw new StoreException.IO("Failed to lock " + path, e);
+            throw new StoreException.IO("failed to lock " + path, e);
         }
         if (lock == null) {
             close(channel);
-            throw new IllegalStateException("Store directory " + directory + " is already in use");
+            throw new IllegalStateException("store directory " + directory + " is already in use");
         }
         return lock;
     }
@@ -72,7 +72,7 @@ final class Disk {
         try (var channel = FileChannel.open(directory, StandardOpenOption.READ)) {
             channel.force(true);
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to sync directory " + directory, e);
+            throw new StoreException.IO("failed to sync directory " + directory, e);
         }
     }
 
@@ -90,12 +90,12 @@ final class Disk {
             }
             channel.force(true);
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to write " + temporary, e);
+            throw new StoreException.IO("failed to write " + temporary, e);
         }
         try {
             Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to rename " + temporary + " to " + target, e);
+            throw new StoreException.IO("failed to rename " + temporary + " to " + target, e);
         }
         syncDirectory(target.getParent());
     }
@@ -104,7 +104,7 @@ final class Disk {
         try (Stream<Path> paths = Files.list(directory)) {
             return paths.toList();
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to list " + directory, e);
+            throw new StoreException.IO("failed to list " + directory, e);
         }
     }
 
@@ -112,7 +112,7 @@ final class Disk {
         try {
             Files.deleteIfExists(path);
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to delete " + path, e);
+            throw new StoreException.IO("failed to delete " + path, e);
         }
     }
 

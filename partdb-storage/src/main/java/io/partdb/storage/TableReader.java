@@ -58,30 +58,30 @@ final class TableReader {
             return parse(path, id, cache, arena, segment);
         } catch (IOException e) {
             arena.close();
-            throw new StoreException.IO("Failed to open table " + path, e);
+            throw new StoreException.IO("failed to open table " + path, e);
         } catch (RuntimeException e) {
             arena.close();
-            throw e instanceof StoreException ? e : new StoreException.Corruption("Malformed table " + path, e);
+            throw e instanceof StoreException ? e : new StoreException.Corruption("malformed table " + path, e);
         }
     }
 
     private static TableReader parse(Path path, long id, BlockCache cache, Arena arena, MemorySegment segment) {
         long size = segment.byteSize();
-        Encoding.check(size >= TableWriter.HEADER_SIZE + TableWriter.FOOTER_FIXED_SIZE, "Table too small: " + path);
-        Encoding.check(segment.get(Encoding.INT, 0) == TableWriter.MAGIC, "Invalid table magic: " + path);
+        Encoding.check(size >= TableWriter.HEADER_SIZE + TableWriter.FOOTER_FIXED_SIZE, "table too small: " + path);
+        Encoding.check(segment.get(Encoding.INT, 0) == TableWriter.MAGIC, "invalid table magic: " + path);
         int version = segment.get(Encoding.INT, Integer.BYTES);
-        Encoding.check(version == TableWriter.VERSION, "Unsupported table version " + version + ": " + path);
+        Encoding.check(version == TableWriter.VERSION, "unsupported table version " + version + ": " + path);
 
         int footerSize = segment.get(Encoding.INT, size - 2L * Integer.BYTES);
         Encoding.check(
             footerSize >= TableWriter.FOOTER_FIXED_SIZE && footerSize <= size - TableWriter.HEADER_SIZE,
-            "Invalid table footer size: " + path
+            "invalid table footer size: " + path
         );
         long footerOffset = size - footerSize;
         MemorySegment footer = segment.asSlice(footerOffset, footerSize);
         Encoding.check(
             footer.get(Encoding.INT, footerSize - Integer.BYTES) == Encoding.crc(footer.asSlice(0, footerSize - Integer.BYTES)),
-            "Table footer checksum mismatch: " + path
+            "table footer checksum mismatch: " + path
         );
 
         long bloomOffset = footer.get(Encoding.LONG, 0);
@@ -92,26 +92,26 @@ final class TableReader {
         long tombstones = footer.get(Encoding.LONG, 36);
         int metaCrc = footer.get(Encoding.INT, 44);
         int smallestLength = footer.get(Encoding.INT, 48);
-        Encoding.check(smallestLength >= 0 && 52L + smallestLength <= footerSize, "Invalid table smallest key: " + path);
+        Encoding.check(smallestLength >= 0 && 52L + smallestLength <= footerSize, "invalid table smallest key: " + path);
         Slice smallest = Slice.wrap(footer.asSlice(52, smallestLength)).copy();
         int largestLength = footer.get(Encoding.INT, 52L + smallestLength);
         Encoding.check(
             largestLength >= 0 && TableWriter.FOOTER_FIXED_SIZE + smallestLength + (long) largestLength == footerSize,
-            "Invalid table largest key: " + path
+            "invalid table largest key: " + path
         );
         Slice largest = Slice.wrap(footer.asSlice(56L + smallestLength, largestLength)).copy();
 
         Encoding.check(
             bloomOffset == indexOffset - bloomSize && bloomOffset >= TableWriter.HEADER_SIZE && indexOffset + indexSize == footerOffset,
-            "Invalid table layout: " + path
+            "invalid table layout: " + path
         );
-        Encoding.check(metaCrc == Encoding.crc(segment.asSlice(bloomOffset, (long) bloomSize + indexSize)), "Table metadata checksum mismatch: " + path);
+        Encoding.check(metaCrc == Encoding.crc(segment.asSlice(bloomOffset, (long) bloomSize + indexSize)), "table metadata checksum mismatch: " + path);
 
         BloomFilter bloom = BloomFilter.decode(segment.asSlice(bloomOffset, bloomSize));
         BlockIndex index = BlockIndex.decode(segment.asSlice(indexOffset, indexSize), blockCount);
         for (int i = 0; i < index.size(); i++) {
             BlockIndex.Handle handle = index.get(i);
-            Encoding.check(handle.offset() + handle.size() <= bloomOffset, "Table block exceeds data region: " + path);
+            Encoding.check(handle.offset() + handle.size() <= bloomOffset, "table block exceeds data region: " + path);
         }
         var metadata = new TableMetadata(id, smallest, largest, size, tombstones);
         return new TableReader(path, metadata, arena, segment, bloom, index, cache);
@@ -147,7 +147,7 @@ final class TableReader {
 
     TableReader retain() {
         if (refs.getAndIncrement() <= 0) {
-            throw new IllegalStateException("Table " + path + " was already released");
+            throw new IllegalStateException("table " + path + " was already released");
         }
         return this;
     }
@@ -155,7 +155,7 @@ final class TableReader {
     void release() {
         int remaining = refs.decrementAndGet();
         if (remaining < 0) {
-            throw new IllegalStateException("Table " + path + " released too many times");
+            throw new IllegalStateException("table " + path + " released too many times");
         }
         if (remaining > 0) {
             return;

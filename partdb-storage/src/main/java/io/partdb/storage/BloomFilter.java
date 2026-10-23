@@ -36,11 +36,11 @@ final class BloomFilter {
 
     static BloomFilter decode(MemorySegment segment) {
         long size = segment.byteSize();
-        Encoding.check(size >= HEADER, "Bloom filter too small: " + size);
+        Encoding.check(size >= HEADER, "bloom filter too small: " + size);
         int hashes = segment.get(Encoding.INT, 0);
         int lines = segment.get(Encoding.INT, Integer.BYTES);
-        Encoding.check(hashes > 0 && lines > 0, "Invalid bloom filter header");
-        Encoding.check(size == HEADER + (long) lines * LINE_LONGS * Long.BYTES, "Bloom filter size mismatch");
+        Encoding.check(hashes > 0 && lines > 0, "invalid bloom filter header");
+        Encoding.check(size == HEADER + (long) lines * LINE_LONGS * Long.BYTES, "bloom filter size mismatch");
         long[] bits = new long[lines * LINE_LONGS];
         for (int i = 0; i < bits.length; i++) {
             bits[i] = segment.get(Encoding.LONG, HEADER + (long) i * Long.BYTES);

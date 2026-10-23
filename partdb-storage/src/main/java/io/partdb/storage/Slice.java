@@ -16,7 +16,7 @@ final class Slice implements Comparable<Slice> {
 
     private Slice(MemorySegment segment) {
         if (segment.byteSize() > Integer.MAX_VALUE) {
-            throw new IllegalArgumentException("Slice too large: " + segment.byteSize());
+            throw new IllegalArgumentException("slice too large: " + segment.byteSize());
         }
         this.segment = segment.isReadOnly() ? segment : segment.asReadOnly();
     }

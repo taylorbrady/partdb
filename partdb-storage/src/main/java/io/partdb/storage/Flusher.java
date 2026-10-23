@@ -32,7 +32,7 @@ final class Flusher implements AutoCloseable {
             slots.acquire();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StoreException.IO("Interrupted waiting for a memtable flush slot", e);
+            throw new StoreException.IO("interrupted waiting for a memtable flush slot", e);
         }
     }
 
@@ -51,7 +51,7 @@ final class Flusher implements AutoCloseable {
                 log.log(Level.ERROR, "Memtable flush failed", e);
                 failure.compareAndSet(null, e instanceof StoreException storeException
                     ? storeException
-                    : new StoreException.IO("Memtable flush failed", e));
+                    : new StoreException.IO("memtable flush failed", e));
                 done.completeExceptionally(failure.get());
             } finally {
                 slots.release();
@@ -65,9 +65,9 @@ final class Flusher implements AutoCloseable {
             executor.submit(() -> {}).get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StoreException.IO("Interrupted waiting for memtable flush", e);
+            throw new StoreException.IO("interrupted waiting for memtable flush", e);
         } catch (ExecutionException e) {
-            throw new StoreException.IO("Memtable flush failed", e.getCause());
+            throw new StoreException.IO("memtable flush failed", e.getCause());
         }
         throwIfFailed();
     }
@@ -75,7 +75,7 @@ final class Flusher implements AutoCloseable {
     void throwIfFailed() {
         StoreException cause = failure.get();
         if (cause != null) {
-            throw new StoreException.IO("Memtable flush failed", cause);
+            throw new StoreException.IO("memtable flush failed", cause);
         }
     }
 

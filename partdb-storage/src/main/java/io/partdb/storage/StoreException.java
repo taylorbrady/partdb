@@ -24,7 +24,7 @@ public abstract sealed class StoreException extends RuntimeException {
 
     public static final class Closed extends StoreException {
         Closed() {
-            super("Store is closed", null);
+            super("store is closed", null);
         }
     }
 }

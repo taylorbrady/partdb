@@ -36,7 +36,7 @@ public final class Snapshot implements AutoCloseable {
         Objects.requireNonNull(range, "range must not be null");
         ensureOpen();
         if (!state.tryRetain()) {
-            throw new IllegalStateException("Snapshot is closed");
+            throw new IllegalStateException("snapshot is closed");
         }
         try {
             Iterator<KeyValue> values = new Visible(state.scan(Bounds.of(range)));
@@ -56,7 +56,7 @@ public final class Snapshot implements AutoCloseable {
 
     private void ensureOpen() {
         if (closed.get()) {
-            throw new IllegalStateException("Snapshot is closed");
+            throw new IllegalStateException("snapshot is closed");
         }
     }
 
@@ -76,7 +76,7 @@ public final class Snapshot implements AutoCloseable {
         public KeyValue next() {
             return switch (entries.next()) {
                 case InternalEntry.Value value -> value.toKeyValue();
-                case InternalEntry.Tombstone tombstone -> throw new IllegalStateException("Scan surfaced tombstone " + tombstone);
+                case InternalEntry.Tombstone tombstone -> throw new IllegalStateException("scan surfaced tombstone " + tombstone);
             };
         }
     }

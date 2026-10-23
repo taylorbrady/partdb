@@ -60,6 +60,10 @@ PartDB should read like idiomatic modern Java:
   `Optional` values appear only when present, `Duration` values render as
   durations, and a `Throwable` parameter is the record's error. The node id is
   added by the process, never at call sites.
+- Write exception messages as lower-case fragments with no trailing period
+  (`"failed to open table " + path`), keeping acronyms such as `WAL` as they
+  are, so a wrapped error reads as one line. Log messages are short
+  sentence-case event names (`"Installed snapshot"`) with details in fields.
 
 ## Module Intent
 

@@ -27,7 +27,7 @@ record Manifest(long durableRevision, long nextTableId, List<Placement> tables) 
         try {
             return decode(Files.readAllBytes(path));
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to read manifest " + path, e);
+            throw new StoreException.IO("failed to read manifest " + path, e);
         }
     }
 
@@ -46,26 +46,26 @@ record Manifest(long durableRevision, long nextTableId, List<Placement> tables) 
     }
 
     static Manifest decode(byte[] bytes) {
-        Encoding.check(bytes.length >= HEADER_SIZE + Integer.BYTES, "Manifest too small");
+        Encoding.check(bytes.length >= HEADER_SIZE + Integer.BYTES, "manifest too small");
         ByteBuffer buffer = Encoding.wrap(bytes);
-        Encoding.check(buffer.getInt() == MAGIC, "Invalid manifest magic");
+        Encoding.check(buffer.getInt() == MAGIC, "invalid manifest magic");
         int version = buffer.getInt();
-        Encoding.check(version == VERSION, "Unsupported manifest version: " + version);
+        Encoding.check(version == VERSION, "unsupported manifest version: " + version);
         int checksumOffset = bytes.length - Integer.BYTES;
-        Encoding.check(buffer.getInt(checksumOffset) == Encoding.crc(bytes, 0, checksumOffset), "Manifest checksum mismatch");
+        Encoding.check(buffer.getInt(checksumOffset) == Encoding.crc(bytes, 0, checksumOffset), "manifest checksum mismatch");
 
         long durableRevision = buffer.getLong();
         long nextTableId = buffer.getLong();
         int count = buffer.getInt();
-        Encoding.check(count >= 0 && HEADER_SIZE + (long) count * PLACEMENT_SIZE == checksumOffset, "Invalid manifest table count");
+        Encoding.check(count >= 0 && HEADER_SIZE + (long) count * PLACEMENT_SIZE == checksumOffset, "invalid manifest table count");
         List<Placement> tables = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             long id = buffer.getLong();
             int level = buffer.getInt();
-            Encoding.check(id > 0 && id < nextTableId && level >= 0 && level < Version.LEVELS, "Invalid manifest table entry");
+            Encoding.check(id > 0 && id < nextTableId && level >= 0 && level < Version.LEVELS, "invalid manifest table entry");
             tables.add(new Placement(id, level));
         }
-        Encoding.check(durableRevision >= 0, "Negative manifest durable revision");
+        Encoding.check(durableRevision >= 0, "negative manifest durable revision");
         return new Manifest(durableRevision, nextTableId, tables);
     }
 }

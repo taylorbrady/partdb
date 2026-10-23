@@ -158,7 +158,7 @@ public final class Store implements AutoCloseable {
             }
             Checkpoint.write(target, state.revision(), parts);
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to write checkpoint", e);
+            throw new StoreException.IO("failed to write checkpoint", e);
         } finally {
             unflushed.ifPresent(TableReader::release);
             state.release();
@@ -310,7 +310,7 @@ public final class Store implements AutoCloseable {
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StoreException.IO("Interrupted waiting for level zero compaction", e);
+                throw new StoreException.IO("interrupted waiting for level zero compaction", e);
             } finally {
                 stateLock.unlock();
             }
@@ -424,7 +424,7 @@ public final class Store implements AutoCloseable {
         for (Mutation mutation : mutations) {
             Objects.requireNonNull(mutation, "mutation must not be null");
             if (!keys.add(mutation.key())) {
-                throw new IllegalArgumentException("Duplicate key in one apply: " + mutation.key());
+                throw new IllegalArgumentException("duplicate key in one apply: " + mutation.key());
             }
         }
     }

@@ -22,21 +22,21 @@ final class Block {
 
     static Block from(MemorySegment segment) {
         long size = segment.byteSize();
-        Encoding.check(size >= 2L * Integer.BYTES, "Block too small: " + size);
+        Encoding.check(size >= 2L * Integer.BYTES, "block too small: " + size);
 
         int count = segment.get(Encoding.INT, size - Integer.BYTES);
         int restartCount = segment.get(Encoding.INT, size - 2L * Integer.BYTES);
-        Encoding.check(count > 0, "Block entry count must be positive");
-        Encoding.check(restartCount > 0 && restartCount <= count, "Invalid block restart count: " + restartCount);
+        Encoding.check(count > 0, "block entry count must be positive");
+        Encoding.check(restartCount > 0 && restartCount <= count, "invalid block restart count: " + restartCount);
 
         long limit = size - (2L + restartCount) * Integer.BYTES;
-        Encoding.check(limit > 0, "Block restart table overlaps entries");
+        Encoding.check(limit > 0, "block restart table overlaps entries");
 
         int[] restarts = new int[restartCount];
         for (int i = 0; i < restartCount; i++) {
             restarts[i] = segment.get(Encoding.INT, limit + (long) i * Integer.BYTES);
-            Encoding.check(restarts[i] >= 0 && restarts[i] < limit, "Invalid block restart offset: " + restarts[i]);
-            Encoding.check(i == 0 ? restarts[i] == 0 : restarts[i] > restarts[i - 1], "Block restart offsets out of order");
+            Encoding.check(restarts[i] >= 0 && restarts[i] < limit, "invalid block restart offset: " + restarts[i]);
+            Encoding.check(i == 0 ? restarts[i] == 0 : restarts[i] > restarts[i - 1], "block restart offsets out of order");
         }
         return new Block(segment, restarts, limit);
     }
@@ -111,8 +111,8 @@ final class Block {
             int shared = readVarInt();
             int unshared = readVarInt();
             int valueLength = readVarInt();
-            Encoding.check(offset + 1 + Long.BYTES + unshared + (long) valueLength <= limit, "Truncated block entry");
-            Encoding.check(shared <= previousKey.length, "Block shared prefix exceeds previous key");
+            Encoding.check(offset + 1 + Long.BYTES + unshared + (long) valueLength <= limit, "truncated block entry");
+            Encoding.check(shared <= previousKey.length, "block shared prefix exceeds previous key");
 
             byte flags = segment.get(ValueLayout.JAVA_BYTE, offset);
             long revision = segment.get(Encoding.LONG, offset + 1);
@@ -126,7 +126,7 @@ final class Block {
 
             InternalKey internalKey = new InternalKey(Slice.wrap(key), revision);
             if ((flags & BlockWriter.TOMBSTONE) != 0) {
-                Encoding.check(valueLength == 0, "Block tombstone carries a value");
+                Encoding.check(valueLength == 0, "block tombstone carries a value");
                 next = new InternalEntry.Tombstone(internalKey);
             } else {
                 next = new InternalEntry.Value(internalKey, Slice.wrap(segment.asSlice(offset, valueLength)));
@@ -137,15 +137,15 @@ final class Block {
         private int readVarInt() {
             int value = 0;
             for (int shift = 0; shift < Integer.SIZE; shift += 7) {
-                Encoding.check(offset < limit, "Truncated block varint");
+                Encoding.check(offset < limit, "truncated block varint");
                 int b = Byte.toUnsignedInt(segment.get(ValueLayout.JAVA_BYTE, offset++));
                 value |= (b & 0x7f) << shift;
                 if ((b & 0x80) == 0) {
-                    Encoding.check(value >= 0, "Negative block varint");
+                    Encoding.check(value >= 0, "negative block varint");
                     return value;
                 }
             }
-            throw new StoreException.Corruption("Block varint too long");
+            throw new StoreException.Corruption("block varint too long");
         }
     }
 }

@@ -27,7 +27,7 @@ final class BlockWriter {
 
     void add(InternalEntry entry) {
         if (lastKey != null && entry.userKey().compareTo(lastKey) <= 0) {
-            throw new IllegalArgumentException("Block keys must be strictly increasing");
+            throw new IllegalArgumentException("block keys must be strictly increasing");
         }
 
         byte[] key = entry.userKey().toByteArray();
@@ -75,7 +75,7 @@ final class BlockWriter {
 
     byte[] finish() {
         if (count == 0) {
-            throw new IllegalStateException("Cannot finish an empty block");
+            throw new IllegalStateException("cannot finish an empty block");
         }
         var trailer = Encoding.allocate((restarts.size() + 2) * Integer.BYTES);
         for (int restart : restarts) {

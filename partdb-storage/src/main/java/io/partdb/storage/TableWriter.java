@@ -54,13 +54,13 @@ final class TableWriter implements AutoCloseable {
             writer.write(Encoding.allocate(HEADER_SIZE).putInt(MAGIC).putInt(VERSION).array());
             return writer;
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to create table " + path, e);
+            throw new StoreException.IO("failed to create table " + path, e);
         }
     }
 
     void add(InternalEntry entry) {
         if (largest != null && entry.userKey().compareTo(largest) <= 0) {
-            throw new IllegalArgumentException("Table keys must be strictly increasing");
+            throw new IllegalArgumentException("table keys must be strictly increasing");
         }
         if (!block.isEmpty() && block.estimatedSize() >= options.blockBytes()) {
             flushBlock();
@@ -87,7 +87,7 @@ final class TableWriter implements AutoCloseable {
 
     TableMetadata finish() {
         if (keys.isEmpty()) {
-            throw new IllegalStateException("Cannot finish an empty table");
+            throw new IllegalStateException("cannot finish an empty table");
         }
         if (!block.isEmpty()) {
             flushBlock();
@@ -118,7 +118,7 @@ final class TableWriter implements AutoCloseable {
             channel.force(true);
             channel.close();
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to sync table " + path, e);
+            throw new StoreException.IO("failed to sync table " + path, e);
         }
         finished = true;
         return new TableMetadata(id, smallest.copy(), largest.copy(), position, tombstones);
@@ -133,7 +133,7 @@ final class TableWriter implements AutoCloseable {
             channel.close();
             Files.deleteIfExists(path);
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to discard table " + path, e);
+            throw new StoreException.IO("failed to discard table " + path, e);
         }
     }
 
@@ -154,7 +154,7 @@ final class TableWriter implements AutoCloseable {
             out.write(bytes);
             position += bytes.length;
         } catch (IOException e) {
-            throw new StoreException.IO("Failed to write table " + path, e);
+            throw new StoreException.IO("failed to write table " + path, e);
         }
     }
 }
